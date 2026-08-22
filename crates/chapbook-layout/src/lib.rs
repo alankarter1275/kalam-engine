@@ -11,4 +11,8 @@
 //! One spine item is one layout run; results are cached keyed by page
 //! metrics, settings, and stylesheet hashes.
 //!
+//! The output `Page`/`Fragment` types live in `chapbook-paint` (this crate
+//! *produces* into the format-neutral page model, it does not define it), so
+//! image-per-page formats can produce pages without the text pipeline.
+//!
 //! Implemented in milestone M3.

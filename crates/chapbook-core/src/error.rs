@@ -3,13 +3,13 @@ use std::path::PathBuf;
 /// Unified error type across chapbook crates.
 #[derive(Debug, thiserror::Error)]
 pub enum ChapbookError {
-    #[error("failed to open EPUB {path}: {reason}")]
-    EpubOpen { path: PathBuf, reason: String },
+    #[error("failed to open book {path}: {reason}")]
+    BookOpen { path: PathBuf, reason: String },
 
-    #[error("EPUB is malformed: {0}")]
-    EpubMalformed(String),
+    #[error("book is malformed: {0}")]
+    BookMalformed(String),
 
-    #[error("resource not found in EPUB: {0}")]
+    #[error("resource not found in book: {0}")]
     ResourceNotFound(String),
 
     #[error("fixed-layout EPUBs are not supported (this is a reflowable-text reading system)")]
@@ -26,6 +26,12 @@ pub enum ChapbookError {
 
     #[error("layout error: {0}")]
     Layout(String),
+
+    /// Transport-level failure fetching remote content (a page stream, an
+    /// acquisition download). Distinct from [`Self::Opds`], which is for
+    /// protocol/feed-shape errors.
+    #[error("network error: {0}")]
+    Network(String),
 
     #[error("OPDS error: {0}")]
     Opds(String),

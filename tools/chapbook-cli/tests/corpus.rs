@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use chapbook_core::Publication;
+
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/corpus")
 }
@@ -31,7 +33,7 @@ fn every_corpus_book_opens_and_extracts_text() {
         let mut total_text = 0usize;
         for i in 0..book.spine().len() {
             let bytes = book
-                .chapter_xhtml(i)
+                .unit_bytes(i)
                 .unwrap_or_else(|e| panic!("{name}: spine {i} unreadable: {e}"));
             let doc = chapbook_dom::parse_xhtml(&bytes, &book.spine()[i].href)
                 .unwrap_or_else(|e| panic!("{name}: spine {i} unparseable: {e}"));

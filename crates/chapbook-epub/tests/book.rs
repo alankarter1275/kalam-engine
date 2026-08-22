@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use chapbook_core::Publication;
 use chapbook_epub::Book;
 
 fn fixture(name: &str) -> PathBuf {
@@ -19,7 +20,7 @@ fn metadata() {
     assert_eq!(md.title.as_deref(), Some("The Minimal Book"));
     assert_eq!(md.authors, vec!["Ada Fixture".to_string()]);
     assert_eq!(md.language.as_deref(), Some("en"));
-    assert_eq!(md.epub_version, "3.0");
+    assert_eq!(md.format_version, "3.0");
     assert!(!book.is_fixed_layout());
 }
 
@@ -51,7 +52,7 @@ fn toc_structure() {
 #[test]
 fn chapter_bytes_and_resource_resolution() {
     let book = minimal();
-    let ch1 = book.chapter_xhtml(0).unwrap();
+    let ch1 = book.unit_bytes(0).unwrap();
     assert!(std::str::from_utf8(&ch1)
         .unwrap()
         .contains("<h1>Chapter One"));
@@ -67,6 +68,29 @@ fn chapter_bytes_and_resource_resolution() {
 #[test]
 fn missing_resources_error_cleanly() {
     let book = minimal();
-    assert!(book.chapter_xhtml(99).is_err());
+    assert!(book.unit_bytes(99).is_err());
     assert!(book.resource("OEBPS/chapter1.xhtml", "nope.png").is_err());
+}
+
+#[test]
+fn cover_absence_is_ok_none() {
+    let book = minimal();
+    assert!(matches!(book.cover(), Ok(None)));
+}
+
+#[test]
+fn fixed_layout_detected_and_content_rejected() {
+    let book = Book::open(&fixture("fixed-minimal.epub")).expect("FXL book still opens");
+    // Metadata and TOC inspection keep working...
+    assert!(book.is_fixed_layout());
+    assert_eq!(
+        book.metadata().title.as_deref(),
+        Some("The Fixed-Layout Book")
+    );
+    assert_eq!(book.spine().len(), 1);
+    // ...but the content gate rejects pre-paginated content.
+    assert!(matches!(
+        book.unit_bytes(0),
+        Err(chapbook_core::ChapbookError::FixedLayoutUnsupported)
+    ));
 }

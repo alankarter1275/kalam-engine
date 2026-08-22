@@ -24,7 +24,7 @@ not an afterthought bolted onto a scrolling browser.
 | `chapbook-dom` | Arena DOM for XHTML content documents + stylo trait bindings |
 | `chapbook-style` | Cascade driver: stylist, UA sheet, media device |
 | `chapbook-layout` | Pagination-first block + inline layout via cosmic-text |
-| `chapbook-paint` | Paint-neutral display list |
+| `chapbook-paint` | Format-neutral page model + paint-neutral display list |
 | `chapbook-render-tinyskia` | CPU rasterization backend |
 | `chapbook-opds` | OPDS 1.2/2.0 catalog client |
 | `chapbook-library` | Local bookshelf: metadata, positions, annotations (SQLite) |

@@ -10,5 +10,10 @@
 mod book;
 mod href;
 
-pub use book::{Book, BookMetadata, Resource, SpineItem, TocEntry};
+pub use book::Book;
 pub use href::resolve_href;
+
+// The format-neutral book model (Publication, BookMetadata, SpineItem,
+// TocEntry, Resource) lives in chapbook-core and is deliberately NOT
+// re-exported here: a single import path keeps `grep chapbook_epub` an honest
+// map of who actually depends on EPUB.

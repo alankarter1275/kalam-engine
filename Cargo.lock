@@ -497,6 +497,7 @@ version = "0.1.0"
 dependencies = [
  "chapbook-core",
  "chapbook-dom",
+ "chapbook-paint",
  "chapbook-style",
  "cosmic-text",
  "insta",
@@ -530,7 +531,6 @@ name = "chapbook-paint"
 version = "0.1.0"
 dependencies = [
  "chapbook-core",
- "chapbook-layout",
  "cosmic-text",
 ]
 

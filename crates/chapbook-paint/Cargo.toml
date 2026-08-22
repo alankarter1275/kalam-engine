@@ -9,5 +9,4 @@ authors.workspace = true
 
 [dependencies]
 chapbook-core = { workspace = true }
-chapbook-layout = { workspace = true }
 cosmic-text = { workspace = true }

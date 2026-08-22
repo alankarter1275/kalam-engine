@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use chapbook_core::Result;
-use chapbook_epub::{Book, TocEntry};
+use chapbook_core::{Publication, Result, TocEntry};
+use chapbook_epub::Book;
 
 pub fn meta(epub: &Path) -> Result<String> {
     let book = Book::open(epub)?;
@@ -16,7 +16,7 @@ pub fn meta(epub: &Path) -> Result<String> {
     }
     push_field(&mut out, "language", md.language.as_deref());
     push_field(&mut out, "identifier", md.identifier.as_deref());
-    push_field(&mut out, "version", Some(&md.epub_version));
+    push_field(&mut out, "version", Some(&md.format_version));
     push_field(
         &mut out,
         "layout",
@@ -61,14 +61,11 @@ pub fn text(epub: &Path, spine: Option<usize>) -> Result<String> {
     };
     let mut out = String::new();
     for i in indices {
-        let bytes = book.chapter_xhtml(i)?;
-        let doc = chapbook_dom::parse_xhtml(&bytes, &book.spine()[i].href)?;
+        let href = book.spine_item(i)?.href.clone();
+        let bytes = book.unit_bytes(i)?;
+        let doc = chapbook_dom::parse_xhtml(&bytes, &href)?;
         if spine.is_none() {
-            out.push_str(&format!(
-                "==== spine {} ({}) ====\n",
-                i,
-                book.spine()[i].href
-            ));
+            out.push_str(&format!("==== spine {i} ({href}) ====\n"));
         }
         out.push_str(&chapbook_dom::extract_text(&doc));
     }

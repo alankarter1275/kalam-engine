@@ -72,6 +72,13 @@ total extracted chars`. Character-count weighting is stable across font size,
 margins, and relayout; synthetic page counts and file sizes are not. Write it
 down in chapbook-core so every future producer computes the same float.
 
+The denominator counts the format's *progression unit*: extracted chars for
+reflowable text; pages for image-per-page formats (each spine item is one
+page, `char_offset` always 0, quote layer empty — position identity lives in
+`spine_index`/`book_progression` alone). Under the page-start convention the
+last page of an n-page book reads (n−1)/n; 1.0 needs an explicit "finished"
+state, which belongs to the sync/library layer.
+
 ### 5. Book identity ≠ file identity
 
 chapbook-library keys books by a library id; the file hash is stored as an

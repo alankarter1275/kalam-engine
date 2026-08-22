@@ -27,6 +27,30 @@
 //! `display:none` subtrees once the cascade exists — MUST bump
 //! [`LOCATOR_VERSION`]. The golden offset-map test in chapbook-dom exists so
 //! the bump is a conscious act, not an accident.
+//!
+//! # Progression units are per-format
+//!
+//! `char_offset` and the progression denominators count the format's
+//! **progression unit**:
+//!
+//! - **Reflowable text (EPUB):** Unicode scalars of the locator text, as
+//!   specified above.
+//! - **Image-per-page formats (future CBZ):** the page is the unit — each
+//!   spine item is one page and `char_offset` is always `0`, which makes the
+//!   within-unit layers (offset, quote, `spine_fraction`) trivially
+//!   degenerate: any resolve correctly lands at offset `0`, and
+//!   [`resolve_in_text`] has nothing useful to add. Position identity is
+//!   carried entirely by `spine_href`/`spine_index`, with
+//!   [`book_progression`] computed as `prior_chars = spine_index`,
+//!   `total_chars = page count`. Re-anchoring across editions whose page
+//!   counts differ is a library-level concern that will use
+//!   `book_progression` (nearest page), not the quote chain. Note the
+//!   page-*start* convention caps progression at `(n-1)/n` on the last page:
+//!   `1.0` is unreachable without an explicit "finished" state, which is a
+//!   sync/library concern, not a locator one.
+//!
+//! Mixing units across formats is fine because progression is only ever
+//! compared within one book.
 
 /// Version of the locator-text extraction function. Stored alongside every
 /// persisted position/annotation endpoint; see the module docs for what

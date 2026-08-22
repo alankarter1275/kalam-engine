@@ -1,57 +1,20 @@
 use std::path::Path;
 
-use chapbook_core::{ChapbookError, Result};
+use chapbook_core::{
+    BookKind, BookMetadata, ChapbookError, Publication, Resource, Result, SpineItem, TocEntry,
+};
 use rbook::epub::manifest::EpubManifestEntry;
 use rbook::epub::toc::EpubTocEntry;
 
 use crate::href::{percent_decode, resolve_href};
 
-/// Owned metadata extracted from the package document at open time.
-#[derive(Debug, Clone, Default)]
-pub struct BookMetadata {
-    pub title: Option<String>,
-    pub authors: Vec<String>,
-    pub language: Option<String>,
-    pub identifier: Option<String>,
-    pub description: Option<String>,
-    pub epub_version: String,
-}
-
-/// One entry of the spine, in canonical reading order.
-#[derive(Debug, Clone)]
-pub struct SpineItem {
-    pub idref: String,
-    /// Normalized container-root path of the content document.
-    pub href: String,
-    pub media_type: String,
-    /// Non-linear items are auxiliary content (notes, answers) skipped in
-    /// sequential reading.
-    pub linear: bool,
-}
-
-/// A table-of-contents node; `children` nest arbitrarily deep.
-#[derive(Debug, Clone)]
-pub struct TocEntry {
-    pub label: String,
-    /// Container-root path of the target document, if the entry links anywhere.
-    pub href: Option<String>,
-    /// Fragment identifier within the target document, if any.
-    pub fragment: Option<String>,
-    /// Spine index of the target document, if it is a linear spine item.
-    pub spine_index: Option<usize>,
-    pub children: Vec<TocEntry>,
-}
-
-/// A resolved resource from within the container.
-pub struct Resource {
-    pub media_type: String,
-    pub data: Vec<u8>,
-}
-
 /// An open EPUB, presenting an owned, reading-system-shaped view over rbook.
 ///
 /// Structure (metadata, spine, TOC) is extracted eagerly at open — books are
-/// small; resource payloads stay lazy in the zip until asked for.
+/// small; resource payloads stay lazy in the zip until asked for. The
+/// format-neutral surface is [`Publication`]; EPUB-specific capability
+/// (relative-href resource resolution for stylesheets/images/fonts,
+/// fixed-layout detection) lives on the inherent methods.
 pub struct Book {
     epub: rbook::Epub,
     metadata: BookMetadata,
@@ -62,7 +25,7 @@ pub struct Book {
 
 impl Book {
     pub fn open(path: &Path) -> Result<Self> {
-        let epub = rbook::Epub::open(path).map_err(|e| ChapbookError::EpubOpen {
+        let epub = rbook::Epub::open(path).map_err(|e| ChapbookError::BookOpen {
             path: path.to_owned(),
             reason: e.to_string(),
         })?;
@@ -91,23 +54,32 @@ impl Book {
             language: md.language().map(|l| l.value().to_string()),
             identifier: md.identifier().map(|i| i.value().to_string()),
             description: md.description().map(|d| d.value().to_string()),
-            epub_version: md.version_str().to_string(),
+            format_version: md.version_str().to_string(),
         };
 
         let mut layout_entries = md.by_property("rendition:layout");
         let fixed_layout = layout_entries.any(|e| e.value() == "pre-paginated");
 
+        // Every spine entry becomes a SpineItem, even when its idref has no
+        // manifest entry (malformed book): dropping entries would silently
+        // compact the spine indices persisted locators are keyed by. Broken
+        // entries get an empty href and fail loudly in unit_bytes instead.
         let spine: Vec<SpineItem> = epub
             .spine()
             .iter()
-            .filter_map(|entry| {
-                let manifest = entry.manifest_entry()?;
-                Some(SpineItem {
-                    idref: entry.idref().to_string(),
+            .map(|entry| match entry.manifest_entry() {
+                Some(manifest) => SpineItem {
+                    id: entry.idref().to_string(),
                     href: manifest.href().as_str().trim_start_matches('/').to_string(),
                     media_type: manifest.kind().as_str().to_string(),
                     linear: entry.is_linear(),
-                })
+                },
+                None => SpineItem {
+                    id: entry.idref().to_string(),
+                    href: String::new(),
+                    media_type: String::new(),
+                    linear: entry.is_linear(),
+                },
             })
             .collect();
 
@@ -119,30 +91,8 @@ impl Book {
         (metadata, fixed_layout, spine, toc)
     }
 
-    pub fn metadata(&self) -> &BookMetadata {
-        &self.metadata
-    }
-
-    pub fn spine(&self) -> &[SpineItem] {
-        &self.spine
-    }
-
-    pub fn toc(&self) -> &[TocEntry] {
-        &self.toc
-    }
-
     pub fn is_fixed_layout(&self) -> bool {
         self.fixed_layout
-    }
-
-    /// Raw XHTML bytes of a spine item.
-    pub fn chapter_xhtml(&self, spine_index: usize) -> Result<Vec<u8>> {
-        let item = self
-            .spine
-            .get(spine_index)
-            .ok_or(ChapbookError::SpineOutOfRange(spine_index))?;
-        let href = item.href.clone();
-        self.read_by_path(&href)
     }
 
     /// Resolve `href` relative to the container-root path `base` (the
@@ -152,11 +102,7 @@ impl Book {
         let entry = self
             .lookup(&path)
             .ok_or_else(|| ChapbookError::ResourceNotFound(path.clone()))?;
-        let media_type = entry.kind().as_str().to_string();
-        let data = entry
-            .read_bytes()
-            .map_err(|e| ChapbookError::EpubMalformed(e.to_string()))?;
-        Ok(Resource { media_type, data })
+        entry_resource(&entry)
     }
 
     fn read_by_path(&self, path: &str) -> Result<Vec<u8>> {
@@ -165,7 +111,7 @@ impl Book {
             .ok_or_else(|| ChapbookError::ResourceNotFound(path.to_string()))?;
         entry
             .read_bytes()
-            .map_err(|e| ChapbookError::EpubMalformed(e.to_string()))
+            .map_err(|e| ChapbookError::BookMalformed(e.to_string()))
     }
 
     /// Manifest lookup by container-root path (no leading slash). rbook keys
@@ -178,6 +124,60 @@ impl Book {
             .by_href(&absolute)
             .or_else(|| manifest.by_href(&percent_decode(&absolute)))
     }
+}
+
+impl Publication for Book {
+    fn kind(&self) -> BookKind {
+        BookKind::Epub
+    }
+
+    fn metadata(&self) -> &BookMetadata {
+        &self.metadata
+    }
+
+    fn spine(&self) -> &[SpineItem] {
+        &self.spine
+    }
+
+    fn toc(&self) -> &[TocEntry] {
+        &self.toc
+    }
+
+    /// Raw XHTML bytes of a spine item.
+    ///
+    /// Fixed-layout EPUBs are rejected here — the content gate — so metadata
+    /// and TOC inspection still work on them while nothing downstream ever
+    /// sees pre-paginated content.
+    fn unit_bytes(&self, spine_index: usize) -> Result<Vec<u8>> {
+        if self.fixed_layout {
+            return Err(ChapbookError::FixedLayoutUnsupported);
+        }
+        let item = self.spine_item(spine_index)?;
+        if item.href.is_empty() {
+            return Err(ChapbookError::BookMalformed(format!(
+                "spine item \"{}\" references no manifest entry",
+                item.id
+            )));
+        }
+        let href = item.href.clone();
+        self.read_by_path(&href)
+    }
+
+    fn cover(&self) -> Result<Option<Resource>> {
+        match self.epub.manifest().cover_image() {
+            Some(entry) => entry_resource(&entry).map(Some),
+            None => Ok(None),
+        }
+    }
+}
+
+/// Read a manifest entry into an owned [`Resource`].
+fn entry_resource(entry: &EpubManifestEntry<'_>) -> Result<Resource> {
+    let media_type = entry.kind().as_str().to_string();
+    let data = entry
+        .read_bytes()
+        .map_err(|e| ChapbookError::BookMalformed(e.to_string()))?;
+    Ok(Resource { media_type, data })
 }
 
 fn convert_toc(entry: &EpubTocEntry<'_>, spine: &[SpineItem]) -> TocEntry {

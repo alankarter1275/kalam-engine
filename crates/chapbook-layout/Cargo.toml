@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 chapbook-core = { workspace = true }
 chapbook-dom = { workspace = true }
+chapbook-paint = { workspace = true }
 chapbook-style = { workspace = true }
 style = { workspace = true }
 cosmic-text = { workspace = true }
