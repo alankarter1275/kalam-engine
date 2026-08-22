@@ -1,0 +1,91 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/chapbook-core",
+    "crates/chapbook-epub",
+    "crates/chapbook-dom",
+    "crates/chapbook-style",
+    "crates/chapbook-layout",
+    "crates/chapbook-paint",
+    "crates/chapbook-render-tinyskia",
+    "crates/chapbook-opds",
+    "crates/chapbook-library",
+    "crates/chapbook-viewer",
+    "tools/chapbook-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+authors = ["Jeffrey T. Peckham <abic@ophymx.com>"]
+
+[workspace.dependencies]
+# Internal crates
+chapbook-core = { path = "crates/chapbook-core" }
+chapbook-epub = { path = "crates/chapbook-epub" }
+chapbook-dom = { path = "crates/chapbook-dom" }
+chapbook-style = { path = "crates/chapbook-style" }
+chapbook-layout = { path = "crates/chapbook-layout" }
+chapbook-paint = { path = "crates/chapbook-paint" }
+chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
+chapbook-opds = { path = "crates/chapbook-opds" }
+chapbook-library = { path = "crates/chapbook-library" }
+
+# Stylo lockstep set — these release together and break together; pin exact
+# versions and upgrade all of them in one deliberate pass (use Blitz's diff
+# as the migration guide).
+style = { version = "=0.20.0", package = "stylo" }
+style_traits = { version = "=0.20.0", package = "stylo_traits" }
+style_atoms = { version = "=0.20.0", package = "stylo_atoms" }
+style_config = { version = "=0.20.0", package = "stylo_static_prefs" }
+style_dom = { version = "=0.20.0", package = "stylo_dom" }
+selectors = "=0.40.0"
+cssparser = "=0.37.0"
+html5ever = "0.39"
+markup5ever = "0.39"
+xml5ever = "0.39"
+atomic_refcell = "0.1"
+
+# Text shaping/layout and CPU rasterization
+cosmic-text = "0.19"
+tiny-skia = "0.12"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "rayon"] }
+
+# EPUB
+rbook = "0.7"
+
+# OPDS
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+atom_syndication = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+
+# Library persistence
+rusqlite = { version = "0.40", features = ["bundled"] }
+
+# Viewer
+winit = "0.30"
+softbuffer = "0.4"
+
+# Misc
+slotmap = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+
+# Dev
+insta = { version = "1", features = ["glob"] }
+proptest = "1"
+
+[profile.dev]
+# stylo is slow in unoptimized builds; keep debug-friendly but usable
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

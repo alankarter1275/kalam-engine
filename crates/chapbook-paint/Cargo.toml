@@ -1,0 +1,13 @@
+[package]
+name = "chapbook-paint"
+description = "Paint-neutral display list for chapbook pages"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+chapbook-layout = { workspace = true }
+cosmic-text = { workspace = true }

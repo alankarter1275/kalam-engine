@@ -1,0 +1,19 @@
+[package]
+name = "chapbook-layout"
+description = "Pagination-first block + inline layout for chapbook, via cosmic-text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+chapbook-dom = { workspace = true }
+chapbook-style = { workspace = true }
+style = { workspace = true }
+cosmic-text = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+proptest = { workspace = true }

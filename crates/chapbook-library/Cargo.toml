@@ -1,0 +1,12 @@
+[package]
+name = "chapbook-library"
+description = "Local bookshelf for chapbook: metadata index, reading positions, annotations (SQLite)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+rusqlite = { workspace = true }

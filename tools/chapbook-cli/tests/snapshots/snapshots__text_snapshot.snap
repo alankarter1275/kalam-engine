@@ -1,0 +1,17 @@
+---
+source: tools/chapbook-cli/tests/snapshots.rs
+expression: "commands::text(&fixture(), None).unwrap()"
+---
+==== spine 0 (OEBPS/chapter1.xhtml) ====
+Chapter One: A Beginning
+It was a truth universally acknowledged that a fixture file, however small, must be in want of some emphasis, a bit of weight, and at least one hyperlink to the next chapter.
+A second paragraph exercises inheritance: the chapter class sets a serif family and this paragraph should inherit it, while its inner annotated span overrides the color.
+Block quotations get their own margins, and their text should be indented on both sides according to the UA stylesheet.
+First list item
+Second list item, with nested emphasis
+==== spine 1 (OEBPS/chapter2.xhtml) ====
+Chapter Two: A Continuation
+This chapter exists so the spine has more than one entry, so locators can point past spine index zero, and so forced page breaks have somewhere to land.
+Part the Second
+An anchor above should appear in the anchors map when layout runs. Unicode coverage: naïve café — em-dash, “curly quotes”, and the ligature-friendly word affluence.
+This paragraph requests a page break before itself via the legacy page-break-before property.

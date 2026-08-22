@@ -1,0 +1,20 @@
+[package]
+name = "chapbook-style"
+description = "Cascade driver for chapbook: stylist, media device, UA stylesheet, style traversal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+chapbook-dom = { workspace = true }
+style = { workspace = true }
+style_traits = { workspace = true }
+selectors = { workspace = true }
+cssparser = { workspace = true }
+cosmic-text = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
