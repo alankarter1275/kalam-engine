@@ -44,11 +44,25 @@ pub struct LineFragment {
     /// Baseline offset from the top of the fragment rect.
     pub baseline: f32,
     pub runs: Vec<GlyphRun>,
+    /// Underlines/strikethroughs, positioned relative to the fragment rect.
+    pub decorations: Vec<Decoration>,
     /// The line's source text (diagnostics, selection, golden dumps).
     pub text: String,
     /// Locator-text char offset of the line start (see `chapbook-core`
     /// locator docs); drives `char_map` and position restore.
     pub locator_start: u32,
+}
+
+/// A decoration line (underline, strikethrough) within a line fragment.
+#[derive(Debug, Clone, Copy)]
+pub struct Decoration {
+    /// Left edge, relative to the fragment origin.
+    pub x: f32,
+    pub width: f32,
+    /// Top edge of the stroke, relative to the fragment top.
+    pub y: f32,
+    pub thickness: f32,
+    pub color: Rgba,
 }
 
 /// A run of glyphs sharing one font face, size, weight, and color.

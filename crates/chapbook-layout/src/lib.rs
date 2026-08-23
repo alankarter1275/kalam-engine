@@ -18,6 +18,7 @@ mod fonts;
 mod fragmentation;
 mod paginate;
 mod style_to_attrs;
+mod webfonts;
 
 use std::collections::HashMap;
 
@@ -25,10 +26,11 @@ use cosmic_text::FontSystem;
 
 use chapbook_core::PageMetrics;
 use chapbook_dom::Document;
-use chapbook_paint::Page;
+use chapbook_paint::{ImageStore, Page};
 
 pub use fonts::{fixture_font_system, system_font_system};
 pub use fragmentation::{BreakRule, FragRules, FragStyle};
+pub use webfonts::{extract_font_faces, register_font, FontFace};
 
 /// The paginated result of laying out one spine item.
 pub struct ChapterLayout {
@@ -68,6 +70,7 @@ pub fn paginate(
     css_sources: &[String],
     page: &PageMetrics,
     fonts: &mut FontSystem,
+    images: &ImageStore,
 ) -> ChapterLayout {
     let frag = FragRules::parse(css_sources).resolve(doc);
     let locator = chapbook_dom::locator_offsets(doc);
@@ -75,6 +78,7 @@ pub fn paginate(
         doc,
         frag: &frag,
         locator: &locator,
+        images,
     };
 
     let mut paginator = paginate::Paginator::new(fonts, *page);
@@ -98,4 +102,35 @@ pub fn paginate(
         char_map,
         anchors,
     }
+}
+
+/// Decode every `<img>`'s bytes into an [`ImageStore`] keyed by node tag.
+/// `fetch` resolves an `src` attribute (as written) to raw bytes — callers
+/// close over their container (e.g. `Book::resource` against the chapter
+/// path). Undecodable or unresolvable images are skipped; layout degrades
+/// them to nothing.
+pub fn collect_images(
+    doc: &Document,
+    mut fetch: impl FnMut(&str) -> Option<Vec<u8>>,
+) -> ImageStore {
+    let mut store = ImageStore::default();
+    for id in doc.descendants(doc.root()) {
+        let chapbook_dom::NodeData::Element(el) = &doc.node(id).data else {
+            continue;
+        };
+        if *el.local_name() != markup5ever::local_name!("img") {
+            continue;
+        }
+        let Some(src) = el.attr(&markup5ever::local_name!("src")) else {
+            continue;
+        };
+        let Some(bytes) = fetch(src) else { continue };
+        let Ok(decoded) = image::load_from_memory(&bytes) else {
+            continue;
+        };
+        let rgba = decoded.to_rgba8();
+        let (w, h) = (rgba.width(), rgba.height());
+        store.insert(chapbook_dom::node_tag(id), w, h, rgba.into_raw());
+    }
+    store
 }

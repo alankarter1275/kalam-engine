@@ -7,6 +7,7 @@ use rbook::epub::manifest::EpubManifestEntry;
 use rbook::epub::toc::EpubTocEntry;
 
 use crate::href::{percent_decode, resolve_href};
+use crate::obfuscation::{self, Obfuscation};
 
 /// An open EPUB, presenting an owned, reading-system-shaped view over rbook.
 ///
@@ -21,6 +22,9 @@ pub struct Book {
     spine: Vec<SpineItem>,
     toc: Vec<TocEntry>,
     fixed_layout: bool,
+    /// Container paths whose leading bytes are obfuscated (fonts), from
+    /// META-INF/encryption.xml. Reads de-obfuscate transparently.
+    obfuscated: std::collections::HashMap<String, Obfuscation>,
 }
 
 impl Book {
@@ -36,12 +40,17 @@ impl Book {
         // Everything below borrows from `epub`; scope the borrows so the
         // handle can move into the returned Book.
         let (metadata, fixed_layout, spine, toc) = Self::extract(&epub);
+        let obfuscated = epub
+            .read_resource_bytes("/META-INF/encryption.xml")
+            .map(|xml| obfuscation::parse_encryption_xml(&xml))
+            .unwrap_or_default();
         Ok(Book {
             epub,
             metadata,
             spine,
             toc,
             fixed_layout,
+            obfuscated,
         })
     }
 
@@ -102,16 +111,38 @@ impl Book {
         let entry = self
             .lookup(&path)
             .ok_or_else(|| ChapbookError::ResourceNotFound(path.clone()))?;
-        entry_resource(&entry)
+        let mut resource = entry_resource(&entry)?;
+        self.maybe_deobfuscate(&path, &mut resource.data);
+        Ok(resource)
     }
 
     fn read_by_path(&self, path: &str) -> Result<Vec<u8>> {
         let entry = self
             .lookup(path)
             .ok_or_else(|| ChapbookError::ResourceNotFound(path.to_string()))?;
-        entry
+        let mut data = entry
             .read_bytes()
-            .map_err(|e| ChapbookError::BookMalformed(e.to_string()))
+            .map_err(|e| ChapbookError::BookMalformed(e.to_string()))?;
+        self.maybe_deobfuscate(path, &mut data);
+        Ok(data)
+    }
+
+    /// Undo IDPF/Adobe font obfuscation when `path` is listed in
+    /// META-INF/encryption.xml. Paths are compared raw and percent-decoded,
+    /// mirroring the manifest lookup's tolerance.
+    fn maybe_deobfuscate(&self, path: &str, data: &mut [u8]) {
+        if self.obfuscated.is_empty() {
+            return;
+        }
+        let algo = self
+            .obfuscated
+            .get(path)
+            .or_else(|| self.obfuscated.get(percent_decode(path).as_str()))
+            .copied();
+        if let Some(algo) = algo {
+            let identifier = self.metadata.identifier.as_deref().unwrap_or("");
+            obfuscation::deobfuscate(algo, identifier, data);
+        }
     }
 
     /// Manifest lookup by container-root path (no leading slash). rbook keys

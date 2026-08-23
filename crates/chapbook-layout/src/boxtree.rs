@@ -13,6 +13,7 @@ use style::properties::ComputedValues;
 use style::servo_arc::Arc as ServoArc;
 
 use chapbook_dom::{Document, NodeData, NodeId};
+use chapbook_paint::ImageStore;
 
 use crate::fragmentation::FragStyle;
 
@@ -32,6 +33,13 @@ pub struct BlockBox {
 pub enum BlockKind {
     Container(Vec<BlockBox>),
     Inline(InlineContent),
+    /// A replaced image block (intrinsic size in CSS px).
+    Image {
+        width: u32,
+        height: u32,
+    },
+    /// A horizontal rule.
+    Rule,
 }
 
 /// One inline formatting context: styled text runs in document order, with
@@ -82,6 +90,8 @@ pub struct BoxTreeInput<'a> {
     pub frag: &'a HashMap<NodeId, FragStyle>,
     /// Node → locator-text offset (from `chapbook_dom::locator_offsets`).
     pub locator: &'a HashMap<NodeId, u32>,
+    /// Decoded images keyed by node tag (from `crate::collect_images`).
+    pub images: &'a ImageStore,
 }
 
 /// Build the box tree from the `<body>` element. Returns `None` when there
@@ -199,6 +209,13 @@ fn collect_container(
                 let Some(style) = doc.primary_styles(*child) else {
                     continue;
                 };
+                if display_of(&style) != DisplayClass::None {
+                    if let Some(replaced) = replaced_block(input, *child, &style) {
+                        flush_anonymous(children, pending_inline, anon_node, inherited_style);
+                        children.push(replaced);
+                        continue;
+                    }
+                }
                 match display_of(&style) {
                     DisplayClass::None => {}
                     DisplayClass::Inline => {
@@ -368,4 +385,43 @@ fn push_marker(
         offsets,
         style: style.clone(),
     });
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplacedKind {
+    Image,
+    Rule,
+}
+
+fn replaced_kind(doc: &Document, id: NodeId) -> Option<ReplacedKind> {
+    if doc.is_html_element(id, &markup5ever::local_name!("img")) {
+        Some(ReplacedKind::Image)
+    } else if doc.is_html_element(id, &markup5ever::local_name!("hr")) {
+        Some(ReplacedKind::Rule)
+    } else {
+        None
+    }
+}
+
+/// Build a replaced block for `img`/`hr`. An image missing from the store
+/// (unresolvable src, undecodable data) degrades to nothing.
+fn replaced_block(
+    input: &BoxTreeInput,
+    node: NodeId,
+    style: &ServoArc<ComputedValues>,
+) -> Option<BlockBox> {
+    let kind = match replaced_kind(input.doc, node)? {
+        ReplacedKind::Rule => BlockKind::Rule,
+        ReplacedKind::Image => {
+            let (width, height) = input.images.dims(chapbook_dom::node_tag(node))?;
+            BlockKind::Image { width, height }
+        }
+    };
+    Some(BlockBox {
+        node,
+        style: style.clone(),
+        frag: input.frag.get(&node).copied().unwrap_or_default(),
+        anonymous: false,
+        kind,
+    })
 }

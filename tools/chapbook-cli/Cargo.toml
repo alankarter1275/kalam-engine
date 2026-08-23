@@ -26,6 +26,7 @@ chapbook-render-tinyskia = { workspace = true }
 chapbook-opds = { workspace = true }
 chapbook-library = { workspace = true }
 clap = { workspace = true }
+cosmic-text = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

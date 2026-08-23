@@ -13,7 +13,7 @@ use tiny_skia::{Pixmap, PixmapPaint, PremultipliedColorU8};
 pub use tiny_skia;
 
 use chapbook_core::{Rect, Rgba};
-use chapbook_paint::{DisplayList, DisplayOp};
+use chapbook_paint::{DisplayList, DisplayOp, ImageStore};
 
 pub struct Renderer {
     swash: SwashCache,
@@ -33,11 +33,14 @@ impl Renderer {
     }
 
     /// Rasterize `dl` into `pixmap` at `scale` device pixels per CSS px.
-    /// The pixmap should be at least `dl.size * scale` pixels.
+    /// The pixmap should be at least `dl.size * scale` pixels. `images`
+    /// resolves `DisplayOp::Image` resources; pass an empty store for
+    /// text-only content.
     pub fn render(
         &mut self,
         dl: &DisplayList,
         fonts: &mut FontSystem,
+        images: &ImageStore,
         scale: f32,
         pixmap: &mut Pixmap,
     ) {
@@ -67,6 +70,9 @@ impl Renderer {
                         );
                         self.blend_glyph(fonts, key, xi, yi, *color, pixmap);
                     }
+                }
+                DisplayOp::Image { resource, dest } => {
+                    draw_image(pixmap, images, *resource, dest, scale);
                 }
             }
         }
@@ -171,4 +177,34 @@ fn fill_rect(pixmap: &mut Pixmap, rect: &Rect, color: Rgba, scale: f32) {
     let mut paint = tiny_skia::Paint::default();
     paint.set_color_rgba8(color.r, color.g, color.b, color.a);
     pixmap.fill_rect(r, &paint, tiny_skia::Transform::identity(), None);
+}
+
+fn draw_image(pixmap: &mut Pixmap, images: &ImageStore, resource: u64, dest: &Rect, scale: f32) {
+    let Some(stored) = images.get(resource) else {
+        return;
+    };
+    // Premultiply straight RGBA for tiny-skia.
+    let mut data = stored.rgba.clone();
+    for px in data.chunks_exact_mut(4) {
+        let a = u16::from(px[3]);
+        px[0] = (u16::from(px[0]) * a / 255) as u8;
+        px[1] = (u16::from(px[1]) * a / 255) as u8;
+        px[2] = (u16::from(px[2]) * a / 255) as u8;
+    }
+    let Some(size) = tiny_skia::IntSize::from_wh(stored.width, stored.height) else {
+        return;
+    };
+    let Some(src) = Pixmap::from_vec(data, size) else {
+        return;
+    };
+    let sx = dest.size.w * scale / stored.width as f32;
+    let sy = dest.size.h * scale / stored.height as f32;
+    let transform = tiny_skia::Transform::from_scale(sx, sy)
+        .post_translate(dest.origin.x * scale, dest.origin.y * scale);
+    let paint = PixmapPaint {
+        quality: tiny_skia::FilterQuality::Bilinear,
+        ..PixmapPaint::default()
+    };
+    // draw_pixmap positions via the transform; the x/y args stay zero.
+    pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, transform, None);
 }

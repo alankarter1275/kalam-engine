@@ -7,7 +7,9 @@
 //! and draw ops land in M4.
 
 mod display;
+mod images;
 mod page;
 
 pub use display::{build_display_list, DisplayList, DisplayOp};
-pub use page::{Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page};
+pub use images::{ImageStore, StoredImage};
+pub use page::{Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page};

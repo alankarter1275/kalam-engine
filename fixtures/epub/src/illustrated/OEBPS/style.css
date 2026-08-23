@@ -1,0 +1,21 @@
+@font-face {
+  font-family: "Fixture Fancy";
+  src: url(fonts/fancy.ttf) format("truetype");
+}
+
+@font-face {
+  font-family: "Fixture Obfuscated";
+  src: url(fonts/obf-italic.ttf);
+}
+
+.fancy {
+  font-family: "Fixture Fancy", serif;
+}
+
+.fancy-italic {
+  font-family: "Fixture Obfuscated", serif;
+}
+
+img {
+  margin: 1em 0;
+}

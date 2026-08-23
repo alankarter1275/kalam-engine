@@ -14,7 +14,7 @@ use style::properties::ComputedValues;
 use style::values::computed::LengthPercentage;
 
 use chapbook_core::{PageMetrics, Point, Rect, Size};
-use chapbook_paint::{Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page};
+use chapbook_paint::{Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page};
 
 use crate::boxtree::{BlockBox, BlockKind, InlineContent};
 use crate::fragmentation::BreakRule;
@@ -28,6 +28,7 @@ struct ShapedLine {
     /// Alignment-induced left offset of the line box within its block.
     x_indent: f32,
     runs: Vec<GlyphRun>,
+    decorations: Vec<Decoration>,
     text: String,
     locator_start: u32,
 }
@@ -168,6 +169,27 @@ impl<'f> Paginator<'f> {
                 let tag = chapbook_dom::node_tag(block.node);
                 self.place_lines(lines, block, inner_x, tag);
             }
+            BlockKind::Image { width, height } => {
+                self.place_image(block, *width, *height, inner_x, inner_w);
+            }
+            BlockKind::Rule => {
+                self.commit_margin();
+                let color = text_color(style);
+                let rect = Rect {
+                    origin: Point::new(
+                        self.content.origin.x + inner_x,
+                        self.content.origin.y + self.y,
+                    ),
+                    size: Size::new(inner_w, 1.0),
+                };
+                self.pages.last_mut().unwrap().fragments.push(Fragment {
+                    rect,
+                    kind: FragmentKind::Rule { color },
+                    tag: chapbook_dom::node_tag(block.node),
+                });
+                self.y += 1.0;
+                self.placed_on_page += 1;
+            }
         }
 
         if pad_bottom > 0.0 {
@@ -177,6 +199,43 @@ impl<'f> Paginator<'f> {
         if !block.anonymous && block.frag.break_after == BreakRule::Page {
             self.force_break = true;
         }
+    }
+
+    /// Place a replaced image block: scaled to fit the content width and
+    /// page height, kept whole (an image never splits across pages), and
+    /// centered horizontally.
+    fn place_image(&mut self, block: &BlockBox, width: u32, height: u32, x: f32, inner_w: f32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.commit_margin();
+        let mut w = (width as f32).min(inner_w);
+        let mut h = height as f32 * w / width as f32;
+        let max_h = self.content.size.h;
+        if h > max_h {
+            w *= max_h / h;
+            h = max_h;
+        }
+        if h > self.remaining() + 0.01 && !self.at_page_top() {
+            self.new_page();
+        }
+        let x_center = x + (inner_w - w) / 2.0;
+        let rect = Rect {
+            origin: Point::new(
+                self.content.origin.x + x_center,
+                self.content.origin.y + self.y,
+            ),
+            size: Size::new(w, h),
+        };
+        self.pages.last_mut().unwrap().fragments.push(Fragment {
+            rect,
+            kind: FragmentKind::Image {
+                resource: chapbook_dom::node_tag(block.node),
+            },
+            tag: chapbook_dom::node_tag(block.node),
+        });
+        self.y += h;
+        self.placed_on_page += 1;
     }
 
     fn commit_margin(&mut self) {
@@ -305,12 +364,50 @@ impl<'f> Paginator<'f> {
                     g.x -= x_min;
                 }
             }
+
+            // Decorations: underline/strikethrough spans with font-derived
+            // offsets and thickness (EM units scaled by the span font size).
+            let baseline = run.line_y - run.line_top;
+            let mut decorations = Vec::new();
+            for span in run.decorations {
+                let span_glyphs = &run.glyphs[span.glyph_range.clone()];
+                let Some(first) = span_glyphs.first() else {
+                    continue;
+                };
+                let last = span_glyphs.last().unwrap();
+                let x0 = first.x - x_min;
+                let x1 = last.x + last.w - x_min;
+                let color = span
+                    .color_opt
+                    .map(|c| chapbook_core::Rgba::new(c.r(), c.g(), c.b(), c.a()))
+                    .unwrap_or(fallback_color);
+                // Font size lives on the span, not the metrics data.
+                let size = span.font_size;
+                let mut push = |metrics: cosmic_text::DecorationMetrics| {
+                    let thickness = (metrics.thickness * size).max(1.0);
+                    decorations.push(Decoration {
+                        x: x0,
+                        width: (x1 - x0).max(0.0),
+                        y: baseline - metrics.offset * size,
+                        thickness,
+                        color,
+                    });
+                };
+                if span.data.text_decoration.underline != cosmic_text::UnderlineStyle::None {
+                    push(span.data.underline_metrics);
+                }
+                if span.data.text_decoration.strikethrough {
+                    push(span.data.strikethrough_metrics);
+                }
+            }
+
             lines.push(ShapedLine {
                 height: run.line_height,
-                baseline: run.line_y - run.line_top,
+                baseline,
                 width: run.line_w,
                 x_indent: x_min,
                 runs: glyph_runs,
+                decorations,
                 text,
                 locator_start,
             });
@@ -404,6 +501,7 @@ impl<'f> Paginator<'f> {
                 kind: FragmentKind::Line(LineFragment {
                     baseline: line.baseline,
                     runs: line.runs.clone(),
+                    decorations: line.decorations.clone(),
                     text: line.text.clone(),
                     locator_start: line.locator_start,
                 }),

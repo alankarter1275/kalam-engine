@@ -9,6 +9,7 @@
 
 mod book;
 mod href;
+mod obfuscation;
 
 pub use book::Book;
 pub use href::resolve_href;

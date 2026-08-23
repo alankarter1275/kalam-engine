@@ -1,0 +1,15 @@
+---
+source: tools/chapbook-cli/tests/layout_snapshot.rs
+expression: "commands::layout(&path, 0).unwrap()"
+---
+pages: 1
+anchor #ch1 -> page 0
+-- page 0 (locator start 9)
+  [   40.0,   40.0  365.9x 54.0] base= 37.8 loc=9     "The Illustrated Chapter"
+  [   40.0,  118.1  507.7x 27.0] base= 18.9 loc=37    "Text before the picture, with a underlined link and some struck-through"
+  [   40.0,  145.1  203.9x 27.0] base= 18.9 loc=113   "words for decoration testing."
+  [  268.0,  190.1   64.0x 48.0] Image { resource: 4294967324 }
+  [   40.0,  256.1  419.6x 27.0] base= 18.9 loc=152   "This paragraph uses the aliased embedded font family."
+  [   40.0,  301.1  273.2x 27.0] base= 18.9 loc=210   "And this one uses the obfuscated italic font."
+  [   40.0,  346.1  520.0x  1.0] Rule { color: Rgba { r: 0, g: 0, b: 0, a: 255 } }
+  [   40.0,  365.1  258.2x 27.0] base= 18.9 loc=265   "Text after the rule closes the chapter."

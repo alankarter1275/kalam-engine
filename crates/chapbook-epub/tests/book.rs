@@ -94,3 +94,20 @@ fn fixed_layout_detected_and_content_rejected() {
         Err(chapbook_core::ChapbookError::FixedLayoutUnsupported)
     ));
 }
+
+#[test]
+fn obfuscated_font_deobfuscates_transparently() {
+    let book = Book::open(&fixture("illustrated.epub")).unwrap();
+    let font = book
+        .resource("OEBPS/style.css", "fonts/obf-italic.ttf")
+        .unwrap();
+    // A correctly de-obfuscated TrueType font starts with the sfnt version.
+    assert_eq!(&font.data[0..4], &[0x00, 0x01, 0x00, 0x00]);
+    // And matches the vendored original byte-for-byte.
+    let original = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/fonts/CrimsonText-Italic.ttf"),
+    )
+    .unwrap();
+    assert_eq!(font.data, original);
+}

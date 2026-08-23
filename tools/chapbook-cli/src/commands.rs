@@ -79,6 +79,28 @@ pub fn styles(epub: &Path, spine: usize) -> Result<String> {
     Ok(notes + &chapbook_style::dump_computed_styles(&doc))
 }
 
+/// Register @font-face fonts into `fonts` and decode the chapter's images.
+fn load_chapter_assets(
+    book: &Book,
+    chapter_href: &str,
+    doc: &chapbook_dom::Document,
+    css_pairs: &[(String, String)],
+    fonts: &mut cosmic_text::FontSystem,
+) -> chapbook_paint::ImageStore {
+    for face in chapbook_layout::extract_font_faces(css_pairs) {
+        for src in &face.sources {
+            if let Ok(res) = book.resource(&face.base, src) {
+                if chapbook_layout::register_font(fonts, &face.family, res.data) {
+                    break;
+                }
+            }
+        }
+    }
+    chapbook_layout::collect_images(doc, |href| {
+        book.resource(chapter_href, href).ok().map(|r| r.data)
+    })
+}
+
 pub fn layout(epub: &Path, spine: usize) -> Result<String> {
     let book = Book::open(epub)?;
     let href = book.spine_item(spine)?.href.clone();
@@ -87,7 +109,10 @@ pub fn layout(epub: &Path, spine: usize) -> Result<String> {
     // Deterministic fonts: vendored fixture faces only, never host fonts.
     let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
     let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
-    let layout = chapbook_layout::paginate(&doc, &css, &PageMetrics::default(), &mut fonts);
+    let images = load_chapter_assets(&book, &href, &doc, &css, &mut fonts);
+    let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
+    let layout =
+        chapbook_layout::paginate(&doc, &sheets, &PageMetrics::default(), &mut fonts, &images);
 
     let mut out = notes;
     out.push_str(&format!("pages: {}\n", layout.pages.len()));
@@ -133,8 +158,10 @@ pub fn render(epub: &Path, spine: usize, page: usize, out: &Path) -> Result<Stri
 
     let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
     let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
+    let images = load_chapter_assets(&book, &href, &doc, &css, &mut fonts);
+    let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
     let metrics = PageMetrics::default();
-    let layout = chapbook_layout::paginate(&doc, &css, &metrics, &mut fonts);
+    let layout = chapbook_layout::paginate(&doc, &sheets, &metrics, &mut fonts, &images);
 
     let page_data = layout.pages.get(page).ok_or_else(|| {
         chapbook_core::ChapbookError::Layout(format!(
@@ -151,7 +178,7 @@ pub fn render(epub: &Path, spine: usize, page: usize, out: &Path) -> Result<Stri
     )
     .ok_or_else(|| chapbook_core::ChapbookError::Layout("empty page size".into()))?;
     let mut renderer = chapbook_render_tinyskia::Renderer::new();
-    renderer.render(&dl, &mut fonts, scale, &mut pixmap);
+    renderer.render(&dl, &mut fonts, &images, scale, &mut pixmap);
     pixmap
         .save_png(out)
         .map_err(|e| chapbook_core::ChapbookError::Io(std::io::Error::other(e)))?;
@@ -164,34 +191,45 @@ pub fn render(epub: &Path, spine: usize, page: usize, out: &Path) -> Result<Stri
     ))
 }
 
+/// A chapter's stylesheets as `(css text, container path of the sheet)`.
+type CssSheets = Vec<(String, String)>;
+
 /// Parse + cascade one chapter: shared plumbing for `styles` and `layout`.
 fn styled_chapter(
     book: &Book,
     spine: usize,
     href: &str,
-) -> Result<(chapbook_dom::Document, Vec<String>, String)> {
+) -> Result<(chapbook_dom::Document, CssSheets, String)> {
     let bytes = book.unit_bytes(spine)?;
     let mut doc = chapbook_dom::parse_xhtml(&bytes, href)?;
 
-    // Author stylesheets in document order: <style> contents inline,
-    // <link rel=stylesheet> resolved against the chapter. A missing external
-    // sheet degrades to "no publisher styles from that link", noted in the
-    // output so goldens surface it.
-    let mut css = Vec::new();
+    // Author stylesheets in document order as (text, container path of the
+    // declaring sheet): <style> contents inline (base = the chapter),
+    // <link rel=stylesheet> resolved against the chapter (base = the
+    // stylesheet itself, for @font-face url() resolution). A missing sheet
+    // degrades to "no publisher styles from that link", noted in the output
+    // so goldens surface it.
+    let mut css: Vec<(String, String)> = Vec::new();
     let mut notes = String::new();
     for source in doc.stylesheet_sources() {
         match source {
-            chapbook_dom::StylesheetSource::Inline(text) => css.push(text),
+            chapbook_dom::StylesheetSource::Inline(text) => {
+                css.push((text, href.to_string()));
+            }
             chapbook_dom::StylesheetSource::External(rel) => match book.resource(href, &rel) {
-                Ok(res) => css.push(String::from_utf8_lossy(&res.data).into_owned()),
+                Ok(res) => css.push((
+                    String::from_utf8_lossy(&res.data).into_owned(),
+                    chapbook_epub::resolve_href(href, &rel),
+                )),
                 Err(_) => notes.push_str(&format!("!! stylesheet not found: {rel}\n")),
             },
         }
     }
 
+    let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
     let mut engine =
         chapbook_style::StyleEngine::new(&PageMetrics::default(), &ReadingSettings::default());
-    engine.set_author_sheets(&css);
+    engine.set_author_sheets(&sheets);
     engine.style_document(&mut doc);
     Ok((doc, css, notes))
 }

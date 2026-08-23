@@ -57,6 +57,8 @@ fn main() {
         settings: ReadingSettings::default(),
         metrics: None,
         layouts: HashMap::new(),
+        images: HashMap::new(),
+        registered_fonts: std::collections::HashSet::new(),
         spine: 0,
         page: 0,
     };
@@ -77,6 +79,10 @@ struct App {
     metrics: Option<PageMetrics>,
     /// Chapter layouts cached for the current metrics+settings.
     layouts: HashMap<usize, ChapterLayout>,
+    /// Decoded images per chapter (parallel to `layouts`).
+    images: HashMap<usize, chapbook_paint::ImageStore>,
+    /// @font-face families already loaded into the font system.
+    registered_fonts: std::collections::HashSet<String>,
     spine: usize,
     page: usize,
 }
@@ -88,23 +94,47 @@ impl App {
             let href = self.book.spine_item(spine).ok()?.href.clone();
             let bytes = self.book.unit_bytes(spine).ok()?;
             let mut doc = chapbook_dom::parse_xhtml(&bytes, &href).ok()?;
-            let css: Vec<String> = doc
+            let css: Vec<(String, String)> = doc
                 .stylesheet_sources()
                 .iter()
                 .filter_map(|s| match s {
-                    chapbook_dom::StylesheetSource::Inline(t) => Some(t.clone()),
-                    chapbook_dom::StylesheetSource::External(rel) => self
-                        .book
-                        .resource(&href, rel)
-                        .ok()
-                        .map(|r| String::from_utf8_lossy(&r.data).into_owned()),
+                    chapbook_dom::StylesheetSource::Inline(t) => Some((t.clone(), href.clone())),
+                    chapbook_dom::StylesheetSource::External(rel) => {
+                        self.book.resource(&href, rel).ok().map(|r| {
+                            (
+                                String::from_utf8_lossy(&r.data).into_owned(),
+                                chapbook_epub::resolve_href(&href, rel),
+                            )
+                        })
+                    }
                 })
                 .collect();
+
+            // Register the chapter's @font-face fonts once per family.
+            for face in chapbook_layout::extract_font_faces(&css) {
+                if !self.registered_fonts.insert(face.family.clone()) {
+                    continue;
+                }
+                for src in &face.sources {
+                    if let Ok(res) = self.book.resource(&face.base, src) {
+                        if chapbook_layout::register_font(&mut self.fonts, &face.family, res.data) {
+                            break;
+                        }
+                    }
+                }
+            }
+            let images = chapbook_layout::collect_images(&doc, |img_href| {
+                self.book.resource(&href, img_href).ok().map(|r| r.data)
+            });
+
+            let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
             let mut engine = chapbook_style::StyleEngine::new(&metrics, &self.settings);
-            engine.set_author_sheets(&css);
+            engine.set_author_sheets(&sheets);
             engine.style_document(&mut doc);
-            let layout = chapbook_layout::paginate(&doc, &css, &metrics, &mut self.fonts);
+            let layout =
+                chapbook_layout::paginate(&doc, &sheets, &metrics, &mut self.fonts, &images);
             self.layouts.insert(spine, layout);
+            self.images.insert(spine, images);
         }
         self.layouts.get(&spine)
     }
@@ -120,6 +150,7 @@ impl App {
     fn invalidate_layouts(&mut self, keep_position: bool) {
         let locator = self.current_locator();
         self.layouts.clear();
+        self.images.clear();
         if keep_position {
             if let Some(layout) = self.layout_chapter(self.spine) {
                 self.page = layout.page_of(locator);
@@ -197,11 +228,13 @@ impl App {
             if keep {
                 let locator = self.current_locator();
                 self.layouts.clear();
+                self.images.clear();
                 if let Some(layout) = self.layout_chapter(self.spine) {
                     self.page = layout.page_of(locator);
                 }
             } else {
                 self.layouts.clear();
+                self.images.clear();
             }
         }
 
@@ -225,8 +258,10 @@ impl App {
         let Some(mut pixmap) = Pixmap::new(size.width, size.height) else {
             return;
         };
+        let empty = chapbook_paint::ImageStore::default();
+        let images = self.images.get(&self.spine).unwrap_or(&empty);
         self.renderer
-            .render(&dl, &mut self.fonts, scale, &mut pixmap);
+            .render(&dl, &mut self.fonts, images, scale, &mut pixmap);
 
         window.set_title(&format!(
             "{} — ch {}/{} p {}/{}",

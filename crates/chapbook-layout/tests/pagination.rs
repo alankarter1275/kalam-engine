@@ -31,7 +31,13 @@ fn layout_html(html: &str, css: &str, page: &PageMetrics) -> (ChapterLayout, Doc
     engine.set_author_sheets(&css_sources);
     engine.style_document(&mut doc);
     let mut fonts = fonts();
-    let layout = chapbook_layout::paginate(&doc, &css_sources, page, &mut fonts);
+    let layout = chapbook_layout::paginate(
+        &doc,
+        &css_sources,
+        page,
+        &mut fonts,
+        &chapbook_paint::ImageStore::default(),
+    );
     (layout, doc)
 }
 
@@ -195,7 +201,13 @@ fn fixture_book_layout(spine: usize) -> (ChapterLayout, Document, String) {
     engine.set_author_sheets(&css);
     engine.style_document(&mut doc);
     let mut fonts = fonts();
-    let layout = chapbook_layout::paginate(&doc, &css, &page, &mut fonts);
+    let layout = chapbook_layout::paginate(
+        &doc,
+        &css,
+        &page,
+        &mut fonts,
+        &chapbook_paint::ImageStore::default(),
+    );
     let display_text = chapbook_dom::extract_text(&doc);
     (layout, doc, display_text)
 }

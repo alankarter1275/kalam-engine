@@ -58,6 +58,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 # EPUB
 rbook = "0.7"
+sha1 = "0.10" # IDPF font de-obfuscation key derivation
 
 # OPDS. NOTE: not atom_syndication/feed-rs — both silently drop the
 # foreign-namespace <link> attributes (opds:*, thr:count, pse:*) that facets

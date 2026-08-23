@@ -19,6 +19,7 @@ cosmic-text = { workspace = true }
 markup5ever = { workspace = true }
 app_units = { workspace = true }
 url = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

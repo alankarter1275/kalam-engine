@@ -16,10 +16,13 @@ fn repo(rel: &str) -> PathBuf {
         .join(rel)
 }
 
-fn check_golden(spine: usize, page: usize, golden_rel: &str) {
+fn check_golden_of(book_rel: &str, spine: usize, page: usize, golden_rel: &str) {
     let golden = repo(golden_rel);
-    let out = std::env::temp_dir().join(format!("chapbook-render-{spine}-{page}.png"));
-    commands::render(&repo("fixtures/epub/minimal.epub"), spine, page, &out).unwrap();
+    let out = std::env::temp_dir().join(format!(
+        "chapbook-render-{}-{spine}-{page}.png",
+        golden.file_stem().unwrap().to_string_lossy()
+    ));
+    commands::render(&repo(book_rel), spine, page, &out).unwrap();
     let rendered = std::fs::read(&out).unwrap();
 
     if std::env::var_os("UPDATE_RENDER_GOLDENS").is_some() {
@@ -41,10 +44,32 @@ fn check_golden(spine: usize, page: usize, golden_rel: &str) {
 
 #[test]
 fn render_golden_chapter1_page0() {
-    check_golden(0, 0, "fixtures/render/minimal-s0p0.png");
+    check_golden_of(
+        "fixtures/epub/minimal.epub",
+        0,
+        0,
+        "fixtures/render/minimal-s0p0.png",
+    );
 }
 
 #[test]
 fn render_golden_chapter2_page1() {
-    check_golden(1, 1, "fixtures/render/minimal-s1p1.png");
+    check_golden_of(
+        "fixtures/epub/minimal.epub",
+        1,
+        1,
+        "fixtures/render/minimal-s1p1.png",
+    );
+}
+
+/// Images, embedded fonts (incl. de-obfuscated), decorations, and hr in one
+/// golden.
+#[test]
+fn render_golden_illustrated() {
+    check_golden_of(
+        "fixtures/epub/illustrated.epub",
+        0,
+        0,
+        "fixtures/render/illustrated-s0p0.png",
+    );
 }

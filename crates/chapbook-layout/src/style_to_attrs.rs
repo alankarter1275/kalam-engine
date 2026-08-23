@@ -8,7 +8,10 @@
 //! plain; `text-indent` → not applied (needs first-line indent support in
 //! the line breaker; tracked M5 gap); `text-transform` → none.
 
-use cosmic_text::{Align, Attrs, Color as CosmicColor, Family, Style as CosmicStyle, Weight};
+use cosmic_text::{
+    Align, Attrs, Color as CosmicColor, Family, Style as CosmicStyle, TextDecoration,
+    UnderlineStyle, Weight,
+};
 use style::color::AbsoluteColor;
 use style::properties::ComputedValues;
 use style::values::computed::font::{GenericFontFamily, SingleFontFamily};
@@ -76,12 +79,26 @@ pub fn attrs_for(style: &ComputedValues, metadata: usize) -> Attrs<'_> {
     };
     let color = text_color(style);
 
-    Attrs::new()
+    let mut attrs = Attrs::new()
         .family(family)
         .weight(weight)
         .style(style_flag)
         .color(CosmicColor::rgba(color.r, color.g, color.b, color.a))
-        .metadata(metadata)
+        .metadata(metadata);
+
+    // text-decoration-line → cosmic-text decorations (underline offsets and
+    // thickness come from the font at shaping time).
+    use style::values::specified::text::TextDecorationLine;
+    let deco = style.get_text().text_decoration_line;
+    let mut td = TextDecoration::new();
+    if deco.contains(TextDecorationLine::UNDERLINE) {
+        td.underline = UnderlineStyle::Single;
+    }
+    if deco.contains(TextDecorationLine::LINE_THROUGH) {
+        td.strikethrough = true;
+    }
+    attrs.text_decoration = td;
+    attrs
 }
 
 /// Buffer alignment from computed text-align.

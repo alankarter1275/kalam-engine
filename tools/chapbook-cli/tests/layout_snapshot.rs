@@ -19,3 +19,10 @@ fn layout_chapter1_snapshot() {
 fn layout_chapter2_snapshot() {
     insta::assert_snapshot!(commands::layout(&fixture(), 1).unwrap());
 }
+
+#[test]
+fn layout_illustrated_snapshot() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/epub/illustrated.epub");
+    insta::assert_snapshot!(commands::layout(&path, 0).unwrap());
+}

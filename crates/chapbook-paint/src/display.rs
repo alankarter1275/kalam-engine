@@ -28,6 +28,11 @@ pub enum DisplayOp {
         origin: Point,
         glyphs: Vec<Glyph>,
     },
+    /// A raster image scaled into `dest`, resolved via the `ImageStore`.
+    Image {
+        resource: u64,
+        dest: Rect,
+    },
 }
 
 /// Flatten a laid-out page into draw ops. `background` becomes the first op
@@ -46,6 +51,18 @@ pub fn build_display_list(page: &Page, background: Rgba) -> DisplayList {
                     fragment.rect.origin.x,
                     fragment.rect.origin.y + line.baseline,
                 );
+                // Decorations paint under the glyphs, like browsers do.
+                for deco in &line.decorations {
+                    ops.push(DisplayOp::FillRect {
+                        rect: Rect::new(
+                            fragment.rect.origin.x + deco.x,
+                            fragment.rect.origin.y + deco.y,
+                            deco.width,
+                            deco.thickness,
+                        ),
+                        color: deco.color,
+                    });
+                }
                 for run in &line.runs {
                     ops.push(DisplayOp::GlyphRun {
                         font: run.font,
@@ -63,8 +80,12 @@ pub fn build_display_list(page: &Page, background: Rgba) -> DisplayList {
                     color: *color,
                 });
             }
-            // Image resources land with M5's resource store.
-            FragmentKind::Image { .. } => {}
+            FragmentKind::Image { resource } => {
+                ops.push(DisplayOp::Image {
+                    resource: *resource,
+                    dest: fragment.rect,
+                });
+            }
         }
     }
 
