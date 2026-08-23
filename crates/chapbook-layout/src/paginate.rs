@@ -1319,8 +1319,10 @@ fn cell_chrome(style: &ComputedValues, containing: f32) -> CellChrome {
 
 impl Paginator<'_> {
     /// Lay out a table: CSS auto column sizing (min/max content
-    /// measurement), colspan distribution, border-spacing, atomic-row
-    /// pagination. See `crate::table` for the v1 scope.
+    /// measurement), colspan distribution, rowspan (grid columns resolved
+    /// in `crate::table`; spanned rows grow to fit and paginate as one
+    /// band), border-spacing, atomic-row pagination. See `crate::table`
+    /// for the v1 scope.
     fn place_table(
         &mut self,
         block: &BlockBox,
@@ -1349,20 +1351,19 @@ impl Paginator<'_> {
         let mut chrome_cache: Vec<Vec<CellChrome>> = Vec::with_capacity(table.rows.len());
         for row in &table.rows {
             let mut chromes = Vec::with_capacity(row.cells.len());
-            let mut col = 0usize;
             for cell in &row.cells {
                 let chrome = cell_chrome(&cell.style, width);
                 let extras = chrome.left + chrome.right;
                 let min_content = self.measure_width(&cell.content, &cell.style, 1.0) + extras;
                 let max_content = self.measure_width(&cell.content, &cell.style, 1.0e9) + extras;
-                let span = cell.colspan.min(columns - col.min(columns - 1));
+                let col = cell.col.min(columns - 1);
+                let span = cell.colspan.min(columns - col);
                 // Distribute a spanning cell's demand evenly over its columns.
                 for i in 0..span {
                     let idx = (col + i).min(columns - 1);
                     col_min[idx] = col_min[idx].max(min_content / span as f32);
                     col_max[idx] = col_max[idx].max(max_content / span as f32);
                 }
-                col += span;
                 chromes.push(chrome);
             }
             chrome_cache.push(chromes);
@@ -1408,6 +1409,7 @@ impl Paginator<'_> {
         struct ShapedCell {
             x_rel: f32,
             span_w: f32,
+            row_span: usize,
             chrome_left: f32,
             chrome_top: f32,
             chrome_bottom: f32,
@@ -1419,25 +1421,38 @@ impl Paginator<'_> {
         }
         struct ShapedRow {
             cells: Vec<ShapedCell>,
-            row_h: f32,
         }
 
+        // Left edge of each grid column, relative to the table's left.
+        let col_x: Vec<f32> = {
+            let mut xs = Vec::with_capacity(columns);
+            let mut cx = spacing_h;
+            for w in &widths {
+                xs.push(cx);
+                cx += w + spacing_h;
+            }
+            xs
+        };
+
         let mut shaped_rows: Vec<ShapedRow> = Vec::with_capacity(table.rows.len());
+        // Heights from non-spanning cells first; spanning cells then grow
+        // their rows below.
+        let mut row_heights: Vec<f32> = Vec::with_capacity(table.rows.len());
         for (row_idx, row) in table.rows.iter().enumerate() {
             let chromes = &chrome_cache[row_idx];
             let mut cells = Vec::with_capacity(row.cells.len());
-            let mut col = 0usize;
-            let mut cx = spacing_h;
             for (cell, chrome) in row.cells.iter().zip(chromes) {
-                let span = cell.colspan.min(columns - col.min(columns - 1));
+                let col = cell.col.min(columns - 1);
+                let span = cell.colspan.min(columns - col);
                 let span_w: f32 =
                     widths[col..col + span].iter().sum::<f32>() + spacing_h * (span as f32 - 1.0);
                 let content_w = (span_w - chrome.left - chrome.right).max(1.0);
                 let lines = self.shape_inline(&cell.content, &cell.style, content_w);
                 let content_h: f32 = lines.iter().map(|l| l.height).sum();
                 cells.push(ShapedCell {
-                    x_rel: cx,
+                    x_rel: col_x[col],
                     span_w,
+                    row_span: cell.rowspan.max(1),
                     chrome_left: chrome.left,
                     chrome_top: chrome.top,
                     chrome_bottom: chrome.bottom,
@@ -1447,16 +1462,43 @@ impl Paginator<'_> {
                     content_h,
                     tag: chapbook_dom::node_tag(cell.node),
                 });
-                cx += span_w + spacing_h;
-                col += span;
             }
             let row_h = cells
                 .iter()
+                .filter(|c| c.row_span == 1)
                 .map(|c| c.content_h + c.chrome_top + c.chrome_bottom)
                 .fold(0.0f32, f32::max)
                 .max(1.0);
-            shaped_rows.push(ShapedRow { cells, row_h });
+            row_heights.push(row_h);
+            shaped_rows.push(ShapedRow { cells });
         }
+
+        // A rowspanning cell taller than its rows grows them, the excess
+        // split evenly (CSS 2.1 leaves the distribution unspecified).
+        for (r, row) in shaped_rows.iter().enumerate() {
+            for cell in &row.cells {
+                if cell.row_span <= 1 {
+                    continue;
+                }
+                let end = (r + cell.row_span).min(row_heights.len());
+                let have: f32 =
+                    row_heights[r..end].iter().sum::<f32>() + spacing_v * (end - r - 1) as f32;
+                let need = cell.content_h + cell.chrome_top + cell.chrome_bottom;
+                if need > have {
+                    let grow = (need - have) / (end - r) as f32;
+                    for h in &mut row_heights[r..end] {
+                        *h += grow;
+                    }
+                }
+            }
+        }
+
+        // Border-box height of a cell starting at row `r`: its spanned
+        // rows plus the border-spacing between them.
+        let cell_height = |r: usize, row_span: usize, row_heights: &[f32]| -> f32 {
+            let end = (r + row_span).min(row_heights.len());
+            row_heights[r..end].iter().sum::<f32>() + spacing_v * (end - r - 1) as f32
+        };
 
         // Header row repeats at the top of continuation pages.
         let header: Option<&ShapedRow> = table
@@ -1465,9 +1507,12 @@ impl Paginator<'_> {
             .filter(|r| r.is_header)
             .and_then(|_| shaped_rows.first());
 
-        let emit_row = |this: &mut Self, row: &ShapedRow| {
+        let emit_row = |this: &mut Self, row: &ShapedRow, r_idx: usize, row_heights: &[f32]| {
             let y_top = this.y;
             for cell in &row.cells {
+                // A rowspanning cell is drawn once, at its starting row,
+                // with the combined height of the rows it spans.
+                let cell_h = cell_height(r_idx, cell.row_span, row_heights);
                 if let Some(decoration) = cell.decoration.clone() {
                     this.pages.last_mut().unwrap().fragments.push(Fragment {
                         rect: Rect {
@@ -1475,7 +1520,7 @@ impl Paginator<'_> {
                                 this.content.origin.x + x + cell.x_rel,
                                 this.content.origin.y + y_top,
                             ),
-                            size: Size::new(cell.span_w, row.row_h),
+                            size: Size::new(cell.span_w, cell_h),
                         },
                         kind: FragmentKind::Box(decoration),
                         tag: cell.tag,
@@ -1484,7 +1529,7 @@ impl Paginator<'_> {
                 }
                 // vertical-align: distribute the slack above the content.
                 let slack =
-                    (row.row_h - cell.content_h - cell.chrome_top - cell.chrome_bottom).max(0.0);
+                    (cell_h - cell.content_h - cell.chrome_top - cell.chrome_bottom).max(0.0);
                 let mut ly = y_top
                     + cell.chrome_top
                     + match cell.valign {
@@ -1521,26 +1566,70 @@ impl Paginator<'_> {
                     ly += line.height;
                 }
             }
-            this.y += row.row_h + spacing_v;
+            this.y += row_heights[r_idx] + spacing_v;
         };
 
-        for (row_idx, row) in shaped_rows.iter().enumerate() {
-            // Rows are atomic: move whole rows to the next page, repeating
-            // the header row there when the table declares one.
-            if row.row_h > self.remaining() + 0.01 && !self.at_page_top() {
-                if row_idx == 0 {
-                    self.new_page_keeping();
-                } else {
-                    self.new_page();
+        // Rows tied together by a rowspan paginate as one atomic band:
+        // moving only part of a spanned group would strand the spanning
+        // cell's content on the previous page.
+        let mut bands: Vec<(usize, usize)> = Vec::new();
+        let mut start = 0usize;
+        while start < shaped_rows.len() {
+            let mut end = start + 1;
+            let mut i = start;
+            while i < end {
+                for cell in &shaped_rows[i].cells {
+                    end = end.max(i + cell.row_span);
                 }
-                self.y += spacing_v;
-                if row_idx > 0 {
-                    if let Some(header) = header {
-                        emit_row(self, header);
+                i += 1;
+            }
+            let end = end.min(shaped_rows.len());
+            bands.push((start, end));
+            start = end;
+        }
+
+        for &(start, end) in &bands {
+            // Move a multi-row band whole when it would otherwise split and
+            // can fit on one page.
+            if end - start > 1 {
+                let band_h: f32 = row_heights[start..end].iter().sum::<f32>()
+                    + spacing_v * (end - start - 1) as f32;
+                if band_h > self.remaining() + 0.01
+                    && band_h <= self.content.size.h
+                    && !self.at_page_top()
+                {
+                    if start == 0 {
+                        self.new_page_keeping();
+                    } else {
+                        self.new_page();
+                    }
+                    self.y += spacing_v;
+                    if start > 0 {
+                        if let Some(header) = header {
+                            emit_row(self, header, 0, &row_heights);
+                        }
                     }
                 }
             }
-            emit_row(self, row);
+            for r in start..end {
+                // Rows stay atomic; an over-tall band still breaks between
+                // its rows and the spanning cell truncates at the page edge
+                // (clipped at paint — documented degradation).
+                if row_heights[r] > self.remaining() + 0.01 && !self.at_page_top() {
+                    if r == 0 {
+                        self.new_page_keeping();
+                    } else {
+                        self.new_page();
+                    }
+                    self.y += spacing_v;
+                    if r > 0 {
+                        if let Some(header) = header {
+                            emit_row(self, header, 0, &row_heights);
+                        }
+                    }
+                }
+                emit_row(self, &shaped_rows[r], r, &row_heights);
+            }
         }
         let _ = table_w; // width available for future table-level decoration
     }

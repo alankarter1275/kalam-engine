@@ -2,13 +2,15 @@
 //! computed `display` types (so CSS-retargeted elements work, not just
 //! `<table>` markup).
 //!
-//! v1 scope, chosen for book content: colspan honored; **rowspan treated
-//! as 1** (the cell stays in its starting row); `vertical-align` supports
-//! top/middle/text-bottom; captions lay out as a block above the table;
-//! header rows (thead or all-`<th>`) repeat at the top of continuation
-//! pages; nested tables flatten into their cell's text. Cell content is flattened to one inline formatting context —
-//! block children separate with hard line breaks — which matches how data
-//! cells in books are actually written.
+//! v1 scope, chosen for book content: colspan and rowspan honored (grid
+//! positions assigned with the HTML occupancy algorithm; `rowspan="0"`
+//! spans to the last row; spans ignore row-group boundaries since rows are
+//! flattened); `vertical-align` supports top/middle/text-bottom; captions
+//! lay out as a block above the table; header rows (thead or all-`<th>`)
+//! repeat at the top of continuation pages; nested tables flatten into
+//! their cell's text. Cell content is flattened to one inline formatting
+//! context — block children separate with hard line breaks — which matches
+//! how data cells in books are actually written.
 
 use style::properties::ComputedValues;
 use style::servo_arc::Arc as ServoArc;
@@ -38,6 +40,12 @@ pub struct TableCell {
     pub node: NodeId,
     pub style: ServoArc<ComputedValues>,
     pub colspan: usize,
+    /// Rows this cell spans, already clamped to the rows that exist below
+    /// it (`rowspan="0"` resolves to "all remaining").
+    pub rowspan: usize,
+    /// Resolved grid column of the cell's left edge — cells do not simply
+    /// pack left to right once rowspans occupy slots from earlier rows.
+    pub col: usize,
     pub content: InlineContent,
 }
 
@@ -108,13 +116,50 @@ pub fn build_table(input: &BoxTreeInput, node: NodeId) -> Option<TableBox> {
         }
     }
 
+    assign_grid_positions(&mut table);
+    (table.columns > 0).then_some(table)
+}
+
+/// Resolve every cell's grid column with the HTML occupancy algorithm:
+/// a cell slides right past columns still covered by rowspans from earlier
+/// rows. Also clamps rowspans to the rows that exist (`0` = to the end).
+fn assign_grid_positions(table: &mut TableBox) {
+    let row_count = table.rows.len();
+    // Per column: how many rows (including the current one) a spanning
+    // cell still covers.
+    let mut occupied: Vec<usize> = Vec::new();
+    for row_idx in 0..row_count {
+        let mut col = 0usize;
+        for cell in &mut table.rows[row_idx].cells {
+            while col < occupied.len() && occupied[col] > 0 {
+                col += 1;
+            }
+            cell.col = col;
+            cell.rowspan = if cell.rowspan == 0 {
+                row_count - row_idx
+            } else {
+                cell.rowspan.min(row_count - row_idx)
+            };
+            let end = col + cell.colspan;
+            if occupied.len() < end {
+                occupied.resize(end, 0);
+            }
+            for slot in &mut occupied[col..end] {
+                *slot = cell.rowspan;
+            }
+            col = end;
+        }
+        for slot in &mut occupied {
+            *slot = slot.saturating_sub(1);
+        }
+    }
     table.columns = table
         .rows
         .iter()
-        .map(|r| r.cells.iter().map(|c| c.colspan).sum::<usize>())
+        .flat_map(|r| r.cells.iter())
+        .map(|c| c.col + c.colspan)
         .max()
         .unwrap_or(0);
-    (table.columns > 0).then_some(table)
 }
 
 fn build_row(input: &BoxTreeInput, row: NodeId) -> Option<TableRow> {
@@ -136,6 +181,13 @@ fn build_row(input: &BoxTreeInput, row: NodeId) -> Option<TableRow> {
             .and_then(|v| v.trim().parse::<usize>().ok())
             .unwrap_or(1)
             .clamp(1, 100);
+        // rowspan=0 is HTML for "to the end of the table"; resolved (and
+        // clamped to the rows that exist) once all rows are collected.
+        let rowspan = el
+            .attr(&markup5ever::local_name!("rowspan"))
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(1)
+            .min(100);
         all_th &= *el.local_name() == markup5ever::local_name!("th");
         let mut content = InlineContent::default();
         collect_flattened(input, *child, &style, &mut content);
@@ -146,6 +198,8 @@ fn build_row(input: &BoxTreeInput, row: NodeId) -> Option<TableRow> {
             node: *child,
             style,
             colspan,
+            rowspan,
+            col: 0, // resolved by the grid-assignment pass
             content,
         });
     }

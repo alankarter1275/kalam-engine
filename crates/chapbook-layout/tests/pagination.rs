@@ -912,3 +912,167 @@ fn hyphenated_justified_line_holds_the_measure() {
     }
     assert!(checked >= 1, "no hyphenated justified lines found");
 }
+
+// ---- Rowspan ----
+
+/// (x, y, w, h) of box-decoration fragments.
+type BoxRects = Vec<(f32, f32, f32, f32)>;
+/// (x, y, text) of line fragments.
+type LinePositions = Vec<(f32, f32, String)>;
+
+fn boxes_and_lines(layout: &ChapterLayout, page: usize) -> (BoxRects, LinePositions) {
+    let mut boxes = Vec::new();
+    let mut lines = Vec::new();
+    for f in &layout.pages[page].fragments {
+        match &f.kind {
+            FragmentKind::Box(_) => boxes.push((
+                f.rect.origin.x,
+                f.rect.origin.y,
+                f.rect.size.w,
+                f.rect.size.h,
+            )),
+            FragmentKind::Line(l) => lines.push((f.rect.origin.x, f.rect.origin.y, l.text.clone())),
+            _ => {}
+        }
+    }
+    (boxes, lines)
+}
+
+#[test]
+fn rowspan_cell_occupies_column_across_rows() {
+    let html = "<html><body><table>\
+                <tr><td rowspan=\"2\">Span</td><td>TopRight</td></tr>\
+                <tr><td>BottomRight</td></tr>\
+                </table></body></html>";
+    let (layout, _) = layout_html(
+        html,
+        "td { border: 1px solid black; padding: 0; }",
+        &page_for_lines(10),
+    );
+    let (boxes, lines) = boxes_and_lines(&layout, 0);
+    let find = |t: &str| {
+        lines
+            .iter()
+            .find(|l| l.2.contains(t))
+            .unwrap_or_else(|| panic!("missing line {t}"))
+            .clone()
+    };
+    let span = find("Span");
+    let top = find("TopRight");
+    let bottom = find("BottomRight");
+    // The second row's only cell sits in the SECOND column, not the first.
+    assert!(
+        (bottom.0 - top.0).abs() < 0.5,
+        "bottom-right cell must align under top-right: top={top:?} bottom={bottom:?}"
+    );
+    assert!(bottom.0 > span.0 + 10.0);
+    assert!(bottom.1 > top.1, "second row is below the first");
+    // The spanning cell's border box covers both rows: it is the tallest.
+    let span_box = boxes
+        .iter()
+        .filter(|b| b.0 < top.0) // first column
+        .cloned()
+        .fold(
+            (0.0, 0.0, 0.0, 0.0f32),
+            |a, b| if b.3 > a.3 { b } else { a },
+        );
+    let right_box_h = boxes
+        .iter()
+        .filter(|b| b.0 >= top.0 - 2.0)
+        .map(|b| b.3)
+        .fold(0.0f32, f32::max);
+    // Two 27px rows + 2px border-spacing between them + borders.
+    assert!(
+        span_box.3 >= right_box_h * 1.8,
+        "rowspan box must span both rows: span_h={} single_h={right_box_h}",
+        span_box.3
+    );
+}
+
+#[test]
+fn rowspan_content_grows_spanned_rows() {
+    // The spanning cell holds 4 hard lines; each spanned row alone holds 1.
+    let html = "<html><body><table>\
+                <tr><td rowspan=\"2\">a<br/>b<br/>c<br/>d</td><td>one</td></tr>\
+                <tr><td>two</td></tr>\
+                </table></body></html>";
+    let (layout, _) = layout_html(
+        html,
+        "td { padding: 0; border: 1px solid black; }",
+        &page_for_lines(10),
+    );
+    let (_, lines) = boxes_and_lines(&layout, 0);
+    let find = |t: &str| lines.iter().find(|l| l.2 == t).unwrap().clone();
+    let one = find("one");
+    let two = find("two");
+    // 4 lines (108px) split over two rows: the second row starts ~2 lines
+    // down, not 1 line down.
+    let gap = two.1 - one.1;
+    assert!(
+        gap > 27.0 * 1.5,
+        "spanned rows must grow to hold the tall cell: gap={gap}"
+    );
+    // All four spanning-cell lines are present, in order, in column 1.
+    let col1: Vec<_> = lines.iter().filter(|l| l.0 < one.0).collect();
+    assert_eq!(
+        col1.iter().map(|l| l.2.as_str()).collect::<Vec<_>>(),
+        vec!["a", "b", "c", "d"]
+    );
+}
+
+#[test]
+fn rowspan_band_paginates_atomically() {
+    // Page holds 4 lines; 3 lines of filler leave 1 line of room. The
+    // 2-row band tied by the rowspan needs 2 lines and must move whole.
+    let html = format!(
+        "<html><body>{}<table>\
+         <tr><td rowspan=\"2\">Span</td><td>RowOne</td></tr>\
+         <tr><td>RowTwo</td></tr>\
+         </table></body></html>",
+        para_of_lines(3, "filler")
+    );
+    let (layout, _) = layout_html(
+        &html,
+        "p { margin: 0; } table { margin: 0; } td { padding: 0; }",
+        &page_for_lines(4),
+    );
+    assert_eq!(layout.pages.len(), 2);
+    let (_, page0_lines) = boxes_and_lines(&layout, 0);
+    let (_, page1_lines) = boxes_and_lines(&layout, 1);
+    assert!(
+        page0_lines
+            .iter()
+            .all(|l| !l.2.contains("Row") && !l.2.contains("Span")),
+        "table band must not start on page 0: {page0_lines:?}"
+    );
+    for t in ["Span", "RowOne", "RowTwo"] {
+        assert!(
+            page1_lines.iter().any(|l| l.2.contains(t)),
+            "{t} must be on page 1: {page1_lines:?}"
+        );
+    }
+}
+
+#[test]
+fn rowspan_zero_spans_to_last_row() {
+    let html = "<html><body><table>\
+                <tr><td rowspan=\"0\">Span</td><td>r1</td></tr>\
+                <tr><td>r2</td></tr>\
+                <tr><td>r3</td></tr>\
+                </table></body></html>";
+    let (layout, _) = layout_html(
+        html,
+        "td { border: 1px solid black; padding: 0; }",
+        &page_for_lines(10),
+    );
+    let (_, lines) = boxes_and_lines(&layout, 0);
+    let r1 = lines.iter().find(|l| l.2 == "r1").unwrap().clone();
+    // Every body row's cell lands in column 2.
+    for t in ["r2", "r3"] {
+        let l = lines.iter().find(|l| l.2 == t).unwrap();
+        assert!(
+            (l.0 - r1.0).abs() < 0.5,
+            "{t} must sit in the second column: {l:?} vs r1 {r1:?}"
+        );
+    }
+}

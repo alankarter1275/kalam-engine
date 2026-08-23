@@ -31,19 +31,25 @@ anchor #ch1 -> page 0
   [   40.0,  166.0  520.0x 27.0] base= 18.9 loc=959   "internationalization, magnificent developments in contemporary biblio-"
   [   40.0,  193.0  171.8x 27.0] base= 18.9 loc=1032  "graphical craftsmanship."
   [  244.2,  238.0  111.6x 27.0] base= 18.9 loc=1068  "Vessel Particulars"
-  [   42.0,  267.0  123.4x 35.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   42.0,  267.0  123.5x 35.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
   [   49.0,  271.0   69.6x 27.0] base= 18.9 loc=1093  "Property"
-  [  167.4,  267.0  390.6x 35.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
-  [  174.4,  271.0   44.5x 27.0] base= 18.9 loc=1101  "Value"
-  [   42.0,  304.0  123.4x 62.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  167.5,  267.0  390.5x 35.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  271.0   44.5x 27.0] base= 18.9 loc=1101  "Value"
+  [   42.0,  304.0  123.5x 62.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
   [   49.0,  308.0   24.9x 27.0] base= 18.9 loc=1113  "Rig"
-  [  167.4,  304.0  390.6x 62.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
-  [  174.4,  308.0  341.1x 27.0] base= 18.9 loc=1116  "Three-masted barque, square-rigged on fore and"
-  [  174.4,  335.0   36.0x 27.0] base= 18.9 loc=1163  "main"
-  [   42.0,  368.0  123.4x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  167.5,  304.0  390.5x 62.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  308.0  341.1x 27.0] base= 18.9 loc=1116  "Three-masted barque, square-rigged on fore and"
+  [  174.5,  335.0   36.0x 27.0] base= 18.9 loc=1163  "main"
+  [   42.0,  368.0  123.5x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
   [   49.0,  372.0   61.7x 27.0] base= 18.9 loc=1174  "Tonnage"
-  [  167.4,  368.0  390.6x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
-  [  174.4,  372.0  120.0x 27.0] base= 18.9 loc=1181  "238 tons burthen"
-  [   42.0,  405.0  516.0x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
-  [   49.0,  409.0  235.4x 27.0] base= 18.9 loc=1204  "Figures as recorded at first survey"
-  [   40.0,  460.0  258.2x 27.0] base= 18.9 loc=1249  "Text after the rule closes the chapter."
+  [  167.5,  368.0  390.5x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  372.0  120.0x 27.0] base= 18.9 loc=1181  "238 tons burthen"
+  [   42.0,  405.0  123.5x 72.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  409.0   84.9x 27.0] base= 18.9 loc=1204  "Dimensions"
+  [  167.5,  405.0  390.5x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  409.0  133.3x 27.0] base= 18.9 loc=1214  "90 ft length overall"
+  [  167.5,  442.0  390.5x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  446.0   73.7x 27.0] base= 18.9 loc=1241  "24 ft beam"
+  [   42.0,  479.0  516.0x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  483.0  235.4x 27.0] base= 18.9 loc=1258  "Figures as recorded at first survey"
+  [   40.0,  534.0  258.2x 27.0] base= 18.9 loc=1303  "Text after the rule closes the chapter."

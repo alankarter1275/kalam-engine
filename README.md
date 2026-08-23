@@ -43,9 +43,9 @@ and text decorations render. `chapbook --help` for the dev CLI;
 
 See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:
 fixed-layout EPUB, JavaScript/scripted content, MathML, vertical writing
-modes, media overlays, DRM. Known layout gaps: table rowspan, floated
-non-image blocks (floated images wrap text for real; hyphenation is
-dictionary-based, en-US).
+modes, media overlays, DRM. Known layout gaps: floated non-image blocks
+(floated images wrap text for real; hyphenation is dictionary-based,
+en-US).
 
 ## License
 
