@@ -130,8 +130,8 @@ sup {
   font-size: 0.83em;
 }
 
-/* Tables (v1 renders them as stacked blocks, but the display types must
- * compute correctly so layout can degrade knowingly) */
+/* Tables (real grid layout in chapbook-layout::table; these display types
+ * drive the structure walk) */
 table    { display: table; border-collapse: separate; border-spacing: 2px; margin-block-start: 1em; margin-block-end: 1em; }
 caption  { display: table-caption; text-align: center; }
 thead    { display: table-header-group; }

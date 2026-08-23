@@ -41,6 +41,8 @@ pub enum BlockKind {
     },
     /// A horizontal rule.
     Rule,
+    /// A real table grid (see `crate::table`).
+    Table(Box<crate::table::TableBox>),
 }
 
 /// One inline formatting context: styled text runs in document order, with
@@ -164,6 +166,20 @@ pub fn display_of(style: &ComputedValues) -> DisplayClass {
 fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValues>) -> BlockBox {
     let doc = input.doc;
     let frag = input.frag.get(&node).copied().unwrap_or_default();
+
+    // Table elements get the real grid treatment.
+    if style.get_box().display.inside() == style::values::specified::box_::DisplayInside::Table {
+        if let Some(table) = crate::table::build_table(input, node) {
+            return BlockBox {
+                node,
+                style,
+                frag,
+                anonymous: false,
+                kind: BlockKind::Table(Box::new(table)),
+            };
+        }
+        // Cell-less table: fall through to ordinary block handling.
+    }
 
     // Determine content model: any block-level element child → container.
     let has_block_child = doc.node(node).children.iter().any(|child| {
@@ -379,6 +395,17 @@ fn push_generated(
 /// Append a text node's content with CSS `white-space: normal` collapsing
 /// (the collapsible set: space, tab, CR, LF, FF — never NBSP), tracking the
 /// locator offset of every kept char.
+/// Crate-visible alias for the table builder, which lives in a sibling
+/// module but shares the collapsing rules.
+pub(crate) fn append_collapsed_pub(
+    out: &mut InlineContent,
+    text: &str,
+    locator_start: u32,
+    style: ServoArc<ComputedValues>,
+) {
+    append_collapsed(out, text, locator_start, style)
+}
+
 fn append_collapsed(
     out: &mut InlineContent,
     text: &str,

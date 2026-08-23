@@ -145,8 +145,7 @@ types use. MSRV 1.89 (stylo 0.20's floor), stable toolchain — no nightly.
 
 Fixed-layout EPUB (detected, rejected with a clear error), JavaScript
 (spec-permitted omission for reading systems), MathML, vertical writing
-modes, floats (v1: rendered as plain blocks), real tables (v1: stacked
-blocks; fixed table layout is a stretch goal), absolute positioning (treated
+modes, floats (v1: rendered as plain blocks), rowspan/vertical-align in tables, absolute positioning (treated
 as static), media overlays, DRM.
 
 ## Milestones

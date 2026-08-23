@@ -2,7 +2,7 @@
 source: tools/chapbook-cli/tests/layout_snapshot.rs
 expression: "commands::layout(&path, 0).unwrap()"
 ---
-pages: 1
+pages: 2
 anchor #ch1 -> page 0
 -- page 0 (locator start 9)
   [   40.0,   40.0  365.9x 54.0] base= 37.8 loc=9     "The Illustrated Chapter"
@@ -20,4 +20,21 @@ anchor #ch1 -> page 0
   [   40.0,  522.1  475.2x 27.0] base= 18.9 loc=439   "the first-line indent is visible against the following lines of the same"
   [   40.0,  549.1   75.4x 27.0] base= 18.9 loc=516   "paragraph."
   [   40.0,  594.1  369.5x 27.0] base= 18.9 loc=531   "☙\u{a0}A paragraph with generated content around it. ☙"
-  [   40.0,  639.1  258.2x 27.0] base= 18.9 loc=581   "Text after the rule closes the chapter."
+  [  244.2,  639.1  111.6x 27.0] base= 18.9 loc=588   "Vessel Particulars"
+  [   42.0,  668.1  123.4x 35.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  672.1   69.6x 27.0] base= 18.9 loc=613   "Property"
+  [  167.4,  668.1  390.6x 35.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.4,  672.1   44.5x 27.0] base= 18.9 loc=621   "Value"
+-- page 1 (locator start 633)
+  [   42.0,   42.0  123.4x 62.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,   46.0   24.9x 27.0] base= 18.9 loc=633   "Rig"
+  [  167.4,   42.0  390.6x 62.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.4,   46.0  341.1x 27.0] base= 18.9 loc=636   "Three-masted barque, square-rigged on fore and"
+  [  174.4,   73.0   36.0x 27.0] base= 18.9 loc=683   "main"
+  [   42.0,  106.0  123.4x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  110.0   61.7x 27.0] base= 18.9 loc=694   "Tonnage"
+  [  167.4,  106.0  390.6x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.4,  110.0  120.0x 27.0] base= 18.9 loc=701   "238 tons burthen"
+  [   42.0,  143.0  516.0x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  147.0  235.4x 27.0] base= 18.9 loc=724   "Figures as recorded at first survey"
+  [   40.0,  198.0  258.2x 27.0] base= 18.9 loc=769   "Text after the rule closes the chapter."

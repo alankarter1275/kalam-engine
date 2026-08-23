@@ -9,17 +9,19 @@
 //! locator docs) thread through every line fragment, so positions survive
 //! relayout via [`ChapterLayout::page_of`].
 //!
-//! v1 gaps (documented in the module that owns each): tables (stacked
-//! blocks), floats, `@media`-scoped break rules, keep-with-next
-//! (`break-after: avoid`), hyphenation (cosmic-text has no soft-hyphen
-//! support), justified first lines of indented paragraphs (see
-//! `shape_inline_indented`), non-string `content` items.
+//! v1 gaps (documented in the module that owns each): floats,
+//! `@media`-scoped break rules, keep-with-next (`break-after: avoid`),
+//! hyphenation (cosmic-text has no soft-hyphen support), justified first
+//! lines of indented paragraphs (see `shape_inline_indented`), non-string
+//! `content` items, table rowspan / vertical-align / header repetition
+//! (see `crate::table`).
 
 mod boxtree;
 mod fonts;
 mod fragmentation;
 mod paginate;
 mod style_to_attrs;
+mod table;
 mod webfonts;
 
 use std::collections::HashMap;

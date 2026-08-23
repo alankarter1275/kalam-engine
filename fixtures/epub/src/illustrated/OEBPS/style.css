@@ -44,3 +44,21 @@ img {
   content: " \2619";
   color: #8b5a2b;
 }
+
+.specs {
+  width: 100%;
+}
+
+.specs caption {
+  font-style: italic;
+}
+
+.specs th, .specs td {
+  border: 1px solid #8b5a2b;
+  padding: 3px 6px;
+  text-align: left;
+}
+
+.specs th {
+  background-color: #f2ead9;
+}

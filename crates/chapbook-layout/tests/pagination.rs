@@ -374,3 +374,141 @@ fn undecorated_blocks_emit_no_box_fragments() {
         .flat_map(|p| &p.fragments)
         .all(|f| !matches!(f.kind, chapbook_paint::FragmentKind::Box(_))));
 }
+
+// ---- Tables ----
+
+fn cell_lines(layout: &ChapterLayout) -> Vec<(f32, f32, String)> {
+    layout
+        .pages
+        .iter()
+        .flat_map(|p| &p.fragments)
+        .filter_map(|f| match &f.kind {
+            FragmentKind::Line(l) => Some((f.rect.origin.x, f.rect.origin.y, l.text.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn table_columns_lay_out_side_by_side() {
+    let html = r#"<html><body><table>
+        <tr><td>a</td><td>considerably longer cell content here</td></tr>
+        <tr><td>b</td><td>short</td></tr>
+    </table></body></html>"#;
+    let (layout, _) = layout_html(html, "td { padding: 2px; }", &page_for_lines(10));
+    let lines = cell_lines(&layout);
+    let a = lines.iter().find(|(_, _, t)| t == "a").unwrap();
+    let long = lines
+        .iter()
+        .find(|(_, _, t)| t.starts_with("considerably"))
+        .unwrap();
+    let b = lines.iter().find(|(_, _, t)| t == "b").unwrap();
+    // Same row: same y, different x; column B right of A.
+    assert!((a.1 - long.1).abs() < 0.5, "row cells align vertically");
+    assert!(long.0 > a.0 + 5.0, "second column right of first");
+    // Column x stable across rows.
+    assert!((a.0 - b.0).abs() < 0.5, "first column x consistent");
+    // Long content did not wrap: column got its max-content width.
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|(_, _, t)| t.contains("longer cell"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn table_narrow_page_wraps_long_column() {
+    let html = r#"<html><body><table>
+        <tr><td>key</td><td>a rather long value that cannot fit on one narrow line at all</td></tr>
+    </table></body></html>"#;
+    let mut page = page_for_lines(10);
+    page.size.w = 300.0;
+    let (layout, _) = layout_html(html, "", &page);
+    let lines = cell_lines(&layout);
+    let value_lines = lines.iter().filter(|(_, _, t)| t != "key").count();
+    assert!(
+        value_lines >= 2,
+        "long column must wrap when space is short"
+    );
+    // Everything stays inside the content box.
+    for page in &layout.pages {
+        for frag in &page.fragments {
+            assert!(page.content.contains_rect(&frag.rect), "{:?}", frag.rect);
+        }
+    }
+}
+
+#[test]
+fn table_colspan_spans_columns() {
+    let html = r#"<html><body><table>
+        <tr><th colspan="2">Spanning Header</th></tr>
+        <tr><td>left cell text</td><td>right cell text</td></tr>
+    </table></body></html>"#;
+    let (layout, _) = layout_html(
+        html,
+        "th, td { border: 1px solid #000; padding: 2px; }",
+        &page_for_lines(10),
+    );
+    // Box fragments per cell: 3 (one spanning + two normal).
+    let boxes: Vec<&chapbook_paint::Fragment> = layout
+        .pages
+        .iter()
+        .flat_map(|p| &p.fragments)
+        .filter(|f| matches!(f.kind, FragmentKind::Box(_)))
+        .collect();
+    assert_eq!(boxes.len(), 3);
+    let spanning = boxes[0];
+    let left = boxes[1];
+    let right = boxes[2];
+    let spanned = right.rect.max_x() - left.rect.origin.x;
+    assert!(
+        (spanning.rect.size.w - spanned).abs() < 1.0,
+        "header spans both columns: header={} cells={spanned}",
+        spanning.rect.size.w
+    );
+}
+
+#[test]
+fn table_rows_break_atomically_across_pages() {
+    let mut rows = String::new();
+    for i in 0..8 {
+        rows.push_str(&format!("<tr><td>row {i} cell</td></tr>"));
+    }
+    let html = format!("<html><body><table>{rows}</table></body></html>");
+    let (layout, _) = layout_html(&html, "td { padding: 0; }", &page_for_lines(4));
+    assert!(layout.pages.len() >= 2, "table must paginate");
+    // No row's text is split across pages: each "row N cell" line appears
+    // exactly once, and y positions restart near the top on later pages.
+    let lines = cell_lines(&layout);
+    assert_eq!(lines.len(), 8);
+    let first_on_page2 = &layout.pages[1].fragments[0];
+    assert!(first_on_page2.rect.origin.y < 40.0 + 30.0 + 5.0);
+}
+
+#[test]
+fn table_caption_and_text_order_preserved() {
+    let html = r#"<html><body>
+      <table>
+        <caption>Table One</caption>
+        <tr><td>alpha</td><td>beta</td></tr>
+        <tr><td>gamma</td><td>delta</td></tr>
+      </table></body></html>"#;
+    let (layout, _) = layout_html(html, "", &page_for_lines(10));
+    let texts: Vec<String> = cell_lines(&layout).into_iter().map(|(_, _, t)| t).collect();
+    assert_eq!(texts[0], "Table One", "caption first");
+    for word in ["alpha", "beta", "gamma", "delta"] {
+        assert!(texts.iter().any(|t| t == word), "missing {word}");
+    }
+    // Locator monotonicity across the whole fragment stream still holds.
+    let mut last = 0u32;
+    for page in &layout.pages {
+        for frag in &page.fragments {
+            if let FragmentKind::Line(l) = &frag.kind {
+                assert!(l.locator_start >= last);
+                last = l.locator_start;
+            }
+        }
+    }
+}

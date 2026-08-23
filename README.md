@@ -43,9 +43,8 @@ and text decorations render. `chapbook --help` for the dev CLI;
 
 See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:
 fixed-layout EPUB, JavaScript/scripted content, MathML, vertical writing
-modes, media overlays, DRM. Known v1 layout gaps: `::before`/`::after`
-content, `text-indent`, real tables (stacked blocks), floats,
-borders/backgrounds painting.
+modes, media overlays, DRM. Known layout gaps: floats, hyphenation,
+table rowspan/vertical-align, `@media`-scoped break rules.
 
 ## License
 

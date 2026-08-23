@@ -219,6 +219,9 @@ impl<'f> Paginator<'f> {
             BlockKind::Image { width, height } => {
                 self.place_image(block, *width, *height, inner_x, inner_w);
             }
+            BlockKind::Table(table) => {
+                self.place_table(block, table, inner_x, inner_w);
+            }
             BlockKind::Rule => {
                 self.commit_margin();
                 let color = text_color(style);
@@ -778,4 +781,226 @@ fn box_decoration_of(style: &ComputedValues) -> Option<BoxDecoration> {
         first_slice: true,
         last_slice: true,
     })
+}
+
+// ---- Table layout ----
+
+/// Per-cell box extras (padding + border on each axis) and decoration.
+struct CellChrome {
+    decoration: Option<BoxDecoration>,
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+}
+
+fn cell_chrome(style: &ComputedValues, containing: f32) -> CellChrome {
+    let p = style.get_padding();
+    let decoration = box_decoration_of(style);
+    let b = decoration
+        .as_ref()
+        .map(|d| d.border_widths)
+        .unwrap_or_default();
+    CellChrome {
+        left: resolve_padding(&p.padding_left, containing) + b.left,
+        right: resolve_padding(&p.padding_right, containing) + b.right,
+        top: resolve_padding(&p.padding_top, containing) + b.top,
+        bottom: resolve_padding(&p.padding_bottom, containing) + b.bottom,
+        decoration,
+    }
+}
+
+impl Paginator<'_> {
+    /// Lay out a table: CSS auto column sizing (min/max content
+    /// measurement), colspan distribution, border-spacing, atomic-row
+    /// pagination. See `crate::table` for the v1 scope.
+    fn place_table(
+        &mut self,
+        block: &BlockBox,
+        table: &crate::table::TableBox,
+        x: f32,
+        width: f32,
+    ) {
+        // Caption first, as an ordinary block of lines.
+        if let (Some(caption), Some(caption_style)) = (&table.caption, &table.caption_style) {
+            let lines = self.shape_inline(caption, caption_style, width);
+            self.place_lines(lines, block, x, chapbook_dom::node_tag(block.node));
+        }
+
+        let columns = table.columns;
+        if columns == 0 {
+            return;
+        }
+        let style = &block.style;
+        let spacing = style.get_inherited_table().border_spacing;
+        let (spacing_h, spacing_v) = (spacing.0.width.0.px(), spacing.0.height.0.px());
+        let total_spacing = spacing_h * (columns as f32 + 1.0);
+
+        // --- Column sizing: min/max content measurement ---
+        let mut col_min = vec![0.0f32; columns];
+        let mut col_max = vec![0.0f32; columns];
+        let mut chrome_cache: Vec<Vec<CellChrome>> = Vec::with_capacity(table.rows.len());
+        for row in &table.rows {
+            let mut chromes = Vec::with_capacity(row.cells.len());
+            let mut col = 0usize;
+            for cell in &row.cells {
+                let chrome = cell_chrome(&cell.style, width);
+                let extras = chrome.left + chrome.right;
+                let min_content = self.measure_width(&cell.content, &cell.style, 1.0) + extras;
+                let max_content = self.measure_width(&cell.content, &cell.style, 1.0e9) + extras;
+                let span = cell.colspan.min(columns - col.min(columns - 1));
+                // Distribute a spanning cell's demand evenly over its columns.
+                for i in 0..span {
+                    let idx = (col + i).min(columns - 1);
+                    col_min[idx] = col_min[idx].max(min_content / span as f32);
+                    col_max[idx] = col_max[idx].max(max_content / span as f32);
+                }
+                col += span;
+                chromes.push(chrome);
+            }
+            chrome_cache.push(chromes);
+        }
+
+        // --- Table width: shrink-to-fit unless an explicit width is set ---
+        let available = (width - total_spacing).max(1.0);
+        let explicit = table_width_px(style, width).map(|w| (w - total_spacing).max(1.0));
+        let sum_min: f32 = col_min.iter().sum();
+        let sum_max: f32 = col_max.iter().sum();
+        let target = match explicit {
+            Some(w) => w.min(available),
+            None => sum_max.min(available),
+        };
+        let widths: Vec<f32> = if sum_max <= target {
+            if explicit.is_some() && sum_max > 0.0 {
+                // Stretch to the requested width, proportional to max.
+                col_max
+                    .iter()
+                    .map(|m| m + (target - sum_max) * m / sum_max)
+                    .collect()
+            } else {
+                col_max.clone()
+            }
+        } else if sum_min >= target {
+            col_min.clone() // overflow allowed
+        } else {
+            // min + share of the slack proportional to (max - min).
+            let slack = target - sum_min;
+            let range = (sum_max - sum_min).max(0.001);
+            col_min
+                .iter()
+                .zip(&col_max)
+                .map(|(mn, mx)| mn + slack * (mx - mn) / range)
+                .collect()
+        };
+        let table_w: f32 = widths.iter().sum::<f32>() + total_spacing;
+
+        // --- Rows ---
+        self.commit_margin();
+        self.y += spacing_v;
+        for (row_idx, row) in table.rows.iter().enumerate() {
+            // Shape every cell at its final content width.
+            let chromes = &chrome_cache[row_idx];
+            let mut shaped: Vec<(Vec<ShapedLine>, f32 /*cell height*/)> = Vec::new();
+            let mut col = 0usize;
+            for (cell, chrome) in row.cells.iter().zip(chromes) {
+                let span = cell.colspan.min(columns - col.min(columns - 1));
+                let span_w: f32 =
+                    widths[col..col + span].iter().sum::<f32>() + spacing_h * (span as f32 - 1.0);
+                let content_w = (span_w - chrome.left - chrome.right).max(1.0);
+                let lines = self.shape_inline(&cell.content, &cell.style, content_w);
+                let content_h: f32 = lines.iter().map(|l| l.height).sum();
+                shaped.push((lines, content_h + chrome.top + chrome.bottom));
+                col += span;
+            }
+            let row_h = shaped
+                .iter()
+                .map(|(_, h)| *h)
+                .fold(0.0f32, f32::max)
+                .max(1.0);
+
+            // Rows are atomic: move whole rows to the next page.
+            if row_h > self.remaining() + 0.01 && !self.at_page_top() {
+                self.new_page();
+                self.y += spacing_v;
+            }
+
+            // Emit cells.
+            let mut cx = x + spacing_h;
+            let mut col = 0usize;
+            let y_top = self.y;
+            for ((cell, chrome), (lines, _)) in row.cells.iter().zip(chromes).zip(shaped) {
+                let span = cell.colspan.min(columns - col.min(columns - 1));
+                let span_w: f32 =
+                    widths[col..col + span].iter().sum::<f32>() + spacing_h * (span as f32 - 1.0);
+                let tag = chapbook_dom::node_tag(cell.node);
+                if let Some(decoration) = chrome.decoration.clone() {
+                    self.pages.last_mut().unwrap().fragments.push(Fragment {
+                        rect: Rect {
+                            origin: Point::new(
+                                self.content.origin.x + cx,
+                                self.content.origin.y + y_top,
+                            ),
+                            size: Size::new(span_w, row_h),
+                        },
+                        kind: FragmentKind::Box(decoration),
+                        tag,
+                    });
+                    self.placed_on_page += 1;
+                }
+                let mut ly = y_top + chrome.top;
+                for line in lines {
+                    let rect = Rect {
+                        origin: Point::new(
+                            self.content.origin.x + cx + chrome.left + line.x_indent,
+                            self.content.origin.y + ly,
+                        ),
+                        size: Size::new(line.width, line.height),
+                    };
+                    let page_loc = self.page_locators.last_mut().unwrap();
+                    *page_loc = (*page_loc).min(line.locator_start);
+                    self.pages.last_mut().unwrap().fragments.push(Fragment {
+                        rect,
+                        kind: FragmentKind::Line(LineFragment {
+                            baseline: line.baseline,
+                            runs: line.runs.clone(),
+                            decorations: line.decorations.clone(),
+                            text: line.text.clone(),
+                            locator_start: line.locator_start,
+                        }),
+                        tag,
+                    });
+                    self.placed_on_page += 1;
+                    ly += line.height;
+                }
+                cx += span_w + spacing_h;
+                col += span;
+            }
+            self.y += row_h + spacing_v;
+        }
+        let _ = table_w; // width available for future table-level decoration
+    }
+
+    /// Widest visual line of `content` when shaped at `probe_width` — the
+    /// min-content (probe ≈ 0) and max-content (probe ≈ ∞) measurement.
+    fn measure_width(
+        &mut self,
+        content: &InlineContent,
+        style: &ComputedValues,
+        probe_width: f32,
+    ) -> f32 {
+        self.shape_inline(content, style, probe_width)
+            .iter()
+            .map(|l| l.width)
+            .fold(0.0, f32::max)
+    }
+}
+
+/// Explicit width of a table, resolved against the containing block, when
+/// specified.
+fn table_width_px(style: &ComputedValues, containing: f32) -> Option<f32> {
+    use style::values::generics::length::GenericSize;
+    match &style.get_position().width {
+        GenericSize::LengthPercentage(lp) => Some(resolve_lp(&lp.0, containing)),
+        _ => None,
+    }
 }
