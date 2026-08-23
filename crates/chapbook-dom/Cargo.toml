@@ -18,6 +18,9 @@ html5ever = { workspace = true }
 markup5ever = { workspace = true }
 slotmap = { workspace = true }
 atomic_refcell = { workspace = true }
+euclid = { workspace = true }
+app_units = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

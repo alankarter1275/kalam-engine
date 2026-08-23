@@ -26,9 +26,12 @@ pub fn parse_xhtml(bytes: &[u8], base_path: &str) -> Result<Document> {
     let sink = Sink {
         doc: RefCell::new(Document::new(base_path.to_string())),
     };
-    let document = parse_document(sink, ParseOpts::default())
+    let mut document = parse_document(sink, ParseOpts::default())
         .from_utf8()
         .one(bytes);
+    // Fill node back-pointers/self-ids now that the tree is complete; &Node
+    // becomes a self-sufficient handle for the stylo traits.
+    document.seal();
     Ok(document)
 }
 
@@ -38,11 +41,7 @@ struct Sink {
 
 impl Sink {
     fn detached_node(&self, data: NodeData) -> NodeId {
-        self.doc.borrow_mut().nodes.insert(Node {
-            parent: None,
-            children: Vec::new(),
-            data,
-        })
+        self.doc.borrow_mut().nodes.insert(Node::new(None, data))
     }
 
     fn append_child(&self, parent: NodeId, child: NodeId) {
@@ -69,11 +68,9 @@ impl Sink {
                 return;
             }
         }
-        let id = doc.nodes.insert(Node {
-            parent: Some(parent),
-            children: Vec::new(),
-            data: NodeData::Text(text.to_string()),
-        });
+        let id = doc
+            .nodes
+            .insert(Node::new(Some(parent), NodeData::Text(text.to_string())));
         doc.nodes[parent].children.push(id);
     }
 }
@@ -203,11 +200,9 @@ impl TreeSink for Sink {
                         return;
                     }
                 }
-                let id = doc.nodes.insert(Node {
-                    parent: Some(parent),
-                    children: Vec::new(),
-                    data: NodeData::Text(text.to_string()),
-                });
+                let id = doc
+                    .nodes
+                    .insert(Node::new(Some(parent), NodeData::Text(text.to_string())));
                 doc.nodes[parent].children.insert(idx, id);
             }
         }
@@ -223,7 +218,7 @@ impl TreeSink for Sink {
                 let value = attr.value.to_string();
                 if attr.name.ns.is_empty() {
                     if attr.name.local == local_name!("id") && el.id.is_none() {
-                        el.id = Some(value.clone());
+                        el.id = Some(style::Atom::from(value.as_str()));
                     } else if attr.name.local == local_name!("class") && el.classes.is_empty() {
                         el.classes = value.split_ascii_whitespace().map(str::to_string).collect();
                     }

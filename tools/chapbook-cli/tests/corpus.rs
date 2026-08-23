@@ -49,3 +49,35 @@ fn every_corpus_book_opens_and_extracts_text() {
         );
     }
 }
+
+/// Run the full stylo cascade over real-world chapters: shakes out panics in
+/// the TElement binding (style sharing cache, selector matching) that the
+/// tiny fixture can't reach. Every chapter must produce a styled body.
+#[test]
+#[ignore = "requires fixtures/fetch-corpus.sh"]
+fn corpus_chapters_style_without_panicking() {
+    let dir = corpus_dir();
+    let epubs: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("fixtures/corpus missing — run fixtures/fetch-corpus.sh")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "epub"))
+        .collect();
+    assert!(!epubs.is_empty());
+
+    for path in epubs {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let book = chapbook_epub::Book::open(&path).unwrap();
+        let mut styled = 0usize;
+        for i in 0..book.spine().len() {
+            let dump = chapbook_cli::commands::styles(&path, i)
+                .unwrap_or_else(|e| panic!("{name}: spine {i} failed to style: {e}"));
+            assert!(
+                dump.contains("<body>"),
+                "{name}: spine {i} produced no styled body"
+            );
+            styled += 1;
+        }
+        println!("ok {name}: styled {styled} chapters");
+    }
+}

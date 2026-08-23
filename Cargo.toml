@@ -43,6 +43,9 @@ style_config = { version = "=0.20.0", package = "stylo_static_prefs" }
 style_dom = { version = "=0.20.0", package = "stylo_dom" }
 selectors = "=0.40.0"
 cssparser = "=0.37.0"
+# Version-locked to what stylo 0.20 itself uses (types appear in its API)
+euclid = "0.22"
+app_units = "0.7"
 html5ever = "0.39"
 markup5ever = "0.39"
 xml5ever = "0.39"

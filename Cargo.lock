@@ -467,8 +467,10 @@ dependencies = [
 name = "chapbook-dom"
 version = "0.1.0"
 dependencies = [
+ "app_units",
  "atomic_refcell",
  "chapbook-core",
+ "euclid",
  "html5ever",
  "insta",
  "markup5ever",
@@ -478,6 +480,7 @@ dependencies = [
  "stylo_dom",
  "stylo_static_prefs",
  "stylo_traits",
+ "url",
  "xml5ever",
 ]
 
@@ -553,10 +556,14 @@ dependencies = [
  "chapbook-dom",
  "cosmic-text",
  "cssparser",
+ "euclid",
  "insta",
+ "markup5ever",
  "selectors",
  "stylo",
+ "stylo_static_prefs",
  "stylo_traits",
+ "url",
 ]
 
 [[package]]

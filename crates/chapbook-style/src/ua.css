@@ -1,0 +1,157 @@
+/* chapbook UA stylesheet — the EPUB 3 CSS profile boundary.
+ *
+ * Defaults for XHTML book content. Deliberately narrower than a browser UA
+ * sheet: what the EPUB profile doesn't need gets no UA support. Page margins
+ * are reader chrome (PageMetrics), so body carries no margin. */
+
+html {
+  display: block;
+}
+
+body {
+  display: block;
+  margin: 0;
+}
+
+/* Sections and grouping content */
+article, aside, div, figure, footer, header, hgroup, main, nav, section {
+  display: block;
+}
+
+p, blockquote, figcaption, dl, dd, dt, address {
+  display: block;
+}
+
+p, blockquote, figure, dl {
+  margin-block-start: 1em;
+  margin-block-end: 1em;
+}
+
+blockquote, figure {
+  margin-inline-start: 2.5em;
+  margin-inline-end: 2.5em;
+}
+
+dd {
+  margin-inline-start: 2.5em;
+}
+
+address {
+  font-style: italic;
+}
+
+hr {
+  display: block;
+  margin-block-start: 0.5em;
+  margin-block-end: 0.5em;
+  border-style: inset;
+  border-width: 1px;
+}
+
+pre {
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+  margin-block-start: 1em;
+  margin-block-end: 1em;
+}
+
+/* Headings */
+h1 { display: block; font-size: 2em;    font-weight: bold; margin-block-start: 0.67em; margin-block-end: 0.67em; }
+h2 { display: block; font-size: 1.5em;  font-weight: bold; margin-block-start: 0.83em; margin-block-end: 0.83em; }
+h3 { display: block; font-size: 1.17em; font-weight: bold; margin-block-start: 1em;    margin-block-end: 1em; }
+h4 { display: block; font-size: 1em;    font-weight: bold; margin-block-start: 1.33em; margin-block-end: 1.33em; }
+h5 { display: block; font-size: 0.83em; font-weight: bold; margin-block-start: 1.67em; margin-block-end: 1.67em; }
+h6 { display: block; font-size: 0.67em; font-weight: bold; margin-block-start: 2.33em; margin-block-end: 2.33em; }
+
+/* Lists */
+ul, ol {
+  display: block;
+  margin-block-start: 1em;
+  margin-block-end: 1em;
+  padding-inline-start: 2.5em;
+}
+
+ul { list-style-type: disc; }
+ol { list-style-type: decimal; }
+
+ul ul, ol ul { list-style-type: circle; }
+
+li {
+  display: list-item;
+}
+
+/* Inline semantics */
+a {
+  color: #00e;
+  text-decoration: underline;
+}
+
+em, i, cite, dfn, var {
+  font-style: italic;
+}
+
+strong, b {
+  font-weight: bold;
+}
+
+code, kbd, samp, tt {
+  font-family: monospace;
+}
+
+small {
+  font-size: 0.83em;
+}
+
+big {
+  font-size: 1.17em;
+}
+
+s, strike, del {
+  text-decoration: line-through;
+}
+
+u, ins {
+  text-decoration: underline;
+}
+
+mark {
+  background-color: #ff0;
+  color: #000;
+}
+
+sub {
+  vertical-align: sub;
+  font-size: 0.83em;
+}
+
+sup {
+  vertical-align: super;
+  font-size: 0.83em;
+}
+
+/* Tables (v1 renders them as stacked blocks, but the display types must
+ * compute correctly so layout can degrade knowingly) */
+table    { display: table; border-collapse: separate; border-spacing: 2px; margin-block-start: 1em; margin-block-end: 1em; }
+caption  { display: table-caption; text-align: center; }
+thead    { display: table-header-group; }
+tbody    { display: table-row-group; }
+tfoot    { display: table-footer-group; }
+tr       { display: table-row; }
+td, th   { display: table-cell; padding: 1px; }
+th       { font-weight: bold; text-align: center; }
+colgroup { display: table-column-group; }
+col      { display: table-column; }
+
+/* Replaced and misc */
+img, object, video, audio {
+  display: inline-block;
+}
+
+br {
+  display: inline;
+}
+
+[hidden], head, script, style, template, link, meta, title, area, param, source, track {
+  display: none;
+}

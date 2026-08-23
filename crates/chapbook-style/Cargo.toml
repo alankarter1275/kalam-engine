@@ -12,9 +12,13 @@ chapbook-core = { workspace = true }
 chapbook-dom = { workspace = true }
 style = { workspace = true }
 style_traits = { workspace = true }
+style_config = { workspace = true }
 selectors = { workspace = true }
 cssparser = { workspace = true }
 cosmic-text = { workspace = true }
+euclid = { workspace = true }
+url = { workspace = true }
+markup5ever = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

@@ -63,13 +63,17 @@ stays that way.
   resource resolution, fixed-layout detection (rejected), font
   de-obfuscation (M5). The wrapper boundary means rbook gaps can be patched
   with `zip` + `quick-xml` per-field without touching consumers.
-- **chapbook-dom** — slotmap arena `Document`; copyable `DomNode<'a>` handle
-  carries all stylo trait impls (`TNode`/`TDocument`/`TElement`/
-  `selectors::Element`), structured after blitz-dom's proven binding.
-  Documents are static after parse: no incremental restyle, no snapshots, no
-  shadow DOM, no animations, no scripting — which deletes most of stylo's
-  invalidation surface. Parsing is lenient html5ever by default (real EPUBs
-  contain HTML-isms); a `strict-xml` feature runs xml5ever on the same tree
+- **chapbook-dom** — slotmap arena `Document`; the copyable `DomNode<'a>`
+  handle carries all stylo trait impls (`TNode`/`TDocument`/`TElement`/
+  `selectors::Element`), structured after blitz-dom's proven binding. The
+  handle **must stay pointer-sized** (stylo's style sharing cache statically
+  asserts it), so `Document` heap-boxes a `DocumentInner` with a stable
+  address, every node carries a sealed back-pointer + self-id, and
+  `DomNode<'a>` is a `&'a Node` newtype. Documents are static after parse:
+  no incremental restyle, no snapshots, no shadow DOM, no animations, no
+  scripting — which deletes most of stylo's invalidation surface. Parsing is
+  lenient html5ever by default (real EPUBs contain HTML-isms); a
+  `strict-xml` feature runs xml5ever on the same tree
   builder.
 - **chapbook-style** — owns the `Stylist` + media `Device` ("screen"), embeds
   the UA stylesheet (`ua.css` — the profile boundary: what is not in the
@@ -86,7 +90,15 @@ stays that way.
   `break-inside: avoid` (retry on a fresh page, else break anyway),
   widows/orphans (default 2/2), margins discarded at page boundaries,
   oversized monolithic boxes sliced graphically (first/last-slice flags gate
-  border painting). Output: `ChapterLayout` — chapbook-paint `Page`s plus the
+  border painting).
+  **Fragmentation sidecar:** servo-mode stylo does not implement the
+  fragmentation properties (`break-*`, `page-break-*`, `widows`, `orphans`
+  are Gecko-only — they land in its counted-unknown bucket), so
+  chapbook-layout runs its own mini-cascade for just those declarations:
+  cssparser parses them out of the same sheets, and their selectors match
+  through our existing `selectors::Element` impl with standard
+  specificity/order rules.
+  Output: `ChapterLayout` — chapbook-paint `Page`s plus the
   text-specific side tables (`anchors: id→page`, `char_map:
   char_offset→page`, fragment-tag→DOM-node mapping). One spine item = one
   layout run, cached by `(spine_idx, PageMetrics, settings_hash, css_hash)`;

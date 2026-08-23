@@ -1,9 +1,9 @@
-//! M1 subcommands: meta, toc, text. Output formats are deterministic — the
-//! snapshot tests in `tests/` capture them verbatim.
+//! CLI subcommands, one milestone each. Output formats are deterministic —
+//! the snapshot tests in `tests/` capture them verbatim.
 
 use std::path::Path;
 
-use chapbook_core::{Publication, Result, TocEntry};
+use chapbook_core::{PageMetrics, Publication, ReadingSettings, Result, TocEntry};
 use chapbook_epub::Book;
 
 pub fn meta(epub: &Path) -> Result<String> {
@@ -70,6 +70,36 @@ pub fn text(epub: &Path, spine: Option<usize>) -> Result<String> {
         out.push_str(&chapbook_dom::extract_text(&doc));
     }
     Ok(out)
+}
+
+pub fn styles(epub: &Path, spine: usize) -> Result<String> {
+    let book = Book::open(epub)?;
+    let href = book.spine_item(spine)?.href.clone();
+    let bytes = book.unit_bytes(spine)?;
+    let mut doc = chapbook_dom::parse_xhtml(&bytes, &href)?;
+
+    // Author stylesheets in document order: <style> contents inline,
+    // <link rel=stylesheet> resolved against the chapter. A missing external
+    // sheet degrades to "no publisher styles from that link", noted in the
+    // output so goldens surface it.
+    let mut css = Vec::new();
+    let mut notes = String::new();
+    for source in doc.stylesheet_sources() {
+        match source {
+            chapbook_dom::StylesheetSource::Inline(text) => css.push(text),
+            chapbook_dom::StylesheetSource::External(rel) => match book.resource(&href, &rel) {
+                Ok(res) => css.push(String::from_utf8_lossy(&res.data).into_owned()),
+                Err(_) => notes.push_str(&format!("!! stylesheet not found: {rel}\n")),
+            },
+        }
+    }
+
+    let mut engine =
+        chapbook_style::StyleEngine::new(&PageMetrics::default(), &ReadingSettings::default());
+    engine.set_author_sheets(&css);
+    engine.style_document(&mut doc);
+
+    Ok(notes + &chapbook_style::dump_computed_styles(&doc))
 }
 
 fn push_field(out: &mut String, name: &str, value: Option<&str>) {
