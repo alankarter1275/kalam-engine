@@ -59,9 +59,11 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # EPUB
 rbook = "0.7"
 
-# OPDS
+# OPDS. NOTE: not atom_syndication/feed-rs — both silently drop the
+# foreign-namespace <link> attributes (opds:*, thr:count, pse:*) that facets
+# and page streaming live in. See docs/OPDS-INTEROP.md §0.
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
-atom_syndication = "0.12"
+quick-xml = "0.42"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"

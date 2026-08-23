@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:thr="http://purl.org/syndication/thread/1.0" xmlns:pse="http://vaemendis.net/opds-pse/ns">
+  <id>urn:cat:new</id>
+  <title>New Releases</title>
+  <updated>2026-01-02T03:04:05Z</updated>
+  <author>
+    <name>Library Inc</name>
+  </author>
+  <link rel="self" href="/opds/feed/new?page=2" type="application/atom+xml;profile=opds-catalog;kind=acquisition"></link>
+  <link rel="start" href="/opds/" type="application/atom+xml;profile=opds-catalog;kind=navigation"></link>
+  <link rel="next" href="/opds/feed/new?page=3" type="application/atom+xml;profile=opds-catalog;kind=acquisition"></link>
+  <link rel="previous" href="/opds/feed/new" type="application/atom+xml;profile=opds-catalog;kind=acquisition"></link>
+  <link rel="search" href="/opds/opensearch.xml" type="application/opensearchdescription+xml"></link>
+  <link rel="http://opds-spec.org/facet" href="/opds/feed/new?lang=en" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="English" opds:facetGroup="Language" opds:activeFacet="true" thr:count="80"></link>
+  <link rel="http://opds-spec.org/facet" href="/opds/feed/new?lang=fr" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="French" opds:facetGroup="Language" thr:count="40"></link>
+  <link rel="http://opds-spec.org/facet" href="/opds/feed/new?fmt=epub" type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="EPUB" opds:facetGroup="Format" thr:count="100"></link>
+  <opensearch:totalResults>120</opensearch:totalResults>
+  <opensearch:itemsPerPage>50</opensearch:itemsPerPage>
+  <opensearch:startIndex>51</opensearch:startIndex>
+  <entry>
+    <id>urn:isbn:9780134190440</id>
+    <title>The Go Programming Language</title>
+    <updated>2026-01-02T03:04:05Z</updated>
+    <author>
+      <name>Alan Donovan</name>
+      <uri>https://example.com/authors/donovan</uri>
+    </author>
+    <author>
+      <name>Brian Kernighan</name>
+    </author>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>2026-01-02</dcterms:issued>
+    <dcterms:publisher>Addison-Wesley</dcterms:publisher>
+    <dcterms:identifier>urn:isbn:9780134190440</dcterms:identifier>
+    <category term="COM051000" scheme="https://bisg.org" label="Computers"></category>
+    <summary type="text">The authoritative resource.</summary>
+    <content type="html">&lt;p&gt;The authoritative resource for the Go language.&lt;/p&gt;</content>
+    <link rel="alternate" href="/opds/publication/gopl" type="application/atom+xml;type=entry;profile=opds-catalog"></link>
+    <link rel="http://opds-spec.org/image" href="/covers/gopl.jpg" type="image/jpeg"></link>
+    <link rel="http://opds-spec.org/image/thumbnail" href="/covers/gopl-t.jpg" type="image/jpeg"></link>
+    <link rel="http://opds-spec.org/acquisition/buy" href="/buy/gopl" type="text/html">
+      <opds:price currencycode="USD">39.99</opds:price>
+      <opds:indirectAcquisition type="application/vnd.readium.lcp.license.v1.0+json">
+        <opds:indirectAcquisition type="application/epub+zip"></opds:indirectAcquisition>
+      </opds:indirectAcquisition>
+    </link>
+    <link rel="http://opds-spec.org/acquisition/borrow" href="/borrow/gopl" type="application/epub+zip">
+      <opds:availability status="unavailable" since="2026-01-02T03:04:05Z" until="2026-01-02T03:04:05Z"></opds:availability>
+      <opds:holds total="12" position="3"></opds:holds>
+      <opds:copies total="3" available="0"></opds:copies>
+    </link>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="/dl/gopl.epub" type="application/epub+zip"></link>
+  </entry>
+  <entry>
+    <id>urn:example:chapter/demo/c12</id>
+    <title>Demo Series — Chapter 12</title>
+    <updated>2026-01-02T03:04:05Z</updated>
+    <author>
+      <name>Mangaka Example</name>
+    </author>
+    <dcterms:language>en</dcterms:language>
+    <summary type="text">Chapter 12 — 35 pages</summary>
+    <link rel="alternate" href="/opds/publication/chapter/demo/c12" type="application/atom+xml;type=entry;profile=opds-catalog"></link>
+    <link rel="http://opds-spec.org/image" href="/dl/demo/cover" type="image/jpeg"></link>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="/dl/demo/c12.cbz" type="application/vnd.comicbook+zip"></link>
+    <link rel="http://opds-spec.org/acquisition/open-access" href="/dl/demo/c12.epub" type="application/epub+zip"></link>
+    <link rel="http://vaemendis.net/opds-pse/stream" href="/opds/page/chapter/demo/c12?page={pageNumber}&amp;width={maxWidth}" type="image/jpeg" pse:count="35" pse:lastRead="10" pse:lastReadDate="2026-01-02T03:04:05Z"></link>
+  </entry>
+</feed>

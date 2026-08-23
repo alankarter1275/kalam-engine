@@ -1,0 +1,104 @@
+{
+  "metadata": {
+    "@type": "http://schema.org/Book",
+    "title": "The Go Programming Language",
+    "identifier": "urn:isbn:9780134190440",
+    "author": [
+      {
+        "name": "Alan Donovan",
+        "sortAs": "Donovan, Alan",
+        "links": [
+          {
+            "href": "https://example.com/authors/donovan"
+          }
+        ]
+      },
+      "Brian Kernighan"
+    ],
+    "publisher": "Addison-Wesley",
+    "language": [
+      "en"
+    ],
+    "subject": [
+      {
+        "name": "Computers",
+        "code": "COM051000",
+        "scheme": "https://bisg.org"
+      }
+    ],
+    "modified": "2026-01-02T03:04:05Z",
+    "published": "2026-01-02T03:04:05Z",
+    "description": "\u003cp\u003eThe authoritative resource for the Go language.\u003c/p\u003e",
+    "belongsTo": {
+      "series": {
+        "name": "Professional Computing",
+        "position": 1
+      }
+    }
+  },
+  "links": [
+    {
+      "rel": "alternate",
+      "href": "/opds/publication/gopl",
+      "type": "application/atom+xml;type=entry;profile=opds-catalog"
+    },
+    {
+      "rel": "http://opds-spec.org/acquisition/buy",
+      "href": "/buy/gopl",
+      "type": "text/html",
+      "properties": {
+        "price": {
+          "currency": "USD",
+          "value": 39.99
+        },
+        "indirectAcquisition": [
+          {
+            "type": "application/vnd.readium.lcp.license.v1.0+json",
+            "child": [
+              {
+                "type": "application/epub+zip"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rel": "http://opds-spec.org/acquisition/borrow",
+      "href": "/borrow/gopl",
+      "type": "application/epub+zip",
+      "properties": {
+        "availability": {
+          "state": "unavailable",
+          "since": "2026-01-02T03:04:05Z",
+          "until": "2026-01-02T03:04:05Z"
+        },
+        "holds": {
+          "total": 12,
+          "position": 3
+        },
+        "copies": {
+          "total": 3,
+          "available": 0
+        }
+      }
+    },
+    {
+      "rel": "http://opds-spec.org/acquisition/open-access",
+      "href": "/dl/gopl.epub",
+      "type": "application/epub+zip"
+    }
+  ],
+  "images": [
+    {
+      "href": "/covers/gopl.jpg",
+      "type": "image/jpeg",
+      "height": 1200,
+      "width": 800
+    },
+    {
+      "href": "/covers/gopl-t.jpg",
+      "type": "image/jpeg"
+    }
+  ]
+}

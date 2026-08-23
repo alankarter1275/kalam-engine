@@ -10,7 +10,7 @@ authors.workspace = true
 [dependencies]
 chapbook-core = { workspace = true }
 ureq = { workspace = true }
-atom_syndication = { workspace = true }
+quick-xml = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 url = { workspace = true }

@@ -1,0 +1,137 @@
+# OPDS client interop requirements (M6)
+
+What chapbook-opds must handle to work against real catalogs. Every behavior
+below is observed in servers in the wild (self-hosted catalog servers, comic
+servers, and library-lending stacks, surveyed Aug 2026); the fixture corpus in
+`fixtures/opds/` exercises each one — wire the fixtures into parser tests
+first, then verify against a live catalog.
+
+## 0. Crate decision: atom_syndication cannot carry OPDS
+
+**Confirmed, not speculation:** `atom_syndication`'s `Link` struct has only
+the six fixed Atom fields. Foreign-namespace attributes on `<link>` —
+`opds:facetGroup`, `opds:activeFacet`, `thr:count`, `pse:count`,
+`pse:lastRead`, `pse:lastReadDate` — are **silently dropped on parse** and
+cannot be produced on write. Those attributes are where facets and page
+streaming live. `feed-rs` is worse (lossy normalized model).
+
+Requirement: parse feeds at the XML level with `quick-xml` (namespace-aware),
+at minimum for `<link>` elements. `atom_syndication` may be used for nothing
+more than incidental scaffolding, and only if link handling never touches it.
+Budget for full quick-xml parsing — the Atom subset OPDS uses is small.
+
+## 1. Version strategy
+
+Speak **OPDS 1.2 Atom as the canonical dialect**. OPDS 2.0 (JSON) is a
+secondary parser kept honest by fixtures. Reasons:
+
+- Page streaming (PSE) exists only in 1.x output on every known server.
+- The facet `active` flag exists only in 1.x on reference servers.
+- 1.2 is the universal floor: every OPDS server speaks it; several major ones
+  speak nothing else.
+
+Request one media type at a time: `Accept: application/atom+xml` (or
+`application/opds+json` when explicitly probing 2.0). **Do not send compound
+Accept headers with q-values** — real servers negotiate by naive substring
+matching and ignore q entirely; `application/atom+xml,
+application/opds+json;q=0.1` can return JSON. Some servers also honor
+`?version=1.2|2.0` / `?f=atom|json` query overrides.
+
+The two encodings of the same catalog are **not informationally equivalent**
+(2.0 gains series/`belongsTo`, image dimensions; 1.2 gains PSE, facet-active,
+distinct summary-vs-HTML-content). Never assume a field survives a version
+switch.
+
+## 2. Parsing hard requirements
+
+- **Resolve every href against the request URL.** Self links, pagination,
+  search templates, acquisition links, image links — all may be relative,
+  including on servers that "should" emit absolute URIs in 2.0.
+- **Never strict-URI-parse link hrefs.** PSE templates contain literal
+  `{pageNumber}`/`{maxWidth}` braces.
+- **Never schema-validate received feeds as an acceptance gate.** PSE stream
+  links and lending extensions are schema-invalid *by design* on reference
+  servers. Schemas (in `fixtures/opds/schema/`) are for testing our own 2.0
+  parser, nothing else.
+- Media types come with no space after `;`:
+  `application/atom+xml;profile=opds-catalog;kind=acquisition`. Compare
+  parsed essence + parameters, never string equality.
+- Pagination: the back-rel is **`previous`** (not `prev`); `first`/`last` are
+  frequently absent. Totals: 1.2 uses OpenSearch elements
+  (`totalResults`/`itemsPerPage`/`startIndex`); 2.0 uses
+  `numberOfItems`/`itemsPerPage`/`currentPage`.
+- Dates: `dcterms:issued` may be date-only (`YYYY-MM-DD`) while 2.0
+  `published` is full RFC 3339 — parse both shapes everywhere a date appears.
+  Feed `updated` may change on every request (servers default it to now):
+  worthless as a cache key.
+- 2.0 polymorphism: contributor and subject are string-or-object; `rel` is
+  string-or-array; `description` may contain raw HTML.
+- 2.0 images carry **no rel** — treat the first image as cover.
+- 1.2 group stand-in: entries may carry `rel="collection"` links where 2.0
+  would use `groups[]`.
+- Entry ids and hrefs are opaque strings: comic-server chapter ids contain
+  slashes and dots; path-normalizing or splitting them breaks routing.
+  `Content-Disposition` filenames on downloads can be garbage — sanitize.
+
+## 3. Page streaming (OPDS-PSE) — for the comic milestone
+
+- Namespace `http://vaemendis.net/opds-pse/ns`; stream link rel
+  `http://vaemendis.net/opds-pse/stream`.
+- `pse:count` is required by convention (render nothing without it).
+  `{pageNumber}` substitutes **0-based**; `pse:lastRead` is **1-based**;
+  `{maxWidth}` may be ignored server-side — request it, don't rely on it.
+- **Lazy PSE pattern:** feed entries may omit the stream link entirely; it
+  appears only on the complete entry behind `rel="alternate"` +
+  `type=application/atom+xml;type=entry;profile=opds-catalog`. The browse
+  loop is feed → follow alternate → stream.
+- The link's `type` (page image media type) is advisory; trust the HTTP
+  `Content-Type` of each page response. Expect JPEG/PNG/WebP, occasionally
+  AVIF.
+- Comic servers commonly write reading progress server-side as pages are
+  fetched, and some populate `pse:lastRead(-Date)` for resume — offer
+  "resume at page N" when present.
+- First fetch of a cold chapter can be slow (upstream servers rate-limit);
+  use generous timeouts and shallow prefetch (1–2 pages ahead).
+
+## 4. Auth
+
+Two tiers, both required:
+
+1. **HTTP Basic**, including mid-flow: any request — feed, search,
+   acquisition, page image — may return 401. Re-prompt/retry with
+   credentials; persist per-catalog. (This is all several popular reader
+   clients support, and all many servers offer.)
+2. **OPDS Authentication Document** (`application/opds-authentication+json`):
+   well-behaved servers return this JSON alongside 401. Parse it
+   (fixture: `authentication.opds-auth.json`): `title`, `description`,
+   `authentication[]` flows (support `http://opds-spec.org/auth/basic`;
+   recognize-and-decline others gracefully), `links` (logo, help, register)
+   — and render a proper native login dialog instead of a raw failure.
+   Desktop-class readers (Thorium, Cantook) do this; matching them is the
+   bar.
+
+Some servers put per-user API keys in the catalog URL path instead of using
+auth headers — treat the catalog URL as an opaque secret-bearing string
+(don't log it, don't normalize it).
+
+## 5. Caching and downloads
+
+- **No conditional requests to count on:** many servers emit no
+  `ETag`/`Last-Modified`/`Cache-Control` on feeds or files. The client owns
+  freshness policy (short TTL per catalog; manual refresh).
+- **No Range support to count on:** downloads may be fully buffered
+  server-side. An interrupted download is a restart, not a resume — download
+  to a temp file, atomically rename on completion.
+- Follow redirects on acquisition links, including cross-host (covers and
+  files may live on a CDN or object store).
+
+## 6. Test plan hooks
+
+- Parse every file in `fixtures/opds/` (see its README for what each covers);
+  golden-test against `pse-feed-golden.atom.xml` byte-exactly.
+- Validate our 2.0 parser corpus against `fixtures/opds/schema/` in tests.
+- Facet handling: assert `opds:activeFacet`/`thr:count`/`opds:facetGroup`
+  survive parsing (this is the atom_syndication trap — a regression here
+  means the wrong parser is in the loop).
+- Live smoke target: any OPDS 1.2+2.0 catalog; verify version negotiation,
+  pagination walk, complete-entry follow, and a download end-to-end.

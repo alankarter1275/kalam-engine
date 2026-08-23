@@ -114,9 +114,15 @@ stays that way.
 - **chapbook-render-tinyskia** — swash glyph raster cache, `image`-decoded
   resources, scale applied here.
 - **chapbook-opds** — blocking `ureq` + rustls (no async runtime). OPDS 1.2
-  Atom via `atom_syndication` (preserves `opds:` extensions), OPDS 2.0 JSON
-  via serde. rel=next pagination, OpenSearch, acquisition download, HTTP
-  Basic auth.
+  Atom as the canonical dialect, parsed at the XML level with namespace-aware
+  `quick-xml` (NOT `atom_syndication`/`feed-rs`: both silently drop the
+  foreign-namespace link attributes that facets and OPDS-PSE page streaming
+  live in); OPDS 2.0 JSON via serde as a secondary parser. Pagination
+  (`next`/`previous` + OpenSearch totals), search, facets, acquisition
+  download (temp file + atomic rename; no Range resume assumed), HTTP Basic
+  at any point in a flow plus OPDS Authentication Document login. Full
+  requirements: `docs/OPDS-INTEROP.md`; wire-format fixtures:
+  `fixtures/opds/`.
 - **chapbook-library** — rusqlite (bundled, WAL): books/authors, positions,
   annotations, opds_sources. Positions are `Locator`s and survive relayout
   via the char_map.
