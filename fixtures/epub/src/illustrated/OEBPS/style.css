@@ -62,3 +62,13 @@ img {
 .specs th {
   background-color: #f2ead9;
 }
+
+.floated {
+  float: left;
+  margin: 0 10px 6px 0;
+}
+
+.breakable {
+  hyphens: auto;
+  text-align: justify;
+}

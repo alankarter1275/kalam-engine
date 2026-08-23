@@ -16,6 +16,7 @@ style = { workspace = true }
 selectors = { workspace = true }
 cssparser = { workspace = true }
 cosmic-text = { workspace = true }
+hyphenation = { workspace = true }
 markup5ever = { workspace = true }
 app_units = { workspace = true }
 url = { workspace = true }

@@ -669,3 +669,246 @@ fn indented_justified_first_line_fills_measure() {
         "justified first line must fill the measure: first_right={first_right} middle_right={middle_right}"
     );
 }
+
+// ---- Floats ----
+
+/// Layout with a synthetic 100×54 image bound to every `<img>` in the doc
+/// (54px = two 27px lines tall).
+fn layout_html_with_image(
+    html: &str,
+    css: &str,
+    page: &PageMetrics,
+    dims: (u32, u32),
+) -> (ChapterLayout, Document) {
+    let mut doc = chapbook_dom::parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
+    let css_sources = vec![css.to_string()];
+    let mut engine = chapbook_style::StyleEngine::new(page, &ReadingSettings::default());
+    engine.set_author_sheets(&css_sources);
+    engine.style_document(&mut doc);
+    let mut images = chapbook_paint::ImageStore::default();
+    let mut stack = vec![doc.document_element().unwrap()];
+    while let Some(id) = stack.pop() {
+        if doc.is_html_element(id, &markup5ever::local_name!("img")) {
+            images.insert(
+                chapbook_dom::node_tag(id),
+                dims.0,
+                dims.1,
+                vec![0u8; (dims.0 * dims.1 * 4) as usize],
+            );
+        }
+        stack.extend(doc.node(id).children.iter().copied());
+    }
+    let mut fonts = fonts();
+    let layout = chapbook_layout::paginate(&doc, &css_sources, page, &mut fonts, &images);
+    (layout, doc)
+}
+
+fn line_frags(layout: &ChapterLayout) -> Vec<(f32, f32, f32, String)> {
+    layout.pages[0]
+        .fragments
+        .iter()
+        .filter_map(|f| match &f.kind {
+            FragmentKind::Line(l) => Some((
+                f.rect.origin.x,
+                f.rect.origin.y,
+                f.rect.size.w,
+                l.text.clone(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn float_left_image_wraps_text_beside_then_below() {
+    let words = "wrap ".repeat(60);
+    let html = format!("<html><body><p><img src=\"x.png\"/>{words}</p></body></html>");
+    let (layout, _) = layout_html_with_image(
+        &html,
+        "p { margin: 0; } img { float: left; margin: 0 10px 10px 0; }",
+        &page_for_lines(12),
+        (100, 54),
+    );
+    // The image sits at the left content edge, top of page.
+    let img = layout.pages[0]
+        .fragments
+        .iter()
+        .find(|f| matches!(f.kind, FragmentKind::Image { .. }))
+        .expect("float image placed");
+    assert_eq!(img.rect.origin.x, 40.0);
+    assert_eq!(img.rect.origin.y, 40.0);
+    // Lines beside the float are inset by its band (100 + 10 margin) and
+    // shortened; lines below return to the full measure at x=40.
+    let lines = line_frags(&layout);
+    assert!(lines.len() >= 4);
+    let beside: Vec<_> = lines.iter().filter(|l| l.0 > 145.0).collect();
+    let below: Vec<_> = lines.iter().filter(|l| l.0 < 45.0).collect();
+    assert!(
+        beside.len() >= 2,
+        "expected shortened lines beside the float: {lines:?}"
+    );
+    assert!(!below.is_empty(), "expected full lines below the float");
+    for l in &beside {
+        assert!(l.2 <= 520.0 - 110.0 + 0.5, "beside line too wide: {l:?}");
+        assert!(
+            l.1 + 27.0 <= 40.0 + 64.0 + 0.5,
+            "beside line beyond band: {l:?}"
+        );
+    }
+    // Every below-line starts after the band expires.
+    for l in &below {
+        assert!(l.1 >= 40.0 + 64.0 - 0.5, "full line overlaps float: {l:?}");
+    }
+}
+
+#[test]
+fn float_right_image_keeps_text_at_left_edge() {
+    let words = "wrap ".repeat(60);
+    let html = format!("<html><body><p><img src=\"x.png\"/>{words}</p></body></html>");
+    let (layout, _) = layout_html_with_image(
+        &html,
+        "p { margin: 0; } img { float: right; margin: 0 0 10px 10px; }",
+        &page_for_lines(12),
+        (100, 54),
+    );
+    let img = layout.pages[0]
+        .fragments
+        .iter()
+        .find(|f| matches!(f.kind, FragmentKind::Image { .. }))
+        .expect("float image placed");
+    // Right edge: 40 + 520 - 100.
+    assert_eq!(img.rect.origin.x, 460.0);
+    let lines = line_frags(&layout);
+    // All text stays at the left edge; beside-lines are just shortened.
+    for l in &lines {
+        assert!((l.0 - 40.0).abs() < 0.5, "line not at left edge: {l:?}");
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.1 < 40.0 + 54.0 && l.2 <= 520.0 - 110.0 + 0.5),
+        "expected shortened lines beside the right float: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.2 > 450.0),
+        "expected full-measure lines below the float: {lines:?}"
+    );
+}
+
+#[test]
+fn clear_starts_below_float() {
+    let html = "<html><body>\
+                <p><img src=\"x.png\"/>short text beside</p>\
+                <p class=\"c\">cleared paragraph</p>\
+                </body></html>";
+    let (layout, _) = layout_html_with_image(
+        html,
+        "p { margin: 0; } img { float: left; margin: 0 10px 10px 0; } .c { clear: left; }",
+        &page_for_lines(12),
+        (100, 54),
+    );
+    let lines = line_frags(&layout);
+    let cleared = lines
+        .iter()
+        .find(|l| l.3.contains("cleared"))
+        .expect("cleared paragraph present");
+    // Band bottom = 54 + 10 margin-bottom = 64 below the content top (40).
+    assert!(
+        cleared.1 >= 40.0 + 64.0 - 0.5,
+        "clear must move below the float: {cleared:?}"
+    );
+    assert!((cleared.0 - 40.0).abs() < 0.5);
+}
+
+// ---- Hyphenation ----
+
+#[test]
+fn hyphens_auto_breaks_words_with_visible_hyphen() {
+    let words = "extraordinary consideration photography ".repeat(8);
+    let html = format!("<html><body><p>{words}</p></body></html>");
+    let narrow = PageMetrics {
+        size: Size::new(240.0, 500.0),
+        margins: EdgeSizes::uniform(40.0),
+        dpi_scale: 1.0,
+    };
+    let (with, _) = layout_html(&html, "p { margin: 0; hyphens: auto; }", &narrow);
+    let (without, _) = layout_html(&html, "p { margin: 0; }", &narrow);
+    let hyphen_lines = line_texts_in_order(&with)
+        .iter()
+        .filter(|t| t.ends_with('-'))
+        .count();
+    assert!(hyphen_lines >= 2, "expected hyphenated line ends");
+    assert!(
+        line_texts_in_order(&without)
+            .iter()
+            .all(|t| !t.ends_with('-')),
+        "control must not hyphenate"
+    );
+    // Hyphenation must not lose text.
+    let strip = |l: &ChapterLayout| {
+        line_texts_in_order(l)
+            .join(" ")
+            .replace('-', "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join("")
+    };
+    assert_eq!(strip(&with), strip(&without));
+    // No soft hyphens leak into reported line text.
+    assert!(line_texts_in_order(&with)
+        .iter()
+        .all(|t| !t.contains('\u{AD}')));
+}
+
+#[test]
+fn authored_soft_hyphen_respected_without_hyphens_auto() {
+    // The author's soft hyphen is the only break point cosmic-text gets in
+    // this overlong word; the visible hyphen must appear at the break.
+    let html = "<html><body><p>inter\u{AD}nationalizationism</p></body></html>";
+    let narrow = PageMetrics {
+        size: Size::new(150.0, 500.0),
+        margins: EdgeSizes::uniform(40.0),
+        dpi_scale: 1.0,
+    };
+    let (layout, _) = layout_html(html, "p { margin: 0; }", &narrow);
+    let texts = line_texts_in_order(&layout);
+    assert_eq!(
+        texts.first().map(String::as_str),
+        Some("inter-"),
+        "{texts:?}"
+    );
+}
+
+#[test]
+fn hyphenated_justified_line_holds_the_measure() {
+    let words = "extraordinary consideration photography magnificent ".repeat(6);
+    let html = format!("<html><body><p>{words}</p></body></html>");
+    let narrow = PageMetrics {
+        size: Size::new(260.0, 600.0),
+        margins: EdgeSizes::uniform(40.0),
+        dpi_scale: 1.0,
+    };
+    let (layout, _) = layout_html(
+        &html,
+        "p { margin: 0; hyphens: auto; text-align: justify; }",
+        &narrow,
+    );
+    let mut checked = 0;
+    for page in &layout.pages {
+        for f in &page.fragments {
+            let FragmentKind::Line(l) = &f.kind else {
+                continue;
+            };
+            if l.text.ends_with('-') && l.text.contains(' ') {
+                let right = f.rect.origin.x + f.rect.size.w;
+                assert!(
+                    (right - (40.0 + 180.0)).abs() < 1.0,
+                    "hyphenated justified line must end at the measure: {:?} right={right}",
+                    l.text
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked >= 1, "no hyphenated justified lines found");
+}

@@ -2,9 +2,10 @@
 //! contexts, per CSS 2.1 §9.2 (anonymous block boxes wrap inline runs that
 //! have block siblings).
 //!
-//! v1 degradations, per ARCHITECTURE.md: table display types and list items
-//! become plain blocks (list items get a text marker), floats/positioning
-//! are ignored, deeply-inline-nested images are skipped.
+//! v1 degradations, per ARCHITECTURE.md: list items become plain blocks
+//! with a text marker; positioning is ignored; floated *images* float for
+//! real (see `paginate`), floated non-replaced blocks stay in flow; images
+//! nested deeper than one level inside inline content are skipped.
 //! `::before`/`::after` emit literal string content (counters/attr()/images
 //! in `content` are skipped).
 
@@ -47,7 +48,7 @@ pub enum BlockKind {
 
 /// One inline formatting context: styled text runs in document order, with
 /// whitespace already collapsed and per-char locator offsets retained.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct InlineContent {
     pub runs: Vec<InlineRun>,
 }
@@ -182,11 +183,15 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
     }
 
     // Determine content model: any block-level element child → container.
+    // Replaced children (img/hr) count too — they always hoist to their own
+    // block, so `<p><img/>text</p>` becomes a container instead of dropping
+    // the image (and a floated image can wrap its paragraph's text).
     let has_block_child = doc.node(node).children.iter().any(|child| {
         matches!(&doc.node(*child).data, NodeData::Element(_))
-            && doc.primary_styles(*child).is_some_and(|s| {
-                !matches!(display_of(&s), DisplayClass::Inline | DisplayClass::None)
-            })
+            && (replaced_kind(doc, *child).is_some()
+                || doc.primary_styles(*child).is_some_and(|s| {
+                    !matches!(display_of(&s), DisplayClass::Inline | DisplayClass::None)
+                }))
     });
 
     let kind = if has_block_child {
@@ -200,7 +205,7 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
             &mut pending_inline,
             node,
         );
-        flush_anonymous(&mut children, &mut pending_inline, node, &style);
+        flush_anonymous(input, &mut children, &mut pending_inline, node, &style);
         BlockKind::Container(children)
     } else {
         let mut inline = InlineContent::default();
@@ -216,6 +221,9 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
         collect_inline(input, node, &style, &mut inline);
         push_generated(&mut inline, input, node, chapbook_dom::PseudoElement::After);
         inline.trim_trailing_space();
+        if frag.hyphens_auto {
+            crate::hyphenate::apply(&mut inline);
+        }
         BlockKind::Inline(inline)
     };
 
@@ -255,7 +263,13 @@ fn collect_container(
                 };
                 if display_of(&style) != DisplayClass::None {
                     if let Some(replaced) = replaced_block(input, *child, &style) {
-                        flush_anonymous(children, pending_inline, anon_node, inherited_style);
+                        flush_anonymous(
+                            input,
+                            children,
+                            pending_inline,
+                            anon_node,
+                            inherited_style,
+                        );
                         children.push(replaced);
                         continue;
                     }
@@ -266,7 +280,13 @@ fn collect_container(
                         collect_inline_element(input, *child, style, pending_inline);
                     }
                     DisplayClass::Block | DisplayClass::ListItem => {
-                        flush_anonymous(children, pending_inline, anon_node, inherited_style);
+                        flush_anonymous(
+                            input,
+                            children,
+                            pending_inline,
+                            anon_node,
+                            inherited_style,
+                        );
                         children.push(build_block(input, *child, style));
                     }
                 }
@@ -277,6 +297,7 @@ fn collect_container(
 }
 
 fn flush_anonymous(
+    input: &BoxTreeInput,
     children: &mut Vec<BlockBox>,
     pending: &mut InlineContent,
     node: NodeId,
@@ -286,6 +307,11 @@ fn flush_anonymous(
     inline.trim_trailing_space();
     if inline.is_empty_or_space() {
         return;
+    }
+    // Anonymous boxes carry no fragmentation style of their own, but the
+    // inherited hyphenation setting of the wrapping element still applies.
+    if input.frag.get(&node).is_some_and(|f| f.hyphens_auto) {
+        crate::hyphenate::apply(&mut inline);
     }
     children.push(BlockBox {
         node,

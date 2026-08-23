@@ -16,6 +16,7 @@
 mod boxtree;
 mod fonts;
 mod fragmentation;
+mod hyphenate;
 mod paginate;
 mod style_to_attrs;
 mod table;

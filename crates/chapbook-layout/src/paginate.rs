@@ -7,6 +7,22 @@
 //! siblings and discarded at page boundaries. `avoid` on before/after
 //! (keep-with-next/previous) is parsed but not yet enforced. A line taller
 //! than a page is placed alone and may overflow (clipped at paint).
+//!
+//! Floats, v1 scope: `float: left/right` on replaced images only (the book
+//! case — a floated illustration with wrapped text). The float is placed
+//! against the content edge without advancing the flow, and line boxes of
+//! following inline content shorten beside it — a line sits beside the
+//! float only when it fits entirely above the float's bottom margin edge.
+//! `clear` works on any block. Floats never cross a page boundary: bands
+//! are dropped at every page break. Floated non-replaced blocks stay in
+//! normal flow; text-indent is skipped for segments shaped beside a float;
+//! images and tables ignore float bands (documented degradations).
+//!
+//! Hyphenation: `hyphens: auto` content arrives with soft hyphens already
+//! inserted (see `crate::hyphenate`); cosmic-text breaks after them and
+//! renders them zero-width. Any line ending at a soft hyphen gets a visible
+//! hyphen glyph appended here, with justified lines re-tightened over their
+//! spaces so the measure holds.
 
 use app_units::Au;
 use cosmic_text::{Buffer, FontSystem, Metrics, Shaping, Wrap};
@@ -65,6 +81,12 @@ pub(crate) struct Paginator<'f> {
     active_keep: Option<KeepAnchor>,
     /// Per page: smallest locator offset placed on it (u32::MAX = none yet).
     page_locators: Vec<u32>,
+    /// Active float exclusion per side, page-local (cleared at page breaks).
+    float_left: Option<FloatBand>,
+    float_right: Option<FloatBand>,
+    /// Hyphen glyph (id, advance per em) per font, for visible hyphens at
+    /// soft-hyphen line breaks. `None` = font has no '-' glyph.
+    hyphen_cache: std::collections::HashMap<cosmic_text::fontdb::ID, Option<(u16, f32)>>,
 }
 
 #[derive(Clone, Copy)]
@@ -73,6 +95,42 @@ struct KeepAnchor {
     frag_start: usize,
     /// Content-relative y where the anchored block begins.
     y_start: f32,
+}
+
+/// One side's float exclusion: `width` (margin box) insets line boxes until
+/// the flow cursor passes `y_end` (content-relative bottom margin edge).
+#[derive(Clone, Copy)]
+struct FloatBand {
+    width: f32,
+    y_end: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FloatSide {
+    Left,
+    Right,
+}
+
+/// `float` of a block, mapped to physical sides (horizontal-tb ltr books:
+/// inline-start = left).
+fn float_side(style: &ComputedValues) -> Option<FloatSide> {
+    use style::values::computed::Float;
+    match style.get_box().float {
+        Float::Left | Float::InlineStart => Some(FloatSide::Left),
+        Float::Right | Float::InlineEnd => Some(FloatSide::Right),
+        Float::None => None,
+    }
+}
+
+/// `clear` of a block as (clears-left, clears-right).
+fn clear_sides(style: &ComputedValues) -> (bool, bool) {
+    use style::values::computed::Clear;
+    match style.get_box().clear {
+        Clear::None => (false, false),
+        Clear::Left | Clear::InlineStart => (true, false),
+        Clear::Right | Clear::InlineEnd => (false, true),
+        Clear::Both => (true, true),
+    }
 }
 
 impl<'f> Paginator<'f> {
@@ -96,6 +154,9 @@ impl<'f> Paginator<'f> {
             last_avoid_after: false,
             active_keep: None,
             page_locators: Vec::new(),
+            float_left: None,
+            float_right: None,
+            hyphen_cache: std::collections::HashMap::new(),
         };
         p.new_page();
         p
@@ -125,6 +186,9 @@ impl<'f> Paginator<'f> {
         self.placed_on_page = 0;
         // Margins are discarded at fragmentainer boundaries.
         self.pending_margin = 0.0;
+        // Floats never cross a page boundary.
+        self.float_left = None;
+        self.float_right = None;
     }
 
     fn at_page_top(&self) -> bool {
@@ -141,6 +205,23 @@ impl<'f> Paginator<'f> {
     /// content box; `width` its content width.
     pub fn place_block(&mut self, block: &BlockBox, x: f32, width: f32) {
         let style = &block.style;
+        // A floated image leaves the flow entirely: it is placed against a
+        // content edge and registers an exclusion band instead of advancing
+        // the cursor. (Floated non-replaced blocks fall through to normal
+        // flow — the documented v1 degradation.)
+        if !block.anonymous {
+            if let (
+                BlockKind::Image {
+                    width: iw,
+                    height: ih,
+                },
+                Some(side),
+            ) = (&block.kind, float_side(style))
+            {
+                self.place_float_image(block, *iw, *ih, x, width, side);
+                return;
+            }
+        }
         let cw = width;
 
         let (margin_top, margin_bottom, margin_left, margin_right) = if block.anonymous {
@@ -183,6 +264,10 @@ impl<'f> Paginator<'f> {
                 self.new_page();
             }
             self.force_break = false;
+            let (clear_left, clear_right) = clear_sides(style);
+            if clear_left || clear_right {
+                self.apply_clear(clear_left, clear_right);
+            }
             // Arm keep-with-next when the previous block asked to stay with
             // us (`break-after: avoid`) or we ask to stay with it
             // (`break-before: avoid`).
@@ -243,13 +328,26 @@ impl<'f> Paginator<'f> {
                 } else {
                     text_indent_px(style, inner_w)
                 };
-                let lines = if indent > 0.5 {
-                    self.shape_inline_indented(inline, style, inner_w, indent)
-                } else {
-                    self.shape_inline(inline, style, inner_w)
-                };
                 let tag = chapbook_dom::node_tag(block.node);
-                self.place_lines(lines, block, inner_x, tag);
+                let y_flow = self.y
+                    + if self.at_page_top() {
+                        0.0
+                    } else {
+                        self.pending_margin
+                    };
+                let band_active = [self.float_left, self.float_right]
+                    .iter()
+                    .any(|b| b.is_some_and(|b| b.y_end > y_flow + 0.01));
+                if band_active {
+                    self.place_inline_with_floats(inline, block, inner_x, inner_w, tag);
+                } else {
+                    let lines = if indent > 0.5 {
+                        self.shape_inline_indented(inline, style, inner_w, indent)
+                    } else {
+                        self.shape_inline(inline, style, inner_w)
+                    };
+                    self.place_lines(lines, block, inner_x, tag);
+                }
             }
             BlockKind::Image { width, height } => {
                 self.place_image(block, *width, *height, inner_x, inner_w);
@@ -437,6 +535,195 @@ impl<'f> Paginator<'f> {
         self.placed_on_page += 1;
     }
 
+    /// Place a floated image against the left or right content edge without
+    /// advancing the flow cursor, and register its exclusion band. Margins
+    /// are the float's own (they do not collapse with the flow).
+    fn place_float_image(
+        &mut self,
+        block: &BlockBox,
+        iw: u32,
+        ih: u32,
+        x: f32,
+        width: f32,
+        side: FloatSide,
+    ) {
+        if iw == 0 || ih == 0 {
+            return;
+        }
+        let m = block.style.get_margin();
+        let (mt, mb, ml, mr) = (
+            resolve_margin(&m.margin_top, width),
+            resolve_margin(&m.margin_bottom, width),
+            resolve_margin(&m.margin_left, width),
+            resolve_margin(&m.margin_right, width),
+        );
+        let mut w = (iw as f32).min((width - ml - mr).max(1.0));
+        let mut h = ih as f32 * w / iw as f32;
+        let max_h = (self.content.size.h - mt - mb).max(1.0);
+        if h > max_h {
+            w *= max_h / h;
+            h = max_h;
+        }
+        // The float's top aligns with where following flow content would
+        // start (pending margin included, but left uncommitted for it).
+        let mut y0 = self.y
+            + if self.at_page_top() {
+                0.0
+            } else {
+                self.pending_margin
+            };
+        // A second float on the same side stacks below the first.
+        let same_side = match side {
+            FloatSide::Left => &self.float_left,
+            FloatSide::Right => &self.float_right,
+        };
+        if let Some(band) = same_side {
+            y0 = y0.max(band.y_end);
+        }
+        if y0 + mt + h + mb > self.content.size.h + 0.01 && !self.at_page_top() {
+            self.new_page();
+            y0 = 0.0;
+        }
+        let x_pos = match side {
+            FloatSide::Left => x + ml,
+            FloatSide::Right => x + width - mr - w,
+        };
+        let rect = Rect {
+            origin: Point::new(
+                self.content.origin.x + x_pos,
+                self.content.origin.y + y0 + mt,
+            ),
+            size: Size::new(w, h),
+        };
+        self.pages.last_mut().unwrap().fragments.push(Fragment {
+            rect,
+            kind: FragmentKind::Image {
+                resource: chapbook_dom::node_tag(block.node),
+            },
+            tag: chapbook_dom::node_tag(block.node),
+        });
+        self.placed_on_page += 1;
+        let band = FloatBand {
+            width: ml + w + mr,
+            y_end: (y0 + mt + h + mb).min(self.content.size.h),
+        };
+        match side {
+            FloatSide::Left => self.float_left = Some(band),
+            FloatSide::Right => self.float_right = Some(band),
+        }
+    }
+
+    /// `clear`: move the cursor below the named floats' bottom edges.
+    fn apply_clear(&mut self, left: bool, right: bool) {
+        let mut target = self.y;
+        if left {
+            if let Some(band) = &self.float_left {
+                target = target.max(band.y_end);
+            }
+        }
+        if right {
+            if let Some(band) = &self.float_right {
+                target = target.max(band.y_end);
+            }
+        }
+        self.commit_margin();
+        if target > self.y {
+            self.y = target;
+        }
+        let y = self.y;
+        self.expire_bands(y);
+    }
+
+    fn expire_bands(&mut self, y: f32) {
+        if self.float_left.is_some_and(|b| b.y_end <= y + 0.01) {
+            self.float_left = None;
+        }
+        if self.float_right.is_some_and(|b| b.y_end <= y + 0.01) {
+            self.float_right = None;
+        }
+    }
+
+    /// Active band insets at `y`: (left inset, right inset, nearest bottom
+    /// edge). Expired bands are dropped first.
+    fn bands_at(&mut self, y: f32) -> (f32, f32, f32) {
+        self.expire_bands(y);
+        let l = self.float_left.map_or(0.0, |b| b.width);
+        let r = self.float_right.map_or(0.0, |b| b.width);
+        let edge = [self.float_left, self.float_right]
+            .iter()
+            .flatten()
+            .map(|b| b.y_end)
+            .fold(f32::INFINITY, f32::min);
+        (l, r, edge)
+    }
+
+    /// Lay out an inline formatting context that starts beside one or more
+    /// floats: shape at the reduced measure, emit the lines that fit above
+    /// the float's bottom edge, split the IFC there, and repeat until the
+    /// bands expire — the remainder flows through the normal path (which
+    /// restores widow/orphan handling). Text-indent is skipped for segments
+    /// shaped beside a float (v1).
+    fn place_inline_with_floats(
+        &mut self,
+        inline: &InlineContent,
+        block: &BlockBox,
+        x: f32,
+        inner_w: f32,
+        tag: u64,
+    ) {
+        self.commit_margin();
+        let min_measure = font_size_px(&block.style) * 2.0;
+        let mut content = inline.clone();
+        loop {
+            if content.runs.is_empty() {
+                return;
+            }
+            let y = self.y;
+            let (l, r, edge) = self.bands_at(y);
+            if l == 0.0 && r == 0.0 {
+                let lines = self.shape_inline(&content, &block.style, inner_w);
+                self.place_lines(lines, block, x, tag);
+                return;
+            }
+            let avail = inner_w - l - r;
+            if avail < min_measure {
+                // Not enough measure beside the float: drop below it.
+                self.y = edge.min(self.content.size.h);
+                continue;
+            }
+            let lines = self.shape_inline(&content, &block.style, avail);
+            if lines.is_empty() {
+                return;
+            }
+            let mut used = 0.0f32;
+            let mut take = 0usize;
+            for line in &lines {
+                if self.y + used + line.height > edge + 0.01 {
+                    break;
+                }
+                used += line.height;
+                take += 1;
+            }
+            if take == lines.len() {
+                self.emit_lines(&lines, x + l, tag);
+                return;
+            }
+            if take == 0 {
+                self.y = edge.min(self.content.size.h);
+                continue;
+            }
+            let last = &lines[take - 1];
+            let split = buffer_line_start(&content, last.line_index) + last.byte_end;
+            if split == 0 {
+                self.y = edge.min(self.content.size.h);
+                continue;
+            }
+            let (_, rest) = split_inline(&content, split);
+            self.emit_lines(&lines[..take], x + l, tag);
+            content = rest;
+        }
+    }
+
     /// First-line indent: cosmic-text has no hanging-indent support, so the
     /// first line is shaped at `width - indent` to find its break point, the
     /// IFC is split there, and the remainder re-shapes at full width.
@@ -594,11 +881,21 @@ impl<'f> Paginator<'f> {
                     spaces.push((run_idx, glyph_idx));
                 }
             }
-            let text = if text_start <= text_end && text_end <= run.text.len() {
+            let mut text = if text_start <= text_end && text_end <= run.text.len() {
                 run.text[text_start..text_end].to_string()
             } else {
                 String::new()
             };
+            // Soft hyphens are zero-width invisibles in the glyph stream;
+            // keep them out of the reported line text too. A line *ending*
+            // at one broke there and gets a visible hyphen appended below.
+            let ends_at_soft_hyphen = run
+                .glyphs
+                .last()
+                .is_some_and(|g| run.text.get(g.start..g.end) == Some("\u{AD}"));
+            if text.contains('\u{AD}') {
+                text = text.replace('\u{AD}', "");
+            }
             let locator_start = run
                 .glyphs
                 .first()
@@ -654,7 +951,7 @@ impl<'f> Paginator<'f> {
                 }
             }
 
-            lines.push(ShapedLine {
+            let mut line = ShapedLine {
                 height: run.line_height,
                 baseline,
                 width: run.line_w,
@@ -666,9 +963,68 @@ impl<'f> Paginator<'f> {
                 line_index: run.line_i,
                 byte_end: if text_end >= text_start { text_end } else { 0 },
                 spaces,
-            });
+            };
+            if ends_at_soft_hyphen {
+                self.append_hyphen(&mut line, width);
+            }
+            lines.push(line);
         }
         lines
+    }
+
+    /// Append a visible hyphen glyph to a line that broke at a soft hyphen.
+    /// If that pushes past the measure (justified lines are already
+    /// stretched to it), the line re-tightens over its spaces.
+    fn append_hyphen(&mut self, line: &mut ShapedLine, avail: f32) {
+        let Some((font_id, font_size, font_weight)) = line
+            .runs
+            .last()
+            .map(|r| (r.font, r.font_size, r.font_weight))
+        else {
+            return;
+        };
+        let cached = match self.hyphen_cache.get(&font_id) {
+            Some(entry) => *entry,
+            None => {
+                let computed = self
+                    .fonts
+                    .get_font(font_id, cosmic_text::fontdb::Weight(font_weight))
+                    .and_then(|font| {
+                        let swash = font.as_swash();
+                        let gid = swash.charmap().map('-');
+                        (gid != 0)
+                            .then(|| (gid, swash.glyph_metrics(&[]).scale(1.0).advance_width(gid)))
+                    });
+                self.hyphen_cache.insert(font_id, computed);
+                computed
+            }
+        };
+        let Some((glyph_id, advance_per_em)) = cached else {
+            return;
+        };
+        let advance = advance_per_em * font_size;
+        let x_end = line
+            .runs
+            .iter()
+            .flat_map(|r| r.glyphs.iter())
+            .map(|g| g.x + g.advance)
+            .fold(0.0f32, f32::max);
+        let y = line
+            .runs
+            .last()
+            .and_then(|r| r.glyphs.last())
+            .map_or(0.0, |g| g.y);
+        line.runs.last_mut().unwrap().glyphs.push(Glyph {
+            id: glyph_id,
+            x: x_end,
+            y,
+            advance,
+        });
+        line.width = line.width.max(x_end + advance);
+        line.text.push('-');
+        if line.width > avail + 0.01 {
+            justify_line(line, avail);
+        }
     }
 
     fn place_lines(&mut self, lines: Vec<ShapedLine>, block: &BlockBox, x: f32, tag: u64) {
@@ -805,6 +1161,30 @@ fn text_indent_px(style: &ComputedValues, containing: f32) -> f32 {
         return 0.0;
     }
     resolve_lp(&indent.length, containing).max(0.0)
+}
+
+/// Byte offset (within the concatenation of `inline`'s runs) where buffer
+/// line `line_index` starts — buffer lines are separated by '\n' runs from
+/// `<br>`. Together with a `ShapedLine`'s `byte_end` this addresses a split
+/// point anywhere in the IFC, not just on the first buffer line.
+fn buffer_line_start(inline: &InlineContent, line_index: usize) -> usize {
+    if line_index == 0 {
+        return 0;
+    }
+    let mut abs = 0usize;
+    let mut line = 0usize;
+    for run in &inline.runs {
+        for ch in run.text.chars() {
+            abs += ch.len_utf8();
+            if ch == '\n' {
+                line += 1;
+                if line == line_index {
+                    return abs;
+                }
+            }
+        }
+    }
+    abs
 }
 
 /// Split an inline formatting context at a byte offset into the
@@ -1191,12 +1571,13 @@ fn table_width_px(style: &ComputedValues, containing: f32) -> Option<f32> {
 }
 
 /// Distribute slack across a line's space glyphs so it fills `target`
-/// width. Used for split-off first lines of justified paragraphs, which
-/// cosmic-text treats as buffer-last (never justified). Decoration spans on
-/// the line are not re-stretched (rare on first lines; documented).
+/// width — stretching (split-off first lines of justified paragraphs,
+/// which cosmic-text treats as buffer-last and never justifies) or
+/// tightening (a line that grew a visible hyphen past the measure).
+/// Decoration spans on the line are not re-stretched (rare; documented).
 fn justify_line(line: &mut ShapedLine, target: f32) {
     let extra = target - line.width;
-    if extra <= 0.1 || line.spaces.is_empty() {
+    if extra.abs() <= 0.1 || line.spaces.is_empty() {
         return;
     }
     let add = extra / line.spaces.len() as f32;

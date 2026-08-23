@@ -97,7 +97,18 @@ stays that way.
   chapbook-layout runs its own mini-cascade for just those declarations:
   cssparser parses them out of the same sheets, and their selectors match
   through our existing `selectors::Element` impl with standard
-  specificity/order rules.
+  specificity/order rules. `hyphens` (also Gecko-only, inherited) rides in
+  the same sidecar.
+  **Floats:** `float: left/right` on images places the image against a
+  content edge and shortens the line boxes of following inline content
+  beside it (the IFC is split at the float's bottom edge and re-shaped —
+  the same machinery as first-line indents); `clear` works on any block;
+  floats never cross a page boundary.
+  **Hyphenation:** `hyphens: auto` inserts soft hyphens at embedded en-US
+  Knuth-Liang dictionary points before shaping — cosmic-text's line breaker
+  already treats U+00AD as a break opportunity and its shaper renders it
+  invisible — and lines that break at one get a visible hyphen glyph
+  appended, with justified lines re-tightened over their spaces.
   Output: `ChapterLayout` — chapbook-paint `Page`s plus the
   text-specific side tables (`anchors: id→page`, `char_map:
   char_offset→page`, fragment-tag→DOM-node mapping). One spine item = one
@@ -145,8 +156,9 @@ types use. MSRV 1.89 (stylo 0.20's floor), stable toolchain — no nightly.
 
 Fixed-layout EPUB (detected, rejected with a clear error), JavaScript
 (spec-permitted omission for reading systems), MathML, vertical writing
-modes, floats (v1: rendered as plain blocks), rowspan/vertical-align in tables, absolute positioning (treated
-as static), media overlays, DRM.
+modes, rowspan in tables, floated non-replaced blocks (floated *images*
+lay out for real; other floated boxes stay in flow), absolute positioning
+(treated as static), media overlays, DRM.
 
 ## Milestones
 

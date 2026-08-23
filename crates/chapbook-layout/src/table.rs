@@ -96,6 +96,9 @@ pub fn build_table(input: &BoxTreeInput, node: NodeId) -> Option<TableBox> {
             _ if *el.local_name() == markup5ever::local_name!("caption") => {
                 let mut content = InlineContent::default();
                 collect_flattened(input, *child, &style, &mut content);
+                if input.frag.get(child).is_some_and(|f| f.hyphens_auto) {
+                    crate::hyphenate::apply(&mut content);
+                }
                 if !content.runs.is_empty() {
                     table.caption = Some(content);
                     table.caption_style = Some(style);
@@ -136,6 +139,9 @@ fn build_row(input: &BoxTreeInput, row: NodeId) -> Option<TableRow> {
         all_th &= *el.local_name() == markup5ever::local_name!("th");
         let mut content = InlineContent::default();
         collect_flattened(input, *child, &style, &mut content);
+        if input.frag.get(child).is_some_and(|f| f.hyphens_auto) {
+            crate::hyphenate::apply(&mut content);
+        }
         cells.push(TableCell {
             node: *child,
             style,

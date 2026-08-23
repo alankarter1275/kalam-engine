@@ -6,6 +6,7 @@
 //! mini-cascade: cssparser pulls just these declarations out of the same
 //! stylesheets, and their selectors match through chapbook-dom's
 //! `selectors::Element` impl with standard specificity/source-order rules.
+//! `hyphens` (also Gecko-only, inherited) rides along for the same reason.
 //!
 //! `@media` blocks are descended into when their query can apply on screen
 //! (`screen`, `all`, or bare feature queries); `print`-only blocks are
@@ -45,6 +46,9 @@ pub struct FragStyle {
     pub break_inside_avoid: bool,
     pub widows: u32,
     pub orphans: u32,
+    /// `hyphens: auto` — also Gecko-only in servo-mode stylo, and inherited,
+    /// so it rides in this sidecar next to widows/orphans.
+    pub hyphens_auto: bool,
 }
 
 impl Default for FragStyle {
@@ -55,6 +59,7 @@ impl Default for FragStyle {
             break_inside_avoid: false,
             widows: 2,
             orphans: 2,
+            hyphens_auto: false,
         }
     }
 }
@@ -66,6 +71,7 @@ struct FragDecls {
     break_inside_avoid: Option<bool>,
     widows: Option<u32>,
     orphans: Option<u32>,
+    hyphens_auto: Option<bool>,
 }
 
 impl FragDecls {
@@ -75,6 +81,7 @@ impl FragDecls {
             && self.break_inside_avoid.is_none()
             && self.widows.is_none()
             && self.orphans.is_none()
+            && self.hyphens_auto.is_none()
     }
 }
 
@@ -130,10 +137,11 @@ impl FragRules {
             return;
         }
 
-        // Non-inherited properties reset; widows/orphans carry down.
+        // Non-inherited properties reset; widows/orphans/hyphens carry down.
         let mut style = FragStyle {
             widows: inherited.widows,
             orphans: inherited.orphans,
+            hyphens_auto: inherited.hyphens_auto,
             ..FragStyle::default()
         };
 
@@ -172,6 +180,9 @@ impl FragRules {
             }
             if let Some(v) = d.orphans {
                 style.orphans = v;
+            }
+            if let Some(v) = d.hyphens_auto {
+                style.hyphens_auto = v;
             }
         }
 
@@ -333,6 +344,15 @@ impl<'i> cssparser::DeclarationParser<'i> for DeclParser<'_> {
                         self.decls.orphans = Some(n as u32);
                     }
                 }
+            }
+            // EPUB CSS commonly carries the vendor-prefixed spellings.
+            "hyphens" | "-epub-hyphens" | "-webkit-hyphens" | "-moz-hyphens" => {
+                let ident = input.expect_ident().map(|i| i.to_ascii_lowercase());
+                self.decls.hyphens_auto = match ident.as_deref() {
+                    Ok("auto") => Some(true),
+                    Ok("manual") | Ok("none") => Some(false),
+                    _ => None,
+                };
             }
             _ => {}
         }
