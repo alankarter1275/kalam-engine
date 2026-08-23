@@ -1,0 +1,15 @@
+---
+source: crates/chapbook-opds/tests/fixtures.rs
+expression: dump(&feed)
+---
+version: V2
+title: Example Catalog
+id: Some("urn:cat:root")
+totals: Totals { total_results: None, items_per_page: None, start_index: None, current_page: None }
+link ["self"] -> https://cat.example.com/opds/ [application/atom+xml]
+link ["search"] -> https://cat.example.com/opds/opensearch.xml [application/opensearchdescription+xml]
+group: Featured (1 entries)
+entry: New Releases | id= authors=[] lang=None published=None series=None
+  ["http://opds-spec.org/sort/new"] -> https://cat.example.com/opds/feed/new
+entry: By Subject | id= authors=[] lang=None published=None series=None
+  [] -> https://cat.example.com/opds/feed/subjects

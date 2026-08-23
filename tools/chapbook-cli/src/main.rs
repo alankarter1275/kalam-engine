@@ -110,7 +110,11 @@ fn main() -> ExitCode {
             page,
             out,
         } => print(commands::render(&epub, spine, page, &out)),
-        Command::Opds { .. } => unimplemented("opds", "M6"),
+        Command::Opds { command } => match command {
+            OpdsCommand::Ls { url } => print(commands::opds_ls(&url)),
+            OpdsCommand::Search { url, query } => print(commands::opds_search(&url, &query)),
+            OpdsCommand::Get { url, out } => print(commands::opds_get(&url, &out)),
+        },
         Command::Lib { .. } => unimplemented("lib", "M7"),
     }
 }

@@ -1,0 +1,14 @@
+---
+source: crates/chapbook-opds/tests/fixtures.rs
+expression: dump(&feed)
+---
+version: V1
+title: Demo Series — Chapter 12
+id: None
+totals: Totals { total_results: None, items_per_page: None, start_index: None, current_page: None }
+entry: Demo Series — Chapter 12 | id=urn:example:chapter/demo/c12 authors=["Mangaka Example"] lang=Some("en") published=None series=None
+  ["alternate"] -> https://cat.example.com/opds/publication/chapter/demo/c12
+  ["http://opds-spec.org/image"] -> https://cat.example.com/dl/demo/cover
+  ["http://opds-spec.org/acquisition/open-access"] -> https://cat.example.com/dl/demo/c12.cbz
+  ["http://opds-spec.org/acquisition/open-access"] -> https://cat.example.com/dl/demo/c12.epub
+  ["http://vaemendis.net/opds-pse/stream"] -> https://cat.example.com/opds/page/chapter/demo/c12?page={pageNumber}&width={maxWidth} pse:count=35 lastRead=Some(10) lastReadDate=Some("2026-01-02T03:04:05Z")

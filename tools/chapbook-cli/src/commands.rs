@@ -239,3 +239,124 @@ fn push_field(out: &mut String, name: &str, value: Option<&str>) {
         out.push_str(&format!("{:<11} {v}\n", format!("{name}:")));
     }
 }
+
+fn opds_client() -> chapbook_opds::OpdsClient {
+    let mut client = chapbook_opds::OpdsClient::new();
+    // Credentials via environment for the dev CLI; the viewer will prompt
+    // using the Authentication Document instead.
+    if let (Ok(user), Ok(pass)) = (
+        std::env::var("CHAPBOOK_OPDS_USER"),
+        std::env::var("CHAPBOOK_OPDS_PASSWORD"),
+    ) {
+        client.set_basic_auth(&user, &pass);
+    }
+    client
+}
+
+fn describe_opds_error(e: chapbook_opds::OpdsError) -> chapbook_core::ChapbookError {
+    if let chapbook_opds::OpdsError::AuthRequired(Some(doc)) = &e {
+        let flows: Vec<&str> = doc.authentication.iter().map(|f| f.kind.as_str()).collect();
+        return chapbook_core::ChapbookError::Opds(format!(
+            "authentication required by \"{}\" (flows: {}) — set CHAPBOOK_OPDS_USER / CHAPBOOK_OPDS_PASSWORD",
+            doc.title,
+            flows.join(", ")
+        ));
+    }
+    e.into()
+}
+
+fn dump_feed(feed: &chapbook_opds::Feed) -> String {
+    let mut out = format!("{} [{:?}]\n", feed.title, feed.version);
+    if let Some(total) = feed.totals.total_results {
+        out.push_str(&format!("total: {total}"));
+        if let Some(per) = feed.totals.items_per_page {
+            out.push_str(&format!(" ({per}/page)"));
+        }
+        out.push('\n');
+    }
+    for (group, facets) in feed.facet_groups() {
+        let names: Vec<String> = facets
+            .iter()
+            .map(|f| {
+                let name = f.title.clone().unwrap_or_default();
+                if f.active_facet {
+                    format!("[{name}]")
+                } else {
+                    name
+                }
+            })
+            .collect();
+        out.push_str(&format!("facets/{group}: {}\n", names.join(" ")));
+    }
+    fn list_entry(out: &mut String, entry: &chapbook_opds::Entry) {
+        out.push_str(&format!("- {}", entry.title));
+        if !entry.authors.is_empty() {
+            out.push_str(&format!(" — {}", entry.authors.join(", ")));
+        }
+        out.push('\n');
+        for acq in entry.acquisitions() {
+            let kind = acq
+                .rel
+                .iter()
+                .find_map(|r| r.rsplit('/').next())
+                .unwrap_or("acquisition");
+            let mt = acq
+                .media_type
+                .as_ref()
+                .map(|t| t.essence.clone())
+                .unwrap_or_default();
+            out.push_str(&format!("    {kind} {mt}: {}\n", acq.href));
+        }
+        if let Some(nav) = entry.navigation() {
+            out.push_str(&format!("    -> {}\n", nav.href));
+        }
+        if let Some(stream) = entry.pse_stream() {
+            out.push_str(&format!(
+                "    pages: {} (stream){}\n",
+                stream.pse_count.unwrap_or(0),
+                stream
+                    .pse_last_read
+                    .map(|p| format!(" last-read {p}"))
+                    .unwrap_or_default()
+            ));
+        }
+    }
+    for entry in &feed.entries {
+        list_entry(&mut out, entry);
+    }
+    for group in &feed.groups {
+        out.push_str(&format!("group: {}\n", group.title));
+        for entry in &group.entries {
+            list_entry(&mut out, entry);
+        }
+    }
+    if let Some(next) = feed.next() {
+        out.push_str(&format!("next: {}\n", next.href));
+    }
+    if let Some(previous) = feed.previous() {
+        out.push_str(&format!("previous: {}\n", previous.href));
+    }
+    out
+}
+
+pub fn opds_ls(url: &str) -> Result<String> {
+    let feed = opds_client().fetch(url).map_err(describe_opds_error)?;
+    Ok(dump_feed(&feed))
+}
+
+pub fn opds_search(url: &str, query: &str) -> Result<String> {
+    let client = opds_client();
+    let feed = client.fetch(url).map_err(describe_opds_error)?;
+    let results = client
+        .search(&feed, url, query)
+        .map_err(describe_opds_error)?;
+    Ok(dump_feed(&results))
+}
+
+pub fn opds_get(url: &str, out: &Path) -> Result<String> {
+    opds_client()
+        .download(url, out)
+        .map_err(describe_opds_error)?;
+    let size = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+    Ok(format!("downloaded {} ({size} bytes)\n", out.display()))
+}

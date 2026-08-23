@@ -35,3 +35,41 @@
 //!   `Publication::unit_bytes`'s blocking-fetch contract).
 //!
 //! Implemented in milestone M6.
+
+mod atom;
+mod client;
+mod href;
+mod model;
+mod opds2;
+
+pub use atom::parse_atom;
+pub use client::{opensearch_template, pse_page_url, OpdsClient};
+pub use href::resolve_url;
+pub use model::{
+    AuthDocument, AuthFlow, AuthLink, Entry, Feed, Group, Link, MediaType, OpdsVersion, Price,
+    Series, Totals, AUTH_BASIC,
+};
+pub use opds2::{parse_opds2, parse_opds2_publication};
+
+/// Client/parse errors. `AuthRequired` carries the server's Authentication
+/// Document when it sent one — enough to render a native login dialog.
+#[derive(Debug, thiserror::Error)]
+pub enum OpdsError {
+    #[error("authentication required")]
+    AuthRequired(Option<Box<AuthDocument>>),
+    #[error("HTTP status {0}")]
+    Http(u16),
+    #[error("network error: {0}")]
+    Network(String),
+    #[error("parse error: {0}")]
+    Parse(String),
+}
+
+impl From<OpdsError> for chapbook_core::ChapbookError {
+    fn from(e: OpdsError) -> Self {
+        match e {
+            OpdsError::Network(msg) => chapbook_core::ChapbookError::Network(msg),
+            other => chapbook_core::ChapbookError::Opds(other.to_string()),
+        }
+    }
+}
