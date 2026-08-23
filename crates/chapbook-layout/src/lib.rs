@@ -9,9 +9,11 @@
 //! locator docs) thread through every line fragment, so positions survive
 //! relayout via [`ChapterLayout::page_of`].
 //!
-//! v1 gaps (documented in the module that owns each): `::before`/`::after`
-//! content, text-indent, tables (stacked blocks), floats, `@media`-scoped
-//! break rules, keep-with-next (`break-after: avoid`).
+//! v1 gaps (documented in the module that owns each): tables (stacked
+//! blocks), floats, `@media`-scoped break rules, keep-with-next
+//! (`break-after: avoid`), hyphenation (cosmic-text has no soft-hyphen
+//! support), justified first lines of indented paragraphs (see
+//! `shape_inline_indented`), non-string `content` items.
 
 mod boxtree;
 mod fonts;

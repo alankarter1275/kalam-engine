@@ -98,7 +98,26 @@ pub fn attrs_for(style: &ComputedValues, metadata: usize) -> Attrs<'_> {
         td.strikethrough = true;
     }
     attrs.text_decoration = td;
+
+    // letter-spacing: computed px → cosmic-text EM-unit tracking.
+    let tracking_px = letter_spacing_px(style);
+    if tracking_px != 0.0 {
+        let size = font_size_px(style);
+        attrs.letter_spacing_opt = Some(cosmic_text::LetterSpacing(tracking_px / size));
+    }
     attrs
+}
+
+fn letter_spacing_px(style: &ComputedValues) -> f32 {
+    // Computed letter-spacing is a LengthPercentage; percentages are
+    // font-size-relative and resolved against it.
+    let font_size = app_units::Au::from_f64_px(font_size_px(style) as f64);
+    style
+        .get_inherited_text()
+        .letter_spacing
+        .0
+        .to_used_value(font_size)
+        .to_f64_px() as f32
 }
 
 /// Buffer alignment from computed text-align.

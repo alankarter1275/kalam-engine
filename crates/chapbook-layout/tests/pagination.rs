@@ -269,3 +269,108 @@ fn invariants_on_fixture_chapters() {
         );
     }
 }
+
+// ---- Typography fidelity sweep ----
+
+#[test]
+fn text_indent_shifts_first_line_only() {
+    let html = "<html><body><p>one two three four five six seven eight nine ten \
+                eleven twelve thirteen fourteen fifteen sixteen seventeen</p></body></html>";
+    let (layout, _) = layout_html(
+        html,
+        "p { margin: 0; text-indent: 36px; }",
+        &page_for_lines(10),
+    );
+    let lines: Vec<&chapbook_paint::Fragment> = layout.pages[0].fragments.iter().collect();
+    assert!(lines.len() >= 2, "paragraph must wrap");
+    let first_x = lines[0].rect.origin.x;
+    let second_x = lines[1].rect.origin.x;
+    assert!(
+        (first_x - (second_x + 36.0)).abs() < 0.5,
+        "first line indented by 36px: first={first_x} second={second_x}"
+    );
+}
+
+#[test]
+fn generated_content_wraps_element_text() {
+    let html = r#"<html><body><p class="q">quoted</p></body></html>"#;
+    let (layout, _) = layout_html(
+        html,
+        r#".q::before { content: "« "; } .q::after { content: " »"; }"#,
+        &page_for_lines(10),
+    );
+    let texts = line_texts_in_order(&layout);
+    assert_eq!(texts, vec!["« quoted »"]);
+}
+
+#[test]
+fn letter_spacing_widens_lines() {
+    let html = "<html><body><p>letter spacing sample</p></body></html>";
+    let (plain, _) = layout_html(html, "p { margin: 0; }", &page_for_lines(10));
+    let (spaced, _) = layout_html(
+        html,
+        "p { margin: 0; letter-spacing: 2px; }",
+        &page_for_lines(10),
+    );
+    let width = |l: &ChapterLayout| l.pages[0].fragments[0].rect.size.w;
+    assert!(
+        width(&spaced) > width(&plain) + 10.0,
+        "tracking must widen the line: plain={} spaced={}",
+        width(&plain),
+        width(&spaced)
+    );
+}
+
+#[test]
+fn box_decoration_slices_across_pages() {
+    // A bordered block tall enough to span two pages: one Box fragment per
+    // page, top edge only on the first slice, bottom only on the last.
+    let html = format!(
+        "<html><body><div class=\"framed\">{}</div></body></html>",
+        para_of_lines(6, "boxed")
+    );
+    let (layout, _) = layout_html(
+        &html,
+        ".framed { border: 2px solid #000; background-color: #eee; } p { margin: 0; }",
+        &page_for_lines(4),
+    );
+    assert_eq!(layout.pages.len(), 2);
+    let slices: Vec<&chapbook_paint::BoxDecoration> = layout
+        .pages
+        .iter()
+        .flat_map(|p| &p.fragments)
+        .filter_map(|f| match &f.kind {
+            chapbook_paint::FragmentKind::Box(b) => Some(b),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(slices.len(), 2, "one slice per page");
+    assert!(slices[0].first_slice && !slices[0].last_slice);
+    assert!(!slices[1].first_slice && slices[1].last_slice);
+    assert_eq!(
+        slices[0].background,
+        Some(chapbook_core::Rgba::new(0xee, 0xee, 0xee, 255))
+    );
+    assert_eq!(slices[0].border_widths.top, 2.0);
+
+    // The background paints under the page's text: Box fragment comes first.
+    assert!(matches!(
+        layout.pages[0].fragments[0].kind,
+        chapbook_paint::FragmentKind::Box(_)
+    ));
+    assert!(matches!(
+        layout.pages[1].fragments[0].kind,
+        chapbook_paint::FragmentKind::Box(_)
+    ));
+}
+
+#[test]
+fn undecorated_blocks_emit_no_box_fragments() {
+    let html = format!("<html><body>{}</body></html>", para_of_lines(2, "plain"));
+    let (layout, _) = layout_html(&html, "p { margin: 0; }", &page_for_lines(4));
+    assert!(layout
+        .pages
+        .iter()
+        .flat_map(|p| &p.fragments)
+        .all(|f| !matches!(f.kind, chapbook_paint::FragmentKind::Box(_))));
+}

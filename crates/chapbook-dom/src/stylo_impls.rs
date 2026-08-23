@@ -117,6 +117,20 @@ impl DocumentInner {
             .get()
             .and_then(|data| data.styles.get_primary().cloned())
     }
+
+    /// The eager `::before`/`::after` style of an element, when the cascade
+    /// produced one (i.e. a rule targets the pseudo and content ≠ none).
+    pub fn pseudo_styles(
+        &self,
+        id: NodeId,
+        pseudo: PseudoElement,
+    ) -> Option<ServoArc<ComputedValues>> {
+        self.node(id)
+            .stylo
+            .data
+            .get()
+            .and_then(|data| data.styles.pseudos.get(&pseudo).cloned())
+    }
 }
 
 impl PartialEq for DomNode<'_> {

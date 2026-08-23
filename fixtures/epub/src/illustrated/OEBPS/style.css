@@ -19,3 +19,28 @@
 img {
   margin: 1em 0;
 }
+
+.boxed {
+  background-color: #f2ead9;
+  border: 2px solid #8b5a2b;
+  padding: 8px 12px;
+  margin: 1em 0;
+}
+
+.spaced {
+  letter-spacing: 3px;
+}
+
+.indented {
+  text-indent: 2em;
+}
+
+.noted::before {
+  content: "\2619\00a0";
+  color: #8b5a2b;
+}
+
+.noted::after {
+  content: " \2619";
+  color: #8b5a2b;
+}

@@ -11,5 +11,13 @@ anchor #ch1 -> page 0
   [  268.0,  190.1   64.0x 48.0] Image { resource: 4294967324 }
   [   40.0,  256.1  419.6x 27.0] base= 18.9 loc=152   "This paragraph uses the aliased embedded font family."
   [   40.0,  301.1  273.2x 27.0] base= 18.9 loc=210   "And this one uses the obfuscated italic font."
-  [   40.0,  346.1  520.0x  1.0] Rule { color: Rgba { r: 0, g: 0, b: 0, a: 255 } }
-  [   40.0,  365.1  258.2x 27.0] base= 18.9 loc=265   "Text after the rule closes the chapter."
+  [   40.0,  346.1  520.0x  3.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 0, g: 0, b: 0, a: 255 }, first_slice: true, last_slice: true })
+  [   41.0,  347.1  518.0x  1.0] Rule { color: Rgba { r: 0, g: 0, b: 0, a: 255 } }
+  [   40.0,  367.1  520.0x 65.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 2.0, right: 2.0, bottom: 2.0, left: 2.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   54.0,  395.1  394.8x 27.0] base= 18.9 loc=272   "A framed aside with a background, border, and padding."
+  [   40.0,  450.1  294.7x 27.0] base= 18.9 loc=336   "Letter-spaced small caps line."
+  [   76.0,  495.1  464.2x 27.0] base= 18.9 loc=371   "An indented paragraph long enough to wrap onto a second line so"
+  [   40.0,  522.1  475.2x 27.0] base= 18.9 loc=439   "the first-line indent is visible against the following lines of the same"
+  [   40.0,  549.1   75.4x 27.0] base= 18.9 loc=516   "paragraph."
+  [   40.0,  594.1  369.5x 27.0] base= 18.9 loc=531   "☙\u{a0}A paragraph with generated content around it. ☙"
+  [   40.0,  639.1  258.2x 27.0] base= 18.9 loc=581   "Text after the rule closes the chapter."

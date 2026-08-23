@@ -12,4 +12,6 @@ mod page;
 
 pub use display::{build_display_list, DisplayList, DisplayOp};
 pub use images::{ImageStore, StoredImage};
-pub use page::{Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page};
+pub use page::{
+    BoxDecoration, Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page,
+};

@@ -5,7 +5,7 @@
 //! display-list builder, renderers, the viewer) never know the difference.
 //! All coordinates are CSS px in page space, origin at the page's top-left.
 
-use chapbook_core::{Rect, Rgba, Size};
+use chapbook_core::{EdgeSizes, Rect, Rgba, Size};
 
 /// One laid-out page.
 #[derive(Debug, Clone)]
@@ -36,6 +36,22 @@ pub enum FragmentKind {
     Rule { color: Rgba },
     /// A raster image, keyed into the producer's resource store (M5).
     Image { resource: u64 },
+    /// A block box's background and borders. A box spanning several pages
+    /// emits one slice per page; the slice flags gate the horizontal border
+    /// edges so only outer edges paint (CSS box-decoration-break: slice).
+    Box(BoxDecoration),
+}
+
+#[derive(Debug, Clone)]
+pub struct BoxDecoration {
+    pub background: Option<Rgba>,
+    /// Border widths per edge (zero = no edge).
+    pub border_widths: EdgeSizes,
+    pub border_color: Rgba,
+    /// True when this slice contains the box's top edge.
+    pub first_slice: bool,
+    /// True when this slice contains the box's bottom edge.
+    pub last_slice: bool,
 }
 
 /// A shaped line: glyphs are final — no re-shaping happens downstream.

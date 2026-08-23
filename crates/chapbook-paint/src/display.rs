@@ -86,11 +86,62 @@ pub fn build_display_list(page: &Page, background: Rgba) -> DisplayList {
                     dest: fragment.rect,
                 });
             }
+            FragmentKind::Box(decoration) => {
+                push_box_decoration(&mut ops, &fragment.rect, decoration);
+            }
         }
     }
 
     DisplayList {
         size: page.size,
         ops,
+    }
+}
+
+/// Background fill + solid border edges. Horizontal edges paint only on the
+/// slices that carry them; vertical edges paint on every slice.
+fn push_box_decoration(
+    ops: &mut Vec<DisplayOp>,
+    rect: &Rect,
+    decoration: &crate::page::BoxDecoration,
+) {
+    if let Some(background) = decoration.background {
+        if !background.is_transparent() {
+            ops.push(DisplayOp::FillRect {
+                rect: *rect,
+                color: background,
+            });
+        }
+    }
+    let w = &decoration.border_widths;
+    let color = decoration.border_color;
+    if color.is_transparent() {
+        return;
+    }
+    let (x, y) = (rect.origin.x, rect.origin.y);
+    let (bw, bh) = (rect.size.w, rect.size.h);
+    if decoration.first_slice && w.top > 0.0 {
+        ops.push(DisplayOp::FillRect {
+            rect: Rect::new(x, y, bw, w.top),
+            color,
+        });
+    }
+    if decoration.last_slice && w.bottom > 0.0 {
+        ops.push(DisplayOp::FillRect {
+            rect: Rect::new(x, y + bh - w.bottom, bw, w.bottom),
+            color,
+        });
+    }
+    if w.left > 0.0 {
+        ops.push(DisplayOp::FillRect {
+            rect: Rect::new(x, y, w.left, bh),
+            color,
+        });
+    }
+    if w.right > 0.0 {
+        ops.push(DisplayOp::FillRect {
+            rect: Rect::new(x + bw - w.right, y, w.right, bh),
+            color,
+        });
     }
 }

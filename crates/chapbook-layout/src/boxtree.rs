@@ -4,8 +4,9 @@
 //!
 //! v1 degradations, per ARCHITECTURE.md: table display types and list items
 //! become plain blocks (list items get a text marker), floats/positioning
-//! are ignored, inline replaced content (images) is skipped until M5,
-//! `::before`/`::after` generated content is not emitted.
+//! are ignored, deeply-inline-nested images are skipped.
+//! `::before`/`::after` emit literal string content (counters/attr()/images
+//! in `content` are skipped).
 
 use std::collections::HashMap;
 
@@ -49,6 +50,7 @@ pub struct InlineContent {
     pub runs: Vec<InlineRun>,
 }
 
+#[derive(Clone)]
 pub struct InlineRun {
     pub text: String,
     /// Locator-text char offset for each char of `text` (same length in
@@ -68,6 +70,25 @@ impl InlineContent {
             .last()
             .and_then(|r| r.text.chars().next_back())
             .is_none_or(|c| c == ' ')
+    }
+
+    /// Drop leading collapsible spaces (used when re-shaping the remainder
+    /// of a split IFC: the line break consumed them).
+    pub(crate) fn trim_leading_space(&mut self) {
+        while let Some(run) = self.runs.first_mut() {
+            let trimmed = run.text.trim_start_matches(' ').len();
+            let removed_chars =
+                run.text.chars().count() - run.text[run.text.len() - trimmed..].chars().count();
+            if removed_chars > 0 {
+                run.text = run.text[run.text.len() - trimmed..].to_string();
+                run.offsets.drain(..removed_chars);
+            }
+            if run.text.is_empty() {
+                self.runs.remove(0);
+            } else {
+                break;
+            }
+        }
     }
 
     fn trim_trailing_space(&mut self) {
@@ -170,7 +191,14 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
         if display_of(&style) == DisplayClass::ListItem {
             push_marker(&mut inline, input, node, &style);
         }
+        push_generated(
+            &mut inline,
+            input,
+            node,
+            chapbook_dom::PseudoElement::Before,
+        );
         collect_inline(input, node, &style, &mut inline);
+        push_generated(&mut inline, input, node, chapbook_dom::PseudoElement::After);
         inline.trim_trailing_space();
         BlockKind::Inline(inline)
     };
@@ -306,7 +334,46 @@ fn collect_inline_element(
         });
         return;
     }
+    push_generated(out, input, node, chapbook_dom::PseudoElement::Before);
     collect_inline(input, node, &style, out);
+    push_generated(out, input, node, chapbook_dom::PseudoElement::After);
+}
+
+/// `::before`/`::after` generated content: literal string items only
+/// (counters, attr(), and images are unsupported and skipped). Generated
+/// chars carry their element's locator offset, like list markers — they are
+/// presentation, not source text.
+fn push_generated(
+    out: &mut InlineContent,
+    input: &BoxTreeInput,
+    node: NodeId,
+    pseudo: chapbook_dom::PseudoElement,
+) {
+    let Some(style) = input.doc.pseudo_styles(node, pseudo) else {
+        return;
+    };
+    use style::values::generics::counters::{Content, ContentItem};
+    let text: String = match &style.get_counters().content {
+        Content::Items(items) => items
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ContentItem::String(s) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => return,
+    };
+    if text.is_empty() {
+        return;
+    }
+    let offset = input.locator.get(&node).copied().unwrap_or(0);
+    let offsets = vec![offset; text.chars().count()];
+    out.runs.push(InlineRun {
+        text,
+        offsets,
+        style,
+    });
 }
 
 /// Append a text node's content with CSS `white-space: normal` collapsing

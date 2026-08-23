@@ -14,7 +14,9 @@ use style::properties::ComputedValues;
 use style::values::computed::LengthPercentage;
 
 use chapbook_core::{PageMetrics, Point, Rect, Size};
-use chapbook_paint::{Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page};
+use chapbook_paint::{
+    BoxDecoration, Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page,
+};
 
 use crate::boxtree::{BlockBox, BlockKind, InlineContent};
 use crate::fragmentation::BreakRule;
@@ -31,6 +33,10 @@ struct ShapedLine {
     decorations: Vec<Decoration>,
     text: String,
     locator_start: u32,
+    /// Buffer line index and end byte of the last glyph within that line's
+    /// text — the split point the text-indent two-pass shaping needs.
+    line_index: usize,
+    byte_end: usize,
 }
 
 pub(crate) struct Paginator<'f> {
@@ -137,6 +143,15 @@ impl<'f> Paginator<'f> {
                 resolve_padding(&p.padding_right, cw),
             )
         };
+        let decoration = if block.anonymous {
+            None
+        } else {
+            box_decoration_of(style)
+        };
+        let border = decoration
+            .as_ref()
+            .map(|d| d.border_widths)
+            .unwrap_or_default();
 
         if !block.anonymous {
             if block.frag.break_before == BreakRule::Page && !self.at_page_top() {
@@ -150,9 +165,32 @@ impl<'f> Paginator<'f> {
 
         self.pending_margin = self.pending_margin.max(margin_top);
 
-        let inner_x = x + margin_left + pad_left;
-        let inner_w = (width - margin_left - margin_right - pad_left - pad_right).max(1.0);
+        let inner_x = x + margin_left + border.left + pad_left;
+        let inner_w = (width
+            - margin_left
+            - margin_right
+            - border.left
+            - border.right
+            - pad_left
+            - pad_right)
+            .max(1.0);
 
+        // A decorated box pins its top edge here: commit margins and record
+        // where the box begins so slices can be emitted per page.
+        let span_start = if decoration.is_some() {
+            self.commit_margin();
+            Some((
+                self.pages.len() - 1,
+                self.pages.last().unwrap().fragments.len(),
+                self.y,
+            ))
+        } else {
+            None
+        };
+        if border.top > 0.0 {
+            self.commit_margin();
+            self.y += border.top;
+        }
         if pad_top > 0.0 {
             self.commit_margin();
             self.y += pad_top;
@@ -165,7 +203,16 @@ impl<'f> Paginator<'f> {
                 }
             }
             BlockKind::Inline(inline) => {
-                let lines = self.shape_inline(inline, style, inner_w);
+                let indent = if block.anonymous {
+                    0.0
+                } else {
+                    text_indent_px(style, inner_w)
+                };
+                let lines = if indent > 0.5 {
+                    self.shape_inline_indented(inline, style, inner_w, indent)
+                } else {
+                    self.shape_inline(inline, style, inner_w)
+                };
                 let tag = chapbook_dom::node_tag(block.node);
                 self.place_lines(lines, block, inner_x, tag);
             }
@@ -195,9 +242,75 @@ impl<'f> Paginator<'f> {
         if pad_bottom > 0.0 {
             self.y += pad_bottom;
         }
+        if border.bottom > 0.0 {
+            self.y += border.bottom;
+        }
+        if let (Some(decoration), Some((start_page, start_index, start_y))) =
+            (decoration, span_start)
+        {
+            self.emit_box_slices(
+                decoration,
+                start_page,
+                start_index,
+                start_y,
+                x + margin_left,
+                (width - margin_left - margin_right).max(1.0),
+                chapbook_dom::node_tag(block.node),
+            );
+        }
         self.pending_margin = self.pending_margin.max(margin_bottom);
         if !block.anonymous && block.frag.break_after == BreakRule::Page {
             self.force_break = true;
+        }
+    }
+
+    /// Insert one background/border slice per page the box touched, under
+    /// the content fragments that were placed meanwhile.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_box_slices(
+        &mut self,
+        decoration: BoxDecoration,
+        start_page: usize,
+        start_index: usize,
+        start_y: f32,
+        x: f32,
+        border_box_w: f32,
+        tag: u64,
+    ) {
+        let end_page = self.pages.len() - 1;
+        let end_y = self.y;
+        for page_idx in start_page..=end_page {
+            let (slice_top, slice_bottom) = (
+                if page_idx == start_page { start_y } else { 0.0 },
+                if page_idx == end_page {
+                    end_y
+                } else {
+                    self.content.size.h
+                },
+            );
+            if slice_bottom - slice_top <= 0.0 {
+                continue;
+            }
+            let mut slice = decoration.clone();
+            slice.first_slice = page_idx == start_page;
+            slice.last_slice = page_idx == end_page;
+            let fragment = Fragment {
+                rect: Rect {
+                    origin: Point::new(
+                        self.content.origin.x + x,
+                        self.content.origin.y + slice_top,
+                    ),
+                    size: Size::new(border_box_w, slice_bottom - slice_top),
+                },
+                kind: FragmentKind::Box(slice),
+                tag,
+            };
+            let insert_at = if page_idx == start_page {
+                start_index
+            } else {
+                0
+            };
+            self.pages[page_idx].fragments.insert(insert_at, fragment);
         }
     }
 
@@ -236,6 +349,45 @@ impl<'f> Paginator<'f> {
         });
         self.y += h;
         self.placed_on_page += 1;
+    }
+
+    /// First-line indent: cosmic-text has no hanging-indent support, so the
+    /// first line is shaped at `width - indent` to find its break point, the
+    /// IFC is split there, and the remainder re-shapes at full width.
+    ///
+    /// Known limitation: in justified paragraphs the split makes the first
+    /// line its buffer's last line, which cosmic-text leaves unjustified —
+    /// indented first lines of justified text render ragged-right.
+    fn shape_inline_indented(
+        &mut self,
+        inline: &InlineContent,
+        block_style: &ComputedValues,
+        width: f32,
+        indent: f32,
+    ) -> Vec<ShapedLine> {
+        // Never indent away more than most of the measure.
+        let indent = indent.min(width * 0.8);
+        let probe = self.shape_inline(inline, block_style, width - indent);
+        let needs_split = probe.len() > 1
+            && probe
+                .first()
+                .is_some_and(|l| l.line_index == 0 && l.byte_end > 0);
+        if !needs_split {
+            let mut lines = probe;
+            for line in &mut lines {
+                line.x_indent += indent;
+            }
+            return lines;
+        }
+
+        let split_byte = probe[0].byte_end;
+        let (first_part, rest_part) = split_inline(inline, split_byte);
+        let mut lines = self.shape_inline(&first_part, block_style, width - indent);
+        for line in &mut lines {
+            line.x_indent += indent;
+        }
+        lines.extend(self.shape_inline(&rest_part, block_style, width));
+        lines
     }
 
     fn commit_margin(&mut self) {
@@ -410,6 +562,8 @@ impl<'f> Paginator<'f> {
                 decorations,
                 text,
                 locator_start,
+                line_index: run.line_i,
+                byte_end: if text_end >= text_start { text_end } else { 0 },
             });
         }
         lines
@@ -531,4 +685,97 @@ fn resolve_padding(
     containing: f32,
 ) -> f32 {
     resolve_lp(&padding.0, containing)
+}
+
+fn text_indent_px(style: &ComputedValues, containing: f32) -> f32 {
+    let indent = &style.get_inherited_text().text_indent;
+    // `hanging` / `each-line` keywords unsupported; negative indents clamp
+    // to zero (they would escape the content box).
+    if indent.hanging || indent.each_line {
+        return 0.0;
+    }
+    resolve_lp(&indent.length, containing).max(0.0)
+}
+
+/// Split an inline formatting context at a byte offset into the
+/// concatenation of its runs (the offset always falls on a char boundary:
+/// glyph clusters end on them). Leading collapsible spaces of the remainder
+/// are dropped — the line break consumed them.
+fn split_inline(inline: &InlineContent, split_byte: usize) -> (InlineContent, InlineContent) {
+    let mut first = InlineContent::default();
+    let mut rest = InlineContent::default();
+    let mut consumed = 0usize;
+    for run in &inline.runs {
+        let len = run.text.len();
+        if consumed + len <= split_byte {
+            first.runs.push(run.clone());
+        } else if consumed >= split_byte {
+            rest.runs.push(run.clone());
+        } else {
+            let local = split_byte - consumed;
+            let char_count = run.text[..local].chars().count();
+            let (a_text, b_text) = run.text.split_at(local);
+            let (a_off, b_off) = run.offsets.split_at(char_count);
+            if !a_text.is_empty() {
+                first.runs.push(crate::boxtree::InlineRun {
+                    text: a_text.to_string(),
+                    offsets: a_off.to_vec(),
+                    style: run.style.clone(),
+                });
+            }
+            if !b_text.is_empty() {
+                rest.runs.push(crate::boxtree::InlineRun {
+                    text: b_text.to_string(),
+                    offsets: b_off.to_vec(),
+                    style: run.style.clone(),
+                });
+            }
+        }
+        consumed += len;
+    }
+    rest.trim_leading_space();
+    (first, rest)
+}
+
+/// Background color + solid borders of a block, when it has any. Border
+/// styles other than none/hidden all render solid (v1); per-side colors
+/// collapse to the top border's color.
+fn box_decoration_of(style: &ComputedValues) -> Option<BoxDecoration> {
+    use style::values::specified::BorderStyle;
+    let bg = style.get_background().background_color.clone();
+    let bg = style.resolve_color(&bg);
+    let background = {
+        let c = crate::style_to_attrs::rgba(&bg);
+        (!c.is_transparent()).then_some(c)
+    };
+
+    let border = style.get_border();
+    let edge =
+        |shown: BorderStyle, width: &style::values::computed::border::BorderSideWidth| -> f32 {
+            if matches!(shown, BorderStyle::None | BorderStyle::Hidden) {
+                0.0
+            } else {
+                width.0.to_f64_px() as f32
+            }
+        };
+    let widths = chapbook_core::EdgeSizes {
+        top: edge(border.border_top_style, &border.border_top_width),
+        right: edge(border.border_right_style, &border.border_right_width),
+        bottom: edge(border.border_bottom_style, &border.border_bottom_width),
+        left: edge(border.border_left_style, &border.border_left_width),
+    };
+    let has_border =
+        widths.top > 0.0 || widths.right > 0.0 || widths.bottom > 0.0 || widths.left > 0.0;
+    if background.is_none() && !has_border {
+        return None;
+    }
+    let border_color =
+        crate::style_to_attrs::rgba(&style.resolve_color(&border.border_top_color.clone()));
+    Some(BoxDecoration {
+        background,
+        border_widths: widths,
+        border_color,
+        first_slice: true,
+        last_slice: true,
+    })
 }

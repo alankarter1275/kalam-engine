@@ -21,5 +21,8 @@ mod tree;
 pub use offsets::{locator_offset_of, locator_offsets, locator_text, node_tag};
 pub use parse::parse_xhtml;
 pub use stylo_impls::DomNode;
+// Re-exported so layout can name eager pseudo-elements without a direct
+// stylo dependency path of its own.
+pub use style::selector_parser::PseudoElement;
 pub use text::extract_text;
 pub use tree::{Document, ElementData, Node, NodeData, NodeId, StylesheetSource};
