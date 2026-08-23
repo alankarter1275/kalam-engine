@@ -268,6 +268,7 @@ impl<'f> Paginator<'f> {
                     Some(last)
                         if last.font == glyph.font_id
                             && last.font_size == glyph.font_size
+                            && last.font_weight == glyph.font_weight.0
                             && last.color == color =>
                     {
                         last.glyphs.push(g);
@@ -275,6 +276,7 @@ impl<'f> Paginator<'f> {
                     _ => glyph_runs.push(GlyphRun {
                         font: glyph.font_id,
                         font_size: glyph.font_size,
+                        font_weight: glyph.font_weight.0,
                         color,
                         glyphs: vec![g],
                     }),

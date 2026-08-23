@@ -1,0 +1,50 @@
+//! Golden-image tests: byte-exact PNG comparison against checked-in
+//! references. Deterministic because rendering uses only the vendored
+//! fixture fonts; pinned to one CI target in `ci.yml` (rasterization is
+//! arch-stable but we don't rely on it across platforms).
+//!
+//! To regenerate after an intentional rendering change:
+//! `UPDATE_RENDER_GOLDENS=1 cargo test -p chapbook-cli --test render_golden`
+
+use std::path::PathBuf;
+
+use chapbook_cli::commands;
+
+fn repo(rel: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(rel)
+}
+
+fn check_golden(spine: usize, page: usize, golden_rel: &str) {
+    let golden = repo(golden_rel);
+    let out = std::env::temp_dir().join(format!("chapbook-render-{spine}-{page}.png"));
+    commands::render(&repo("fixtures/epub/minimal.epub"), spine, page, &out).unwrap();
+    let rendered = std::fs::read(&out).unwrap();
+
+    if std::env::var_os("UPDATE_RENDER_GOLDENS").is_some() {
+        std::fs::write(&golden, &rendered).unwrap();
+        return;
+    }
+
+    let expected = std::fs::read(&golden).unwrap_or_else(|_| {
+        panic!("missing golden {golden_rel}; run with UPDATE_RENDER_GOLDENS=1")
+    });
+    assert!(
+        rendered == expected,
+        "rendered page (spine {spine}, page {page}) differs from {golden_rel}; \
+         if the change is intentional, regenerate with UPDATE_RENDER_GOLDENS=1 \
+         (rendered copy left at {})",
+        out.display()
+    );
+}
+
+#[test]
+fn render_golden_chapter1_page0() {
+    check_golden(0, 0, "fixtures/render/minimal-s0p0.png");
+}
+
+#[test]
+fn render_golden_chapter2_page1() {
+    check_golden(1, 1, "fixtures/render/minimal-s1p1.png");
+}

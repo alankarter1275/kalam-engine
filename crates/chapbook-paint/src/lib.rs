@@ -6,6 +6,8 @@
 //! for XHTML; image-per-page formats directly). The `DisplayList` flattening
 //! and draw ops land in M4.
 
+mod display;
 mod page;
 
+pub use display::{build_display_list, DisplayList, DisplayOp};
 pub use page::{Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page};

@@ -126,6 +126,44 @@ pub fn layout(epub: &Path, spine: usize) -> Result<String> {
     Ok(out)
 }
 
+pub fn render(epub: &Path, spine: usize, page: usize, out: &Path) -> Result<String> {
+    let book = Book::open(epub)?;
+    let href = book.spine_item(spine)?.href.clone();
+    let (doc, css, _notes) = styled_chapter(&book, spine, &href)?;
+
+    let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
+    let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
+    let metrics = PageMetrics::default();
+    let layout = chapbook_layout::paginate(&doc, &css, &metrics, &mut fonts);
+
+    let page_data = layout.pages.get(page).ok_or_else(|| {
+        chapbook_core::ChapbookError::Layout(format!(
+            "page {page} out of range (chapter has {})",
+            layout.pages.len()
+        ))
+    })?;
+
+    let dl = chapbook_paint::build_display_list(page_data, chapbook_core::Rgba::WHITE);
+    let scale = metrics.dpi_scale;
+    let mut pixmap = chapbook_render_tinyskia::tiny_skia::Pixmap::new(
+        (dl.size.w * scale) as u32,
+        (dl.size.h * scale) as u32,
+    )
+    .ok_or_else(|| chapbook_core::ChapbookError::Layout("empty page size".into()))?;
+    let mut renderer = chapbook_render_tinyskia::Renderer::new();
+    renderer.render(&dl, &mut fonts, scale, &mut pixmap);
+    pixmap
+        .save_png(out)
+        .map_err(|e| chapbook_core::ChapbookError::Io(std::io::Error::other(e)))?;
+    Ok(format!(
+        "rendered spine {spine} page {page}/{} ({}x{}) to {}\n",
+        layout.pages.len() - 1,
+        pixmap.width(),
+        pixmap.height(),
+        out.display()
+    ))
+}
+
 /// Parse + cascade one chapter: shared plumbing for `styles` and `layout`.
 fn styled_chapter(
     book: &Book,

@@ -18,3 +18,4 @@ chapbook-render-tinyskia = { workspace = true }
 chapbook-library = { workspace = true }
 winit = { workspace = true }
 softbuffer = { workspace = true }
+cosmic-text = { workspace = true }

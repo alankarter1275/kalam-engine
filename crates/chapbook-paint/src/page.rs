@@ -51,12 +51,15 @@ pub struct LineFragment {
     pub locator_start: u32,
 }
 
-/// A run of glyphs sharing one font face, size, and color.
+/// A run of glyphs sharing one font face, size, weight, and color.
 #[derive(Debug, Clone)]
 pub struct GlyphRun {
     /// Face in the producer's `fontdb` (cosmic-text's database).
     pub font: cosmic_text::fontdb::ID,
     pub font_size: f32,
+    /// OpenType weight (rasterizer cache key component for variable fonts
+    /// and synthetic bolding).
+    pub font_weight: u16,
     pub color: Rgba,
     pub glyphs: Vec<Glyph>,
 }

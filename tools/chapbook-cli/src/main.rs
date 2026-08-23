@@ -104,7 +104,12 @@ fn main() -> ExitCode {
         Command::Text { epub, spine } => print(commands::text(&epub, spine)),
         Command::Styles { epub, spine } => print(commands::styles(&epub, spine)),
         Command::Layout { epub, spine } => print(commands::layout(&epub, spine)),
-        Command::Render { .. } => unimplemented("render", "M4"),
+        Command::Render {
+            epub,
+            spine,
+            page,
+            out,
+        } => print(commands::render(&epub, spine, page, &out)),
         Command::Opds { .. } => unimplemented("opds", "M6"),
         Command::Lib { .. } => unimplemented("lib", "M7"),
     }

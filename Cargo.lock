@@ -572,6 +572,7 @@ dependencies = [
  "chapbook-paint",
  "chapbook-render-tinyskia",
  "chapbook-style",
+ "cosmic-text",
  "softbuffer",
  "winit",
 ]
