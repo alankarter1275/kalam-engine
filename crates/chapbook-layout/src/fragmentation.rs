@@ -7,9 +7,10 @@
 //! stylesheets, and their selectors match through chapbook-dom's
 //! `selectors::Element` impl with standard specificity/source-order rules.
 //!
-//! Known gap: declarations inside `@media` (or any at-rule) are ignored —
-//! at-rule contents are skipped wholesale. Print-media break rules inside
-//! `@media print` are therefore not honored; acceptable for v1.
+//! `@media` blocks are descended into when their query can apply on screen
+//! (`screen`, `all`, or bare feature queries); `print`-only blocks are
+//! skipped, matching the style engine's screen device. Other at-rules'
+//! contents are ignored.
 
 use std::collections::HashMap;
 
@@ -184,35 +185,35 @@ impl FragRules {
 fn collect_rules(css: &str, url_data: &UrlExtraData, rules: &mut Vec<FragRule>, order: &mut usize) {
     let mut input = cssparser::ParserInput::new(css);
     let mut parser = cssparser::Parser::new(&mut input);
-    let mut rule_parser = SheetParser { url_data };
-    for item in cssparser::StyleSheetParser::new(&mut parser, &mut rule_parser) {
-        let Ok(Some((selectors, decls))) = item else {
-            continue; // parse error or at-rule: skip, keep going
-        };
-        if decls.is_empty() {
-            continue;
-        }
-        *order += 1;
-        for selector in selectors.slice() {
-            rules.push(FragRule {
-                selector: selector.clone(),
-                specificity: selector.specificity(),
-                order: *order,
-                decls,
-            });
-        }
+    let mut rule_parser = SheetParser {
+        url_data,
+        rules,
+        order,
+    };
+    for _ in cssparser::StyleSheetParser::new(&mut parser, &mut rule_parser) {
+        // Rules are pushed by the parser callbacks; per-rule errors are
+        // recovered by the driver.
     }
 }
 
-type ParsedRule = Option<(selectors::SelectorList<SelectorImpl>, FragDecls)>;
+/// Whether an `@media` prelude can apply on the screen device: `screen`,
+/// `all`, and bare feature queries pass; `print`-only blocks are skipped.
+fn media_query_applies(prelude: &str) -> bool {
+    let p = prelude.to_ascii_lowercase();
+    let mentions_screen = p.contains("screen") || p.contains("all");
+    let mentions_print = p.contains("print");
+    !mentions_print || mentions_screen
+}
 
 struct SheetParser<'a> {
     url_data: &'a UrlExtraData,
+    rules: &'a mut Vec<FragRule>,
+    order: &'a mut usize,
 }
 
 impl<'i> QualifiedRuleParser<'i> for SheetParser<'_> {
     type Prelude = Option<selectors::SelectorList<SelectorImpl>>;
-    type QualifiedRule = ParsedRule;
+    type QualifiedRule = ();
     type Error = ();
 
     fn parse_prelude<'t>(
@@ -239,16 +240,54 @@ impl<'i> QualifiedRuleParser<'i> for SheetParser<'_> {
             // Errors on individual declarations are ignored; we only collect
             // the fragmentation subset and skip everything else.
         }
-        Ok(prelude.map(|selectors| (selectors, decls)))
+        if let Some(selectors) = prelude {
+            if !decls.is_empty() {
+                *self.order += 1;
+                for selector in selectors.slice() {
+                    self.rules.push(FragRule {
+                        selector: selector.clone(),
+                        specificity: selector.specificity(),
+                        order: *self.order,
+                        decls,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 
 impl<'i> AtRuleParser<'i> for SheetParser<'_> {
-    type Prelude = ();
-    type AtRule = ParsedRule;
+    /// `Some(true)` = an applicable `@media` block to descend into.
+    type Prelude = bool;
+    type AtRule = ();
     type Error = ();
-    // Default impls reject/skip at-rules; their contents are not descended
-    // into (the documented @media gap).
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: cssparser::CowRcStr<'i>,
+        input: &mut cssparser::Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
+        let start = input.position();
+        while input.next().is_ok() {}
+        let prelude = input.slice_from(start);
+        Ok(name.eq_ignore_ascii_case("media") && media_query_applies(prelude))
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        descend: Self::Prelude,
+        _start: &ParserState,
+        input: &mut cssparser::Parser<'i, 't>,
+    ) -> Result<Self::AtRule, cssparser::ParseError<'i, ()>> {
+        let start = input.position();
+        while input.next().is_ok() {}
+        if descend {
+            let inner = input.slice_from(start).to_string();
+            collect_rules(&inner, self.url_data, self.rules, self.order);
+        }
+        Ok(())
+    }
 }
 
 struct DeclParser<'a> {

@@ -23,6 +23,7 @@ use crate::fragmentation::BreakRule;
 use crate::style_to_attrs::{align_for, attrs_for, font_size_px, line_height_px, text_color};
 
 /// One shaped visual line, ready to be placed on a page.
+#[derive(Clone)]
 struct ShapedLine {
     height: f32,
     baseline: f32,
@@ -37,6 +38,9 @@ struct ShapedLine {
     /// text — the split point the text-indent two-pass shaping needs.
     line_index: usize,
     byte_end: usize,
+    /// (run index, glyph index) of every space glyph, for manual
+    /// justification of split-off first lines.
+    spaces: Vec<(usize, usize)>,
 }
 
 pub(crate) struct Paginator<'f> {
@@ -52,8 +56,23 @@ pub(crate) struct Paginator<'f> {
     pending_margin: f32,
     /// A forced break-after is pending: next content starts a new page.
     force_break: bool,
+    /// Where the previous block's fragments start, for keep-with-next.
+    last_anchor: Option<KeepAnchor>,
+    /// The previous block declared `break-after: avoid`.
+    last_avoid_after: bool,
+    /// Armed keep: if this block's first content forces a page break, the
+    /// anchored fragments migrate with it.
+    active_keep: Option<KeepAnchor>,
     /// Per page: smallest locator offset placed on it (u32::MAX = none yet).
     page_locators: Vec<u32>,
+}
+
+#[derive(Clone, Copy)]
+struct KeepAnchor {
+    page: usize,
+    frag_start: usize,
+    /// Content-relative y where the anchored block begins.
+    y_start: f32,
 }
 
 impl<'f> Paginator<'f> {
@@ -73,6 +92,9 @@ impl<'f> Paginator<'f> {
             placed_on_page: 0,
             pending_margin: 0.0,
             force_break: false,
+            last_anchor: None,
+            last_avoid_after: false,
+            active_keep: None,
             page_locators: Vec::new(),
         };
         p.new_page();
@@ -161,9 +183,22 @@ impl<'f> Paginator<'f> {
                 self.new_page();
             }
             self.force_break = false;
+            // Arm keep-with-next when the previous block asked to stay with
+            // us (`break-after: avoid`) or we ask to stay with it
+            // (`break-before: avoid`).
+            self.active_keep =
+                if self.last_avoid_after || block.frag.break_before == BreakRule::Avoid {
+                    self.last_anchor
+                } else {
+                    None
+                };
         }
 
         self.pending_margin = self.pending_margin.max(margin_top);
+        let block_start = (
+            self.pages.len() - 1,
+            self.pages.last().unwrap().fragments.len(),
+        );
 
         let inner_x = x + margin_left + border.left + pad_left;
         let inner_w = (width
@@ -262,9 +297,57 @@ impl<'f> Paginator<'f> {
             );
         }
         self.pending_margin = self.pending_margin.max(margin_bottom);
-        if !block.anonymous && block.frag.break_after == BreakRule::Page {
-            self.force_break = true;
+        if !block.anonymous {
+            if block.frag.break_after == BreakRule::Page {
+                self.force_break = true;
+            }
+            // Record this block as a keep anchor for its successor: only
+            // when it sits entirely on the current page and is short enough
+            // to migrate (a heading, not a chapter).
+            self.last_avoid_after = block.frag.break_after == BreakRule::Avoid;
+            let (start_page, frag_start) = block_start;
+            let current = self.pages.len() - 1;
+            self.last_anchor = (start_page == current
+                && frag_start > 0
+                && frag_start < self.pages[current].fragments.len())
+            .then(|| {
+                let y_start =
+                    self.pages[current].fragments[frag_start].rect.origin.y - self.content.origin.y;
+                KeepAnchor {
+                    page: current,
+                    frag_start,
+                    y_start,
+                }
+            })
+            .filter(|a| (self.y - a.y_start) <= self.content.size.h / 3.0);
+            self.active_keep = None;
         }
+    }
+
+    /// Break to a new page; when a keep-with-next anchor is armed, migrate
+    /// the anchored trailing fragments (the kept heading) onto it.
+    fn new_page_keeping(&mut self) {
+        let keep = self.active_keep.take();
+        let old_page = self.pages.len() - 1;
+        let old_y = self.y;
+        self.new_page();
+        let Some(anchor) = keep else { return };
+        if anchor.page != old_page {
+            return;
+        }
+        let moved: Vec<Fragment> = self.pages[old_page].fragments.split_off(anchor.frag_start);
+        if moved.is_empty() {
+            return;
+        }
+        let count = moved.len();
+        for mut fragment in moved {
+            fragment.rect.origin.y -= anchor.y_start;
+            self.pages.last_mut().unwrap().fragments.push(fragment);
+        }
+        self.placed_on_page = count;
+        // Cursor resumes where the block would have started, relative to
+        // the migrated anchor (its height plus any committed margins).
+        self.y = old_y - anchor.y_start;
     }
 
     /// Insert one background/border slice per page the box touched, under
@@ -333,7 +416,7 @@ impl<'f> Paginator<'f> {
             h = max_h;
         }
         if h > self.remaining() + 0.01 && !self.at_page_top() {
-            self.new_page();
+            self.new_page_keeping();
         }
         let x_center = x + (inner_w - w) / 2.0;
         let rect = Rect {
@@ -386,6 +469,14 @@ impl<'f> Paginator<'f> {
         let split_byte = probe[0].byte_end;
         let (first_part, rest_part) = split_inline(inline, split_byte);
         let mut lines = self.shape_inline(&first_part, block_style, width - indent);
+        // The split-off line is its own buffer's last line, which
+        // cosmic-text never justifies — distribute the slack over its
+        // spaces manually so justified paragraphs stay justified.
+        if align_for(block_style) == Some(cosmic_text::Align::Justified) {
+            for line in &mut lines {
+                justify_line(line, width - indent);
+            }
+        }
         for line in &mut lines {
             line.x_indent += indent;
         }
@@ -463,6 +554,7 @@ impl<'f> Paginator<'f> {
         let mut lines = Vec::new();
         for run in buffer.layout_runs() {
             let mut glyph_runs: Vec<GlyphRun> = Vec::new();
+            let mut spaces: Vec<(usize, usize)> = Vec::new();
             let mut text_start = usize::MAX;
             let mut text_end = 0usize;
             for glyph in run.glyphs {
@@ -478,6 +570,7 @@ impl<'f> Paginator<'f> {
                     y: glyph.y - glyph.y_offset,
                     advance: glyph.w,
                 };
+                let is_space = run.text.get(glyph.start..glyph.end) == Some(" ");
                 match glyph_runs.last_mut() {
                     Some(last)
                         if last.font == glyph.font_id
@@ -494,6 +587,11 @@ impl<'f> Paginator<'f> {
                         color,
                         glyphs: vec![g],
                     }),
+                }
+                if is_space {
+                    let run_idx = glyph_runs.len() - 1;
+                    let glyph_idx = glyph_runs[run_idx].glyphs.len() - 1;
+                    spaces.push((run_idx, glyph_idx));
                 }
             }
             let text = if text_start <= text_end && text_end <= run.text.len() {
@@ -567,6 +665,7 @@ impl<'f> Paginator<'f> {
                 locator_start,
                 line_index: run.line_i,
                 byte_end: if text_end >= text_start { text_end } else { 0 },
+                spaces,
             });
         }
         lines
@@ -590,7 +689,7 @@ impl<'f> Paginator<'f> {
             && total_height > self.remaining()
             && total_height <= self.content.size.h
         {
-            self.new_page();
+            self.new_page_keeping();
         }
 
         let mut i = 0usize;
@@ -616,7 +715,11 @@ impl<'f> Paginator<'f> {
             // Orphans: too few lines would open the split on this page.
             if take < orphans {
                 if !self.at_page_top() {
-                    self.new_page();
+                    if i == 0 {
+                        self.new_page_keeping();
+                    } else {
+                        self.new_page();
+                    }
                     continue;
                 }
                 // Already at page top: force progress, overflow allowed.
@@ -629,7 +732,11 @@ impl<'f> Paginator<'f> {
                 if take > deficit && take - deficit >= orphans {
                     take -= deficit;
                 } else if !self.at_page_top() {
-                    self.new_page();
+                    if i == 0 {
+                        self.new_page_keeping();
+                    } else {
+                        self.new_page();
+                    }
                     continue;
                 }
             }
@@ -794,6 +901,26 @@ struct CellChrome {
     bottom: f32,
 }
 
+#[derive(Clone, Copy)]
+enum CellVAlign {
+    Top,
+    Middle,
+    Bottom,
+}
+
+fn cell_valign(style: &ComputedValues) -> CellVAlign {
+    // vertical-align is a shorthand over the css-inline-3 baseline
+    // properties in stylo 0.20; `middle`/`text-bottom` are recoverable from
+    // the computed alignment-baseline. Everything else (incl. baseline)
+    // approximates to top in the v1 grid.
+    use style::values::specified::box_::AlignmentBaseline;
+    match style.get_box().alignment_baseline {
+        AlignmentBaseline::Middle => CellVAlign::Middle,
+        AlignmentBaseline::TextBottom => CellVAlign::Bottom,
+        _ => CellVAlign::Top,
+    }
+}
+
 fn cell_chrome(style: &ComputedValues, containing: f32) -> CellChrome {
     let p = style.get_padding();
     let decoration = box_decoration_of(style);
@@ -894,14 +1021,33 @@ impl Paginator<'_> {
         };
         let table_w: f32 = widths.iter().sum::<f32>() + total_spacing;
 
-        // --- Rows ---
+        // --- Rows: pre-shape everything, then emit with pagination ---
         self.commit_margin();
         self.y += spacing_v;
+
+        struct ShapedCell {
+            x_rel: f32,
+            span_w: f32,
+            chrome_left: f32,
+            chrome_top: f32,
+            chrome_bottom: f32,
+            decoration: Option<BoxDecoration>,
+            valign: CellVAlign,
+            lines: Vec<ShapedLine>,
+            content_h: f32,
+            tag: u64,
+        }
+        struct ShapedRow {
+            cells: Vec<ShapedCell>,
+            row_h: f32,
+        }
+
+        let mut shaped_rows: Vec<ShapedRow> = Vec::with_capacity(table.rows.len());
         for (row_idx, row) in table.rows.iter().enumerate() {
-            // Shape every cell at its final content width.
             let chromes = &chrome_cache[row_idx];
-            let mut shaped: Vec<(Vec<ShapedLine>, f32 /*cell height*/)> = Vec::new();
+            let mut cells = Vec::with_capacity(row.cells.len());
             let mut col = 0usize;
+            let mut cx = spacing_h;
             for (cell, chrome) in row.cells.iter().zip(chromes) {
                 let span = cell.colspan.min(columns - col.min(columns - 1));
                 let span_w: f32 =
@@ -909,56 +1055,78 @@ impl Paginator<'_> {
                 let content_w = (span_w - chrome.left - chrome.right).max(1.0);
                 let lines = self.shape_inline(&cell.content, &cell.style, content_w);
                 let content_h: f32 = lines.iter().map(|l| l.height).sum();
-                shaped.push((lines, content_h + chrome.top + chrome.bottom));
+                cells.push(ShapedCell {
+                    x_rel: cx,
+                    span_w,
+                    chrome_left: chrome.left,
+                    chrome_top: chrome.top,
+                    chrome_bottom: chrome.bottom,
+                    decoration: chrome.decoration.clone(),
+                    valign: cell_valign(&cell.style),
+                    lines,
+                    content_h,
+                    tag: chapbook_dom::node_tag(cell.node),
+                });
+                cx += span_w + spacing_h;
                 col += span;
             }
-            let row_h = shaped
+            let row_h = cells
                 .iter()
-                .map(|(_, h)| *h)
+                .map(|c| c.content_h + c.chrome_top + c.chrome_bottom)
                 .fold(0.0f32, f32::max)
                 .max(1.0);
+            shaped_rows.push(ShapedRow { cells, row_h });
+        }
 
-            // Rows are atomic: move whole rows to the next page.
-            if row_h > self.remaining() + 0.01 && !self.at_page_top() {
-                self.new_page();
-                self.y += spacing_v;
-            }
+        // Header row repeats at the top of continuation pages.
+        let header: Option<&ShapedRow> = table
+            .rows
+            .first()
+            .filter(|r| r.is_header)
+            .and_then(|_| shaped_rows.first());
 
-            // Emit cells.
-            let mut cx = x + spacing_h;
-            let mut col = 0usize;
-            let y_top = self.y;
-            for ((cell, chrome), (lines, _)) in row.cells.iter().zip(chromes).zip(shaped) {
-                let span = cell.colspan.min(columns - col.min(columns - 1));
-                let span_w: f32 =
-                    widths[col..col + span].iter().sum::<f32>() + spacing_h * (span as f32 - 1.0);
-                let tag = chapbook_dom::node_tag(cell.node);
-                if let Some(decoration) = chrome.decoration.clone() {
-                    self.pages.last_mut().unwrap().fragments.push(Fragment {
+        let emit_row = |this: &mut Self, row: &ShapedRow| {
+            let y_top = this.y;
+            for cell in &row.cells {
+                if let Some(decoration) = cell.decoration.clone() {
+                    this.pages.last_mut().unwrap().fragments.push(Fragment {
                         rect: Rect {
                             origin: Point::new(
-                                self.content.origin.x + cx,
-                                self.content.origin.y + y_top,
+                                this.content.origin.x + x + cell.x_rel,
+                                this.content.origin.y + y_top,
                             ),
-                            size: Size::new(span_w, row_h),
+                            size: Size::new(cell.span_w, row.row_h),
                         },
                         kind: FragmentKind::Box(decoration),
-                        tag,
+                        tag: cell.tag,
                     });
-                    self.placed_on_page += 1;
+                    this.placed_on_page += 1;
                 }
-                let mut ly = y_top + chrome.top;
-                for line in lines {
+                // vertical-align: distribute the slack above the content.
+                let slack =
+                    (row.row_h - cell.content_h - cell.chrome_top - cell.chrome_bottom).max(0.0);
+                let mut ly = y_top
+                    + cell.chrome_top
+                    + match cell.valign {
+                        CellVAlign::Top => 0.0,
+                        CellVAlign::Middle => slack / 2.0,
+                        CellVAlign::Bottom => slack,
+                    };
+                for line in &cell.lines {
                     let rect = Rect {
                         origin: Point::new(
-                            self.content.origin.x + cx + chrome.left + line.x_indent,
-                            self.content.origin.y + ly,
+                            this.content.origin.x
+                                + x
+                                + cell.x_rel
+                                + cell.chrome_left
+                                + line.x_indent,
+                            this.content.origin.y + ly,
                         ),
                         size: Size::new(line.width, line.height),
                     };
-                    let page_loc = self.page_locators.last_mut().unwrap();
+                    let page_loc = this.page_locators.last_mut().unwrap();
                     *page_loc = (*page_loc).min(line.locator_start);
-                    self.pages.last_mut().unwrap().fragments.push(Fragment {
+                    this.pages.last_mut().unwrap().fragments.push(Fragment {
                         rect,
                         kind: FragmentKind::Line(LineFragment {
                             baseline: line.baseline,
@@ -967,15 +1135,32 @@ impl Paginator<'_> {
                             text: line.text.clone(),
                             locator_start: line.locator_start,
                         }),
-                        tag,
+                        tag: cell.tag,
                     });
-                    self.placed_on_page += 1;
+                    this.placed_on_page += 1;
                     ly += line.height;
                 }
-                cx += span_w + spacing_h;
-                col += span;
             }
-            self.y += row_h + spacing_v;
+            this.y += row.row_h + spacing_v;
+        };
+
+        for (row_idx, row) in shaped_rows.iter().enumerate() {
+            // Rows are atomic: move whole rows to the next page, repeating
+            // the header row there when the table declares one.
+            if row.row_h > self.remaining() + 0.01 && !self.at_page_top() {
+                if row_idx == 0 {
+                    self.new_page_keeping();
+                } else {
+                    self.new_page();
+                }
+                self.y += spacing_v;
+                if row_idx > 0 {
+                    if let Some(header) = header {
+                        emit_row(self, header);
+                    }
+                }
+            }
+            emit_row(self, row);
         }
         let _ = table_w; // width available for future table-level decoration
     }
@@ -1003,4 +1188,29 @@ fn table_width_px(style: &ComputedValues, containing: f32) -> Option<f32> {
         GenericSize::LengthPercentage(lp) => Some(resolve_lp(&lp.0, containing)),
         _ => None,
     }
+}
+
+/// Distribute slack across a line's space glyphs so it fills `target`
+/// width. Used for split-off first lines of justified paragraphs, which
+/// cosmic-text treats as buffer-last (never justified). Decoration spans on
+/// the line are not re-stretched (rare on first lines; documented).
+fn justify_line(line: &mut ShapedLine, target: f32) {
+    let extra = target - line.width;
+    if extra <= 0.1 || line.spaces.is_empty() {
+        return;
+    }
+    let add = extra / line.spaces.len() as f32;
+    let mut spaces = line.spaces.iter().peekable();
+    let mut shift = 0.0f32;
+    for (run_idx, run) in line.runs.iter_mut().enumerate() {
+        for (glyph_idx, glyph) in run.glyphs.iter_mut().enumerate() {
+            glyph.x += shift;
+            if spaces.peek() == Some(&&(run_idx, glyph_idx)) {
+                glyph.advance += add;
+                shift += add;
+                spaces.next();
+            }
+        }
+    }
+    line.width = target;
 }

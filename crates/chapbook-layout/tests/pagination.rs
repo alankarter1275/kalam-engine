@@ -512,3 +512,160 @@ fn table_caption_and_text_order_preserved() {
         }
     }
 }
+
+// ---- Layout batch 2: keeps, @media, table polish, justified indents ----
+
+#[test]
+fn keep_with_next_migrates_heading_to_new_page() {
+    // Filler leaves exactly one line of room; the heading lands there, and
+    // its paragraph (2+ lines) can't follow — both must move to page 2.
+    let html = format!(
+        "<html><body>{}<h3>Kept Heading</h3>{}</body></html>",
+        para_of_lines(3, "filler"),
+        para_of_lines(3, "body")
+    );
+    let (layout, _) = layout_html(
+        &html,
+        "p { margin: 0; } h3 { margin: 0; font-size: 18px; break-after: avoid; }",
+        &page_for_lines(4),
+    );
+    assert_eq!(layout.pages.len(), 2);
+    let page2_texts: Vec<String> = layout.pages[1]
+        .fragments
+        .iter()
+        .filter_map(|f| match &f.kind {
+            FragmentKind::Line(l) => Some(l.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        page2_texts.first().map(String::as_str),
+        Some("Kept Heading"),
+        "heading must migrate with its paragraph: page2 = {page2_texts:?}"
+    );
+    // And nothing of the heading remains on page 1.
+    assert!(layout.pages[0]
+        .fragments
+        .iter()
+        .all(|f| !matches!(&f.kind, FragmentKind::Line(l) if l.text == "Kept Heading")));
+}
+
+#[test]
+fn break_before_avoid_is_equivalent_keep() {
+    let html = format!(
+        "<html><body>{}<h3>Kept Too</h3>{}</body></html>",
+        para_of_lines(3, "filler"),
+        para_of_lines(3, "body")
+    );
+    let (layout, _) = layout_html(
+        &html,
+        "p { margin: 0; } h3 { margin: 0; font-size: 18px; } p + h3 + p { break-before: avoid; }",
+        &page_for_lines(4),
+    );
+    // The paragraph after the heading declares break-before: avoid.
+    let page2_first = layout.pages.get(1).and_then(|p| {
+        p.fragments.iter().find_map(|f| match &f.kind {
+            FragmentKind::Line(l) => Some(l.text.clone()),
+            _ => None,
+        })
+    });
+    assert_eq!(page2_first.as_deref(), Some("Kept Too"));
+}
+
+#[test]
+fn media_screen_break_rules_apply_print_ones_do_not() {
+    let html = format!(
+        "<html><body>{}{}</body></html>",
+        para_of_lines(1, "first"),
+        r#"<p class="scr">screen-broken</p><p class="prn">print-broken</p>"#
+    );
+    let css = r#"
+        p { margin: 0; }
+        @media screen { .scr { page-break-before: always; } }
+        @media print { .prn { page-break-before: always; } }
+    "#;
+    let (layout, _) = layout_html(&html, css, &page_for_lines(10));
+    // screen rule honored → page break before .scr; print rule ignored →
+    // .prn flows right after on the same page.
+    assert_eq!(layout.pages.len(), 2);
+    let page2: Vec<String> = layout.pages[1]
+        .fragments
+        .iter()
+        .filter_map(|f| match &f.kind {
+            FragmentKind::Line(l) => Some(l.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(page2, vec!["screen-broken", "print-broken"]);
+}
+
+#[test]
+fn table_cell_vertical_align_middle() {
+    let html = r#"<html><body><table><tr>
+        <td class="mid">short</td>
+        <td>a much longer cell<br/>with a second line<br/>and a third line</td>
+    </tr></table></body></html>"#;
+    let (layout, _) = layout_html(
+        html,
+        ".mid { vertical-align: middle; } td { padding: 0; }",
+        &page_for_lines(10),
+    );
+    let lines = cell_lines(&layout);
+    let short = lines.iter().find(|(_, _, t)| t == "short").unwrap();
+    let first_long = lines
+        .iter()
+        .find(|(_, _, t)| t.starts_with("a much longer"))
+        .unwrap();
+    assert!(
+        short.1 > first_long.1 + 10.0,
+        "middle-aligned cell sits below the top: short_y={} long_y={}",
+        short.1,
+        first_long.1
+    );
+}
+
+#[test]
+fn table_header_repeats_on_continuation_pages() {
+    let mut rows = String::from("<tr><th>Col A</th><th>Col B</th></tr>");
+    for i in 0..8 {
+        rows.push_str(&format!("<tr><td>row {i}</td><td>value {i}</td></tr>"));
+    }
+    let html = format!("<html><body><table>{rows}</table></body></html>");
+    let (layout, _) = layout_html(&html, "td, th { padding: 0; }", &page_for_lines(5));
+    assert!(layout.pages.len() >= 2);
+    for (i, page) in layout.pages.iter().enumerate() {
+        let first_text = page.fragments.iter().find_map(|f| match &f.kind {
+            FragmentKind::Line(l) => Some(l.text.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            first_text.as_deref(),
+            Some("Col A"),
+            "page {i} must open with the repeated header"
+        );
+    }
+}
+
+#[test]
+fn indented_justified_first_line_fills_measure() {
+    let html = "<html><body><p>words that repeat words that repeat words that \
+                repeat words that repeat words that repeat words that repeat \
+                words that repeat words that repeat</p></body></html>";
+    let (layout, _) = layout_html(
+        html,
+        "p { margin: 0; text-indent: 40px; text-align: justify; }",
+        &page_for_lines(10),
+    );
+    let lines: Vec<&chapbook_paint::Fragment> = layout.pages[0].fragments.iter().collect();
+    assert!(lines.len() >= 3, "needs several lines");
+    // Content width is 520; first line starts at 40 + 40 indent and must
+    // reach the right edge like the justified middle lines do.
+    let first = &lines[0];
+    let middle = &lines[1];
+    let first_right = first.rect.origin.x + first.rect.size.w;
+    let middle_right = middle.rect.origin.x + middle.rect.size.w;
+    assert!(
+        (first_right - middle_right).abs() < 1.0,
+        "justified first line must fill the measure: first_right={first_right} middle_right={middle_right}"
+    );
+}

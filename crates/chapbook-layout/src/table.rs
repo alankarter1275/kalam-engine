@@ -3,10 +3,10 @@
 //! `<table>` markup).
 //!
 //! v1 scope, chosen for book content: colspan honored; **rowspan treated
-//! as 1** (the cell stays in its starting row); `vertical-align: top`
-//! only; captions lay out as a block above the table; header rows are not
-//! repeated across page breaks; nested tables flatten into their cell's
-//! text. Cell content is flattened to one inline formatting context —
+//! as 1** (the cell stays in its starting row); `vertical-align` supports
+//! top/middle/text-bottom; captions lay out as a block above the table;
+//! header rows (thead or all-`<th>`) repeat at the top of continuation
+//! pages; nested tables flatten into their cell's text. Cell content is flattened to one inline formatting context —
 //! block children separate with hard line breaks — which matches how data
 //! cells in books are actually written.
 
@@ -29,6 +29,9 @@ pub struct TableBox {
 
 pub struct TableRow {
     pub cells: Vec<TableCell>,
+    /// From a `table-header-group` (or every cell is a `<th>`): repeated at
+    /// the top of continuation pages when the table breaks.
+    pub is_header: bool,
 }
 
 pub struct TableCell {
@@ -56,7 +59,7 @@ pub fn build_table(input: &BoxTreeInput, node: NodeId) -> Option<TableBox> {
     // Walk children: caption, rows directly, or rows inside row groups.
     // Document order is kept (browsers reorder thead/tfoot; books rarely
     // rely on it and source order reads correctly).
-    let walk_rows = |group: NodeId, table: &mut TableBox| {
+    let walk_rows = |group: NodeId, table: &mut TableBox, header_group: bool| {
         for child in &doc.node(group).children {
             let NodeData::Element(_) = &doc.node(*child).data else {
                 continue;
@@ -65,7 +68,8 @@ pub fn build_table(input: &BoxTreeInput, node: NodeId) -> Option<TableBox> {
                 continue;
             };
             if display_inside(&style) == DisplayInside::TableRow {
-                if let Some(row) = build_row(input, *child) {
+                if let Some(mut row) = build_row(input, *child) {
+                    row.is_header |= header_group;
                     table.rows.push(row);
                 }
             }
@@ -85,9 +89,10 @@ pub fn build_table(input: &BoxTreeInput, node: NodeId) -> Option<TableBox> {
                     table.rows.push(row);
                 }
             }
-            DisplayInside::TableRowGroup
-            | DisplayInside::TableHeaderGroup
-            | DisplayInside::TableFooterGroup => walk_rows(*child, &mut table),
+            DisplayInside::TableHeaderGroup => walk_rows(*child, &mut table, true),
+            DisplayInside::TableRowGroup | DisplayInside::TableFooterGroup => {
+                walk_rows(*child, &mut table, false)
+            }
             _ if *el.local_name() == markup5ever::local_name!("caption") => {
                 let mut content = InlineContent::default();
                 collect_flattened(input, *child, &style, &mut content);
@@ -112,6 +117,7 @@ pub fn build_table(input: &BoxTreeInput, node: NodeId) -> Option<TableBox> {
 fn build_row(input: &BoxTreeInput, row: NodeId) -> Option<TableRow> {
     let doc = input.doc;
     let mut cells = Vec::new();
+    let mut all_th = true;
     for child in &doc.node(row).children {
         let NodeData::Element(el) = &doc.node(*child).data else {
             continue;
@@ -127,6 +133,7 @@ fn build_row(input: &BoxTreeInput, row: NodeId) -> Option<TableRow> {
             .and_then(|v| v.trim().parse::<usize>().ok())
             .unwrap_or(1)
             .clamp(1, 100);
+        all_th &= *el.local_name() == markup5ever::local_name!("th");
         let mut content = InlineContent::default();
         collect_flattened(input, *child, &style, &mut content);
         cells.push(TableCell {
@@ -136,7 +143,10 @@ fn build_row(input: &BoxTreeInput, row: NodeId) -> Option<TableRow> {
             content,
         });
     }
-    (!cells.is_empty()).then_some(TableRow { cells })
+    (!cells.is_empty()).then_some(TableRow {
+        is_header: all_th,
+        cells,
+    })
 }
 
 /// Flatten a cell's subtree into one IFC: inline content concatenates,
@@ -159,6 +169,15 @@ fn collect_flattened(
                 );
             }
             NodeData::Element(_) => {
+                if doc.is_html_element(*child, &markup5ever::local_name!("br")) {
+                    let offset = input.locator.get(child).copied().unwrap_or(0);
+                    out.runs.push(crate::boxtree::InlineRun {
+                        text: "\n".to_string(),
+                        offsets: vec![offset],
+                        style: style.clone(),
+                    });
+                    continue;
+                }
                 let Some(child_style) = doc.primary_styles(*child) else {
                     continue;
                 };
