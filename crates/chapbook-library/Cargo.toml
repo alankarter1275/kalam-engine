@@ -10,3 +10,4 @@ authors.workspace = true
 [dependencies]
 chapbook-core = { workspace = true }
 rusqlite = { workspace = true }
+sha1 = { workspace = true }

@@ -33,10 +33,19 @@ not an afterthought bolted onto a scrolling browser.
 
 ## Status
 
-Early scaffolding. See `docs/ARCHITECTURE.md` for the design and milestones.
+The core pipeline works end-to-end: open (or download via OPDS) an EPUB,
+cascade its styles through stylo, paginate with cosmic-text, render pages
+with tiny-skia, and read it in the reference viewer with positions that
+survive relayout, font-size changes, and even replaced editions (see
+`docs/LOCATORS.md`). Embedded fonts (including obfuscated ones), images,
+and text decorations render. `chapbook --help` for the dev CLI;
+`cargo run -p chapbook-viewer -- <book.epub>` to read.
 
-Explicitly out of scope: fixed-layout EPUB, JavaScript/scripted content,
-MathML, vertical writing modes, media overlays, DRM.
+See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:
+fixed-layout EPUB, JavaScript/scripted content, MathML, vertical writing
+modes, media overlays, DRM. Known v1 layout gaps: `::before`/`::after`
+content, `text-indent`, real tables (stacked blocks), floats,
+borders/backgrounds painting.
 
 ## License
 

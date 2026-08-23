@@ -9,7 +9,12 @@
 //! with network errors for remote-backed publications. This v1 harness only
 //! opens local EPUBs and loads chapters synchronously on the event loop —
 //! acceptable for local zips, to be replaced by a loader thread when remote
-//! books land (M6+). Library integration (position persistence) lands in M7.
+//! books land.
+//!
+//! Library integration: the opened file is matched to the library by
+//! fingerprint, then by publication identifier (a re-downloaded edition);
+//! the reading position restores through the layered-locator chain and is
+//! captured back (full LayeredLocator) on exit.
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -46,6 +51,52 @@ fn main() {
         .clone()
         .unwrap_or_else(|| "chapbook".to_string());
 
+    // Library: match by fingerprint, then identifier (new edition), else
+    // import. Restore the stored position through the re-anchor chain.
+    let mut library = chapbook_library::Library::open(&chapbook_library::Library::default_dir())
+        .map_err(|e| eprintln!("chapbook-viewer: library unavailable: {e}"))
+        .ok();
+    let mut same_edition = true;
+    let book_id = library.as_mut().and_then(|lib| {
+        let fingerprint = chapbook_library::Library::fingerprint_of_file(&path).ok()?;
+        if let Ok(Some(id)) = lib.find_by_fingerprint(&fingerprint) {
+            return Some(id);
+        }
+        if let Some(identifier) = &book.metadata().identifier {
+            if let Ok(Some(id)) = lib.find_by_identifier(identifier) {
+                // Known book, new edition: adopt it and re-anchor.
+                same_edition = false;
+                let _ = lib.update_edition(id, &path);
+                return Some(id);
+            }
+        }
+        lib.import(&path, book.metadata()).ok()
+    });
+    let (start_spine, pending_offset) = match (&library, book_id) {
+        (Some(lib), Some(id)) => match lib.position(id) {
+            Ok(Some(stored)) => {
+                let (locator, tier) = chapbook_library::restore_position(
+                    &stored.locator,
+                    same_edition,
+                    book.spine(),
+                    |i| {
+                        let href = book.spine_item(i).ok()?.href.clone();
+                        let bytes = book.unit_bytes(i).ok()?;
+                        let doc = chapbook_dom::parse_xhtml(&bytes, &href).ok()?;
+                        Some(chapbook_dom::locator_text(&doc))
+                    },
+                );
+                eprintln!(
+                    "chapbook-viewer: resuming at chapter {} ({tier:?})",
+                    locator.spine_index + 1
+                );
+                (locator.spine_index, Some(locator.char_offset))
+            }
+            _ => (0, None),
+        },
+        _ => (0, None),
+    };
+
     let event_loop = EventLoop::new().expect("event loop");
     let mut app = App {
         title,
@@ -59,10 +110,14 @@ fn main() {
         layouts: HashMap::new(),
         images: HashMap::new(),
         registered_fonts: std::collections::HashSet::new(),
-        spine: 0,
+        spine: start_spine,
         page: 0,
+        pending_offset,
+        library,
+        book_id,
     };
     event_loop.run_app(&mut app).expect("event loop run");
+    app.save_position();
 }
 
 type SbSurface = softbuffer::Surface<Arc<Window>, Arc<Window>>;
@@ -85,6 +140,10 @@ struct App {
     registered_fonts: std::collections::HashSet<String>,
     spine: usize,
     page: usize,
+    /// Restored char offset to turn into a page once the chapter lays out.
+    pending_offset: Option<u32>,
+    library: Option<chapbook_library::Library>,
+    book_id: Option<chapbook_library::BookId>,
 }
 
 impl App {
@@ -205,6 +264,54 @@ impl App {
         self.invalidate_layouts(true);
     }
 
+    /// Capture the current position as a full layered locator and persist.
+    fn save_position(&mut self) {
+        let (Some(library), Some(id)) = (self.library.as_mut(), self.book_id) else {
+            return;
+        };
+        let offset = self
+            .layouts
+            .get(&self.spine)
+            .and_then(|l| l.char_map.get(self.page).copied())
+            .unwrap_or(0);
+        let Ok(item) = self.book.spine_item(self.spine) else {
+            return;
+        };
+        let href = item.href.clone();
+        // Chapter text + whole-book totals for the progression layers.
+        let chapter_text = |book: &Book, i: usize| -> Option<String> {
+            let href = book.spine_item(i).ok()?.href.clone();
+            let bytes = book.unit_bytes(i).ok()?;
+            let doc = chapbook_dom::parse_xhtml(&bytes, &href).ok()?;
+            Some(chapbook_dom::locator_text(&doc))
+        };
+        let mut prior_chars = 0u64;
+        let mut total_chars = 0u64;
+        let mut current_text = String::new();
+        for i in 0..self.book.spine().len() {
+            let text = chapter_text(&self.book, i).unwrap_or_default();
+            let chars = text.chars().count() as u64;
+            if i < self.spine {
+                prior_chars += chars;
+            }
+            if i == self.spine {
+                current_text = text;
+            }
+            total_chars += chars;
+        }
+        let locator = chapbook_core::LayeredLocator::capture(
+            &href,
+            self.spine,
+            &current_text,
+            offset,
+            prior_chars,
+            total_chars,
+        );
+        if let Err(e) = library.set_position(id, &locator) {
+            eprintln!("chapbook-viewer: failed to save position: {e}");
+        }
+    }
+
     fn redraw(&mut self) {
         let Some(window) = self.window.clone() else {
             return;
@@ -238,6 +345,13 @@ impl App {
             }
         }
 
+        if let Some(offset) = self.pending_offset {
+            let spine = self.spine;
+            if let Some(layout) = self.layout_chapter(spine) {
+                self.page = layout.page_of(offset);
+                self.pending_offset = None;
+            }
+        }
         let (dl, page_count) = {
             let spine = self.spine;
             let page_idx = self.page;
@@ -322,7 +436,10 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.save_position();
+                event_loop.exit();
+            }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 if let Some(window) = &self.window {
                     window.request_redraw();
@@ -341,11 +458,13 @@ impl ApplicationHandler for App {
                         self.prev_page()
                     }
                     Key::Named(NamedKey::Escape) => {
+                        self.save_position();
                         event_loop.exit();
                         return;
                     }
                     Key::Character(ref c) => match c.as_str() {
                         "q" => {
+                            self.save_position();
                             event_loop.exit();
                             return;
                         }

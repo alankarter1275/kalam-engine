@@ -82,10 +82,6 @@ enum LibCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let unimplemented = |what: &str, milestone: &str| -> ExitCode {
-        eprintln!("chapbook {what}: not yet implemented (lands in milestone {milestone})");
-        ExitCode::FAILURE
-    };
     let print = |result: chapbook_core::Result<String>| -> ExitCode {
         match result {
             Ok(text) => {
@@ -115,6 +111,9 @@ fn main() -> ExitCode {
             OpdsCommand::Search { url, query } => print(commands::opds_search(&url, &query)),
             OpdsCommand::Get { url, out } => print(commands::opds_get(&url, &out)),
         },
-        Command::Lib { .. } => unimplemented("lib", "M7"),
+        Command::Lib { command } => match command {
+            LibCommand::Import { epub } => print(commands::lib_import(&epub)),
+            LibCommand::Ls => print(commands::lib_ls()),
+        },
     }
 }

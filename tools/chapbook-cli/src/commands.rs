@@ -360,3 +360,40 @@ pub fn opds_get(url: &str, out: &Path) -> Result<String> {
     let size = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
     Ok(format!("downloaded {} ({size} bytes)\n", out.display()))
 }
+
+pub fn lib_import(epub: &Path) -> Result<String> {
+    let book = Book::open(epub)?;
+    let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
+    let id = lib.import(epub, book.metadata())?;
+    let record = lib.book(id)?.expect("just imported");
+    Ok(format!(
+        "imported #{} \"{}\" ({} authors, {} spine items)\n",
+        id.0,
+        record.title,
+        record.authors.len(),
+        book.spine().len()
+    ))
+}
+
+pub fn lib_ls() -> Result<String> {
+    let lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
+    let books = lib.books(None)?;
+    if books.is_empty() {
+        return Ok("library is empty — chapbook lib import <book.epub>\n".into());
+    }
+    let mut out = String::new();
+    for book in books {
+        out.push_str(&format!("#{:<4} {}", book.id.0, book.title));
+        if !book.authors.is_empty() {
+            out.push_str(&format!(" — {}", book.authors.join(", ")));
+        }
+        if let Some(position) = lib.position(book.id)? {
+            out.push_str(&format!(
+                "  [{:.0}%]",
+                position.locator.book_progression * 100.0
+            ));
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
