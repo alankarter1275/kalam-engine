@@ -486,14 +486,20 @@ dependencies = [
 name = "chapbook-layout"
 version = "0.1.0"
 dependencies = [
+ "app_units",
  "chapbook-core",
  "chapbook-dom",
+ "chapbook-epub",
  "chapbook-paint",
  "chapbook-style",
  "cosmic-text",
+ "cssparser",
  "insta",
+ "markup5ever",
  "proptest",
+ "selectors",
  "stylo",
+ "url",
 ]
 
 [[package]]

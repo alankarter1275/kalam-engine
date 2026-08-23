@@ -18,7 +18,7 @@ mod stylo_impls;
 mod text;
 mod tree;
 
-pub use offsets::{locator_offset_of, locator_text};
+pub use offsets::{locator_offset_of, locator_offsets, locator_text, node_tag};
 pub use parse::parse_xhtml;
 pub use stylo_impls::DomNode;
 pub use text::extract_text;

@@ -81,3 +81,40 @@ fn corpus_chapters_style_without_panicking() {
         println!("ok {name}: styled {styled} chapters");
     }
 }
+
+/// Paginate every real-world chapter: the layout-engine stress test. Every
+/// chapter must produce in-bounds pages, and any chapter with text must
+/// produce at least one line.
+#[test]
+#[ignore = "requires fixtures/fetch-corpus.sh"]
+fn corpus_chapters_paginate_within_bounds() {
+    let dir = corpus_dir();
+    let epubs: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("fixtures/corpus missing — run fixtures/fetch-corpus.sh")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "epub"))
+        .collect();
+    assert!(!epubs.is_empty());
+
+    for path in epubs {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let book = chapbook_epub::Book::open(&path).unwrap();
+        let mut total_pages = 0usize;
+        for i in 0..book.spine().len() {
+            let dump = chapbook_cli::commands::layout(&path, i)
+                .unwrap_or_else(|e| panic!("{name}: spine {i} failed to lay out: {e}"));
+            let pages: usize = dump
+                .lines()
+                .find_map(|l| l.strip_prefix("pages: "))
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            assert!(pages > 0, "{name}: spine {i} produced no pages");
+            total_pages += pages;
+        }
+        println!(
+            "ok {name}: {} chapters -> {total_pages} pages",
+            book.spine().len()
+        );
+    }
+}

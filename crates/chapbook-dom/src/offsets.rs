@@ -40,6 +40,46 @@ pub fn locator_offset_of(doc: &Document, node: NodeId) -> Option<u32> {
     found
 }
 
+/// Stable opaque tag for a node, for producers that must reference nodes
+/// without exposing document-model types (chapbook-paint fragment tags).
+pub fn node_tag(id: NodeId) -> u64 {
+    use slotmap::Key;
+    id.data().as_ffi()
+}
+
+/// One-pass map of every non-excluded node (elements *and* text nodes) to
+/// the locator-text char offset at which its content begins. What layout
+/// uses to stamp lines and anchors with locator offsets without an O(n²)
+/// per-node walk.
+pub fn locator_offsets(doc: &Document) -> std::collections::HashMap<NodeId, u32> {
+    let mut map = std::collections::HashMap::new();
+    if let Some(html) = doc.document_element() {
+        let mut count = 0u32;
+        walk_map(doc, html, &mut count, &mut map);
+    }
+    map
+}
+
+fn walk_map(
+    doc: &Document,
+    id: NodeId,
+    count: &mut u32,
+    map: &mut std::collections::HashMap<NodeId, u32>,
+) {
+    if excluded(doc, id) {
+        return;
+    }
+    map.insert(id, *count);
+    match &doc.node(id).data {
+        NodeData::Text(text) => *count += text.chars().count() as u32,
+        _ => {
+            for child in &doc.node(id).children {
+                walk_map(doc, *child, count, map);
+            }
+        }
+    }
+}
+
 fn excluded(doc: &Document, id: NodeId) -> bool {
     match &doc.node(id).data {
         NodeData::Element(el) => matches!(

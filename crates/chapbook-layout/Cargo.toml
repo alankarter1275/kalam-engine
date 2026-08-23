@@ -13,8 +13,14 @@ chapbook-dom = { workspace = true }
 chapbook-paint = { workspace = true }
 chapbook-style = { workspace = true }
 style = { workspace = true }
+selectors = { workspace = true }
+cssparser = { workspace = true }
 cosmic-text = { workspace = true }
+markup5ever = { workspace = true }
+app_units = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
 proptest = { workspace = true }
+chapbook-epub = { workspace = true }

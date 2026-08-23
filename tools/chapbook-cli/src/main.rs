@@ -103,7 +103,7 @@ fn main() -> ExitCode {
         Command::Toc { epub } => print(commands::toc(&epub)),
         Command::Text { epub, spine } => print(commands::text(&epub, spine)),
         Command::Styles { epub, spine } => print(commands::styles(&epub, spine)),
-        Command::Layout { .. } => unimplemented("layout", "M3"),
+        Command::Layout { epub, spine } => print(commands::layout(&epub, spine)),
         Command::Render { .. } => unimplemented("render", "M4"),
         Command::Opds { .. } => unimplemented("opds", "M6"),
         Command::Lib { .. } => unimplemented("lib", "M7"),

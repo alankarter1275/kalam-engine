@@ -93,6 +93,12 @@ const _: () = assert!(
 );
 
 impl DocumentInner {
+    /// Handle to an arbitrary node, for selector matching outside the style
+    /// traversal (e.g. chapbook-layout's fragmentation sidecar cascade).
+    pub fn handle(&self, id: NodeId) -> DomNode<'_> {
+        DomNode(self.node(id))
+    }
+
     /// Handle to the document root, for driving the style traversal.
     pub fn style_root(&self) -> DomNode<'_> {
         DomNode(self.node(self.root()))
