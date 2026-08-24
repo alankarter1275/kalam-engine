@@ -8,8 +8,10 @@
 //! Mouse or touch: press-drag over text selects (highlight only, for
 //! now); a tap clears. Touch tracks the first finger only.
 //!
-//! Contract note: `Session` may block on unit I/O (a cold PSE page is one
-//! HTTP fetch) — this dev harness accepts that on the event loop.
+//! Image-book units (comic pages, PDF rasterizations) load on the
+//! session's worker thread; the loader wakes this shell through the event
+//! loop proxy and the placeholder page repaints when pixels arrive. EPUB
+//! chapters remain synchronous (local zip + cascade).
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -35,7 +37,14 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let event_loop = EventLoop::new().expect("event loop");
+    let event_loop = EventLoop::with_user_event().build().expect("event loop");
+    // Loader wakeup: the worker thread pokes the event loop, which polls
+    // finished loads and redraws (see `user_event`).
+    let proxy = event_loop.create_proxy();
+    let mut session = session;
+    session.set_waker(move || {
+        let _ = proxy.send_event(());
+    });
     let mut app = App {
         session,
         window: None,
@@ -124,7 +133,13 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<()> for App {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        if self.session.poll_loaded() {
+            self.request_redraw();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;

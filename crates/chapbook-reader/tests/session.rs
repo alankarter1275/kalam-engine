@@ -14,9 +14,52 @@ fn fixture(rel: &str) -> String {
         .into_owned()
 }
 
-fn isolate_library() {
-    let dir = std::env::temp_dir().join(format!("chapbook-session-test-{}", std::process::id()));
+/// Each test gets its own library dir: tests run in parallel threads and
+/// the env var is process-global, so serialize env mutation behind a lock
+/// and only touch the var while holding it.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Open a session against a per-test library dir. The env var is
+/// process-global and tests run in parallel, so the set-and-open pair
+/// holds a lock.
+fn open_isolated(name: &str, source: &str) -> Session {
+    open_library(name, source, true)
+}
+
+/// Reopen against the same per-test library (position-persistence tests).
+fn reopen_isolated(name: &str, source: &str) -> Session {
+    open_library(name, source, false)
+}
+
+fn open_library(name: &str, source: &str, fresh: bool) -> Session {
+    let guard = ENV_LOCK.lock().unwrap();
+    let dir = std::env::temp_dir().join(format!(
+        "chapbook-session-test-{}-{name}",
+        std::process::id()
+    ));
+    if fresh {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
+    let session = Session::open(source).unwrap();
+    drop(guard);
+    session
+}
+
+/// Drive the async load path to completion: render (queues the load),
+/// then poll until the unit lands. Panics after ~5s.
+fn render_loaded(s: &mut Session) -> chapbook_reader::tiny_skia::Pixmap {
+    for _ in 0..200 {
+        s.render().expect("render");
+        if !s.has_pending_loads() {
+            // One more poll+render in case the last result just arrived.
+            s.poll_loaded();
+            return s.render().expect("render");
+        }
+        s.poll_loaded();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    panic!("unit never finished loading");
 }
 
 fn metrics() -> PageMetrics {
@@ -29,8 +72,7 @@ fn metrics() -> PageMetrics {
 
 #[test]
 fn epub_session_renders_navigates_and_selects() {
-    isolate_library();
-    let mut s = Session::open(&fixture("epub/illustrated.epub")).unwrap();
+    let mut s = open_isolated("epub-nav", &fixture("epub/illustrated.epub"));
     assert_eq!(s.kind(), BookKind::Epub);
     s.set_metrics(metrics());
     let pixmap = s.render().expect("page renders");
@@ -56,16 +98,14 @@ fn epub_session_renders_navigates_and_selects() {
 
 #[test]
 fn cbz_session_pages_through_images() {
-    isolate_library();
-    let mut s = Session::open(&fixture("cbz/minimal.cbz")).unwrap();
+    let mut s = open_isolated("cbz-pages", &fixture("cbz/minimal.cbz"));
     assert_eq!(s.kind(), BookKind::Comic);
     assert_eq!(s.spine_len(), 3);
     s.set_metrics(metrics());
     assert_eq!(s.page_count(), 1, "one page per comic unit");
 
-    let pixmap = s.render().expect("comic page renders");
     // Page 1 is solid red (196,64,48): sample the center.
-    let px = pixmap.pixel(300, 400).unwrap();
+    let px = render_loaded(&mut s).pixel(300, 400).unwrap();
     assert!(
         px.red() > 150 && px.blue() < 90,
         "expected red page: {px:?}"
@@ -76,13 +116,13 @@ fn cbz_session_pages_through_images() {
 
     s.next_page();
     assert_eq!(s.spine(), 1, "page turn advances the spine for comics");
-    let px = s.render().unwrap().pixel(300, 400).unwrap();
+    let px = render_loaded(&mut s).pixel(300, 400).unwrap();
     assert!(
         px.green() > 90 && px.red() < 90,
         "expected green page: {px:?}"
     );
     s.next_page();
-    let px = s.render().unwrap().pixel(300, 400).unwrap();
+    let px = render_loaded(&mut s).pixel(300, 400).unwrap();
     assert!(
         px.blue() > 120 && px.red() < 90,
         "expected blue page 10 last: {px:?}"
@@ -96,36 +136,67 @@ fn cbz_session_pages_through_images() {
 
 #[test]
 fn cbz_position_persists_across_sessions() {
-    isolate_library();
     let source = fixture("cbz/minimal.cbz");
     {
-        let mut s = Session::open(&source).unwrap();
+        let mut s = open_isolated("cbz-persist", &source);
         s.set_metrics(metrics());
         s.next_page();
         s.next_page();
         assert_eq!(s.spine(), 2);
         s.save_position();
     }
-    let mut s = Session::open(&source).unwrap();
+    let mut s = reopen_isolated("cbz-persist", &source);
     s.set_metrics(metrics());
-    s.render();
+    render_loaded(&mut s);
     assert_eq!(s.spine(), 2, "comic position restores by page progression");
 }
 
 #[test]
 fn pdf_session_reads_like_an_image_book() {
-    isolate_library();
-    let mut s = Session::open(&fixture("pdf/minimal.pdf")).unwrap();
+    let mut s = open_isolated("pdf-read", &fixture("pdf/minimal.pdf"));
     assert_eq!(s.kind(), BookKind::Pdf);
-    assert_eq!(s.spine_len(), 2);
+    assert_eq!(s.spine_len(), 3);
     s.set_metrics(metrics());
-    // Red first page, blue second, no text selection.
-    let px = s.render().unwrap().pixel(300, 400).unwrap();
+    // Red first page, blue second; the rect pages carry no text.
+    let px = render_loaded(&mut s).pixel(300, 400).unwrap();
     assert!(px.red() > 150 && px.blue() < 100, "red PDF page: {px:?}");
     assert!(!s.selection_begin(300.0, 400.0));
     s.next_page();
     assert_eq!(s.spine(), 1);
-    let px = s.render().unwrap().pixel(300, 400).unwrap();
+    let px = render_loaded(&mut s).pixel(300, 400).unwrap();
     assert!(px.blue() > 120 && px.red() < 100, "blue PDF page: {px:?}");
     s.save_position();
+}
+
+#[test]
+fn pdf_text_selection_highlights() {
+    let mut s = open_isolated("pdf-select", &fixture("pdf/minimal.pdf"));
+    s.set_metrics(metrics());
+    // Page 3 carries the Helvetica text lines.
+    s.next_page();
+    s.next_page();
+    assert_eq!(s.spine(), 2);
+    let before = render_loaded(&mut s);
+
+    // The 300x400pt page scales into a 600x800 window (40px margins):
+    // fit height 720 -> factor 1.8, image x-origin 30+40=70... derive from
+    // hit-testing instead of hardcoding: sweep for a text hit.
+    let mut anchor = None;
+    'outer: for y in (60..760).step_by(8) {
+        for x in (60..560).step_by(8) {
+            if s.selection_begin(x as f32, y as f32) {
+                anchor = Some((x as f32, y as f32));
+                break 'outer;
+            }
+        }
+    }
+    let (ax, ay) = anchor.expect("PDF text line is hit-testable");
+    s.selection_drag(ax + 150.0, ay);
+    let (start, end) = s.selected_range().expect("selection over PDF text");
+    assert!(end > start);
+
+    // The highlight visibly changes the render.
+    let after = render_loaded(&mut s);
+    assert_ne!(before.data(), after.data(), "selection must paint");
+    s.selection_clear();
 }

@@ -46,7 +46,9 @@ and text decorations render, with light/sepia/dark themes (sepia recolors
 defaults; dark forces readability), and press-drag text selection
 (highlighting today; copy/annotations will build on it). Comics and PDFs work too:
 local CBZ archives, OPDS-PSE page streams, and PDFs (rasterized with the
-pure-Rust hayro engine) read in the same viewers with page-unit positions. `chapbook --help` for the dev CLI;
+pure-Rust hayro engine, with a text layer so selection works there too)
+read in the same viewers with page-unit positions — their pages load and
+decode on a background thread. `chapbook --help` for the dev CLI;
 `cargo run -p chapbook-viewer -- <book.epub|comic.cbz|doc.pdf|opds-url>` (winit) or
 `-p chapbook-viewer-gtk` (GTK4) to read.
 

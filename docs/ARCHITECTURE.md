@@ -31,9 +31,12 @@ placed so an image-per-page format (CBZ) can join later without a redesign:
   (each archive image = one spine item, natural-sorted, media type guessed
   from extension — no manifest), `chapbook_opds::StreamedComic` (OPDS-PSE
   page streaming, one HTTP fetch per page through a 0-based `{pageNumber}`
-  template, disk-cached), and `chapbook-pdf` (pages rasterized to PNG at 2×
+  template, disk-cached), and `chapbook-pdf` (pages rasterized at 2×
   via hayro — pure Rust, CPU-only; encrypted PDFs rejected; MSRV floor is
-  hayro's 1.92). The streamed producer is what the
+  hayro's 1.92 — plus a text layer: a recording `Device` captures per-glyph
+  Unicode and geometry during interpretation, reading order reconstructed
+  by baseline clustering, surfacing as `HiddenText` fragments so selection
+  works on PDF pages exactly as on reflowed text). The streamed producer is what the
   `Publication::unit_bytes` blocking contract was written for: it may take
   seconds and fail with `ChapbookError::Network`, and UI code must call it
   off the UI thread.

@@ -3,7 +3,7 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>
 endobj
 3 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 4 0 R >>
@@ -24,20 +24,35 @@ stream
 endstream
 endobj
 7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 8 0 R /Resources << /Font << /F1 9 0 R >> >> >>
+endobj
+8 0 obj
+<< /Length 94 >>
+stream
+BT /F1 24 Tf 40 340 Td (Hello selection) Tj ET BT /F1 24 Tf 40 300 Td (Second line here) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+10 0 obj
 << /Title (Minimal Fixture) /Author (Chapbook Tests) >>
 endobj
 xref
-0 8
+0 11
 0000000000 65535 f 
 0000000009 00000 n 
 0000000058 00000 n 
-0000000121 00000 n 
-0000000208 00000 n 
-0000000292 00000 n 
-0000000379 00000 n 
-0000000463 00000 n 
+0000000127 00000 n 
+0000000214 00000 n 
+0000000298 00000 n 
+0000000385 00000 n 
+0000000469 00000 n 
+0000000595 00000 n 
+0000000739 00000 n 
+0000000809 00000 n 
 trailer
-<< /Size 8 /Root 1 0 R /Info 7 0 R >>
+<< /Size 11 /Root 1 0 R /Info 10 0 R >>
 startxref
-534
+881
 %%EOF

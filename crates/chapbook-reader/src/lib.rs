@@ -20,6 +20,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+mod loader;
+use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
     BookKind, ChapbookError, LayeredLocator, PageMetrics, Point, Publication, ReadingSettings,
@@ -36,7 +40,10 @@ pub use chapbook_render_tinyskia::tiny_skia;
 /// the `Publication` trait, so the session keeps the concrete type.
 enum OpenBook {
     Epub(Box<chapbook_epub::Book>),
-    Comic(Box<dyn Publication>),
+    Comic(Arc<dyn Publication + Send + Sync>),
+    /// PDFs keep their concrete type: the loader renders straight to RGBA
+    /// and extracts the text layer through it.
+    Pdf(Arc<chapbook_pdf::PdfBook>),
 }
 
 impl OpenBook {
@@ -44,8 +51,30 @@ impl OpenBook {
         match self {
             OpenBook::Epub(book) => book.as_ref(),
             OpenBook::Comic(comic) => comic.as_ref(),
+            OpenBook::Pdf(pdf) => pdf.as_ref(),
         }
     }
+
+    fn load_source(&self) -> Option<LoadSource> {
+        match self {
+            OpenBook::Epub(_) => None,
+            OpenBook::Comic(comic) => Some(LoadSource::Comic(comic.clone())),
+            OpenBook::Pdf(pdf) => Some(LoadSource::Pdf(pdf.clone())),
+        }
+    }
+}
+
+/// Waker slot shared with the loader thread; the shell installs its wakeup
+/// (an event-loop proxy, a main-context poke) after the session exists.
+type WakerCell = Arc<Mutex<Option<Box<dyn Fn() + Send + Sync>>>>;
+
+/// Metrics-independent record of a loaded image-book unit (the pixels are
+/// in the session's image store).
+struct LoadedUnit {
+    width: u32,
+    height: u32,
+    text: Vec<chapbook_pdf::TextLine>,
+    natural: (f32, f32),
 }
 
 /// One open book and everything needed to read it.
@@ -63,6 +92,15 @@ pub struct Session {
     page: usize,
     /// Restored char offset, turned into a page once the unit lays out.
     pending_offset: Option<u32>,
+    /// Worker for image-book units (comics, PDFs); `None` for EPUBs.
+    loader: Option<Loader>,
+    /// Metrics-independent metadata of loaded units (pixels live in
+    /// `images`, which image books never clear on relayout).
+    loaded_units: HashMap<usize, LoadedUnit>,
+    load_errors: HashMap<usize, String>,
+    /// Units currently showing a placeholder page (relaid once loaded).
+    placeholders: HashSet<usize>,
+    waker: WakerCell,
     /// Selection anchor and cursor as locator offsets (unordered).
     selection: Option<(u32, u32)>,
     library: Option<chapbook_library::Library>,
@@ -98,7 +136,7 @@ impl Session {
             let comic = chapbook_opds::StreamedComic::open(client, source, &cache)
                 .map_err(ChapbookError::from)?;
             let resume = comic.resume_page().unwrap_or(0);
-            (OpenBook::Comic(Box::new(comic)), None, resume, None)
+            (OpenBook::Comic(Arc::new(comic)), None, resume, None)
         } else {
             let path = Path::new(source);
             let ext = path
@@ -106,8 +144,8 @@ impl Session {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase());
             let book = match ext.as_deref() {
-                Some("cbz") => OpenBook::Comic(Box::new(chapbook_cbz::ComicBook::open(path)?)),
-                Some("pdf") => OpenBook::Comic(Box::new(chapbook_pdf::PdfBook::open(path)?)),
+                Some("cbz") => OpenBook::Comic(Arc::new(chapbook_cbz::ComicBook::open(path)?)),
+                Some("pdf") => OpenBook::Pdf(Arc::new(chapbook_pdf::PdfBook::open(path)?)),
                 _ => OpenBook::Epub(Box::new(chapbook_epub::Book::open(path)?)),
             };
 
@@ -155,6 +193,18 @@ impl Session {
             .title
             .clone()
             .unwrap_or_else(|| "chapbook".to_string());
+        let waker: WakerCell = Arc::new(Mutex::new(None));
+        let loader = book.load_source().map(|source| {
+            let cell = waker.clone();
+            Loader::spawn(
+                source,
+                Arc::new(move || {
+                    if let Some(wake) = &*cell.lock().unwrap() {
+                        wake();
+                    }
+                }),
+            )
+        });
         Ok(Session {
             book,
             title,
@@ -168,10 +218,75 @@ impl Session {
             spine: start_spine,
             page: 0,
             pending_offset,
+            loader,
+            loaded_units: HashMap::new(),
+            load_errors: HashMap::new(),
+            placeholders: HashSet::new(),
+            waker,
             selection: None,
             library,
             book_id,
         })
+    }
+
+    /// Install the shell's wakeup: invoked from the loader thread whenever
+    /// a unit finishes, so the shell can call [`Session::poll_loaded`] and
+    /// redraw. Shells without a thread-safe wakeup may poll instead while
+    /// [`Session::has_pending_loads`] is true.
+    pub fn set_waker(&mut self, wake: impl Fn() + Send + Sync + 'static) {
+        *self.waker.lock().unwrap() = Some(Box::new(wake));
+    }
+
+    /// Drain finished background loads into the caches; returns true when
+    /// anything arrived (the shell should redraw).
+    pub fn poll_loaded(&mut self) -> bool {
+        let Some(loader) = self.loader.as_mut() else {
+            return false;
+        };
+        let results = loader.drain();
+        let mut any = false;
+        for (spine, result) in results {
+            any = true;
+            match result {
+                Ok(unit) => {
+                    let DecodedUnit {
+                        width,
+                        height,
+                        rgba,
+                        text,
+                        natural,
+                    } = unit;
+                    self.images.entry(spine).or_default().insert(
+                        spine as u64 + 1,
+                        width,
+                        height,
+                        rgba,
+                    );
+                    self.loaded_units.insert(
+                        spine,
+                        LoadedUnit {
+                            width,
+                            height,
+                            text,
+                            natural,
+                        },
+                    );
+                }
+                Err(message) => {
+                    eprintln!("chapbook: page {} failed to load: {message}", spine + 1);
+                    self.load_errors.insert(spine, message);
+                }
+            }
+            if self.placeholders.remove(&spine) {
+                self.layouts.remove(&spine);
+            }
+        }
+        any
+    }
+
+    /// Whether background loads are in flight (placeholder pages showing).
+    pub fn has_pending_loads(&self) -> bool {
+        self.loader.as_ref().is_some_and(Loader::has_pending)
     }
 
     pub fn title(&self) -> &str {
@@ -214,7 +329,12 @@ impl Session {
         let locator = self.current_offset();
         self.metrics = Some(metrics);
         self.layouts.clear();
-        self.images.clear();
+        self.placeholders.clear();
+        // Image-book pixels are metrics-independent; only text chapters
+        // rebuild their per-layout stores.
+        if matches!(self.book, OpenBook::Epub(_)) {
+            self.images.clear();
+        }
         if had {
             let spine = self.spine;
             if let Some(layout) = self.layout_unit(spine) {
@@ -281,7 +401,10 @@ impl Session {
     fn relayout_keeping_position(&mut self) {
         let locator = self.current_offset();
         self.layouts.clear();
-        self.images.clear();
+        self.placeholders.clear();
+        if matches!(self.book, OpenBook::Epub(_)) {
+            self.images.clear();
+        }
         let spine = self.spine;
         if let Some(layout) = self.layout_unit(spine) {
             self.page = layout.page_of(locator);
@@ -444,36 +567,80 @@ impl Session {
         if !self.layouts.contains_key(&spine) {
             let built = match self.book.publication().kind() {
                 BookKind::Epub => self.layout_text_unit(spine, &metrics),
-                // PDF pages arrive as rasterized images: same path as comics.
-                BookKind::Comic | BookKind::Pdf => self.layout_comic_unit(spine, &metrics),
+                // Image books load on the worker; a placeholder shows
+                // until the decoded unit arrives. Their pixels live in the
+                // image store already (inserted by poll_loaded).
+                BookKind::Comic | BookKind::Pdf => {
+                    let layout = self.layout_image_unit(spine, &metrics);
+                    self.layouts.insert(spine, layout);
+                    return self.layouts.get(&spine);
+                }
             };
-            let (layout, images) = built?;
+            let (layout, images) = match built {
+                Some((layout, images)) => (layout, Some(images)),
+                None => return None,
+            };
             self.layouts.insert(spine, layout);
-            self.images.insert(spine, images);
+            if let Some(images) = images {
+                self.images.insert(spine, images);
+            }
         }
         self.layouts.get(&spine)
     }
 
-    fn layout_comic_unit(
-        &mut self,
-        spine: usize,
-        metrics: &PageMetrics,
-    ) -> Option<(ChapterLayout, ImageStore)> {
-        let bytes = self.book.publication().unit_bytes(spine).ok()?;
-        let decoded = image::load_from_memory(&bytes).ok()?.to_rgba8();
-        let (w, h) = decoded.dimensions();
-        let mut images = ImageStore::default();
-        let resource = spine as u64 + 1;
-        images.insert(resource, w, h, decoded.into_raw());
-        let page = chapbook_paint::image_page(metrics, w, h, resource);
-        Some((
-            ChapterLayout {
-                pages: vec![page],
+    /// Build the one-page layout for an image-book unit. When the unit
+    /// hasn't loaded yet, this queues it on the worker (plus a one-page
+    /// prefetch) and returns an empty placeholder page — the shell redraws
+    /// via the waker when the pixels arrive. PDF units also get their
+    /// hidden text layer, scaled from natural (point) coordinates into the
+    /// placed image rect, so selection works on them.
+    fn layout_image_unit(&mut self, spine: usize, metrics: &PageMetrics) -> ChapterLayout {
+        // Prefetch the next unit while we're here.
+        if let Some(loader) = self.loader.as_mut() {
+            let next = spine + 1;
+            if next < self.book.publication().spine().len()
+                && !self.loaded_units.contains_key(&next)
+                && !self.load_errors.contains_key(&next)
+            {
+                loader.request(next);
+            }
+        }
+        let Some(unit) = self.loaded_units.get(&spine) else {
+            if !self.load_errors.contains_key(&spine) {
+                if let Some(loader) = self.loader.as_mut() {
+                    loader.request(spine);
+                    self.placeholders.insert(spine);
+                }
+            }
+            // Placeholder: an empty themed page until the load lands.
+            let content = chapbook_core::Rect::new(
+                metrics.margins.left,
+                metrics.margins.top,
+                metrics.content_width(),
+                metrics.content_height(),
+            );
+            return ChapterLayout {
+                pages: vec![chapbook_paint::Page {
+                    size: metrics.size,
+                    content,
+                    fragments: Vec::new(),
+                }],
                 char_map: vec![0],
                 anchors: HashMap::new(),
-            },
-            images,
-        ))
+            };
+        };
+        let resource = spine as u64 + 1;
+        let mut page = chapbook_paint::image_page(metrics, unit.width, unit.height, resource);
+        if !unit.text.is_empty() {
+            if let Some(image_rect) = page.fragments.first().map(|f| f.rect) {
+                push_hidden_text(&mut page, &unit.text, unit.natural, image_rect);
+            }
+        }
+        ChapterLayout {
+            pages: vec![page],
+            char_map: vec![0],
+            anchors: HashMap::new(),
+        }
     }
 
     fn layout_text_unit(
@@ -538,4 +705,68 @@ fn unit_locator_text(book: &dyn Publication, spine: usize) -> Option<String> {
     let bytes = book.unit_bytes(spine).ok()?;
     let doc = chapbook_dom::parse_xhtml(&bytes, &href).ok()?;
     Some(chapbook_dom::locator_text(&doc))
+}
+
+/// Map a PDF unit's extracted text lines into hidden-text fragments over
+/// the placed page image: natural (point) coordinates scale uniformly into
+/// the image rect, glyph offsets become the page's locator space.
+fn push_hidden_text(
+    page: &mut chapbook_paint::Page,
+    lines: &[chapbook_pdf::TextLine],
+    natural: (f32, f32),
+    image_rect: chapbook_core::Rect,
+) {
+    let factor = image_rect.size.w / natural.0.max(0.001);
+    for line in lines {
+        let Some(first) = line.glyphs.first() else {
+            continue;
+        };
+        let min_x = line
+            .glyphs
+            .iter()
+            .map(|g| g.x)
+            .fold(f32::INFINITY, f32::min);
+        let max_x = line
+            .glyphs
+            .iter()
+            .map(|g| g.x + g.width)
+            .fold(f32::NEG_INFINITY, f32::max);
+        if max_x <= min_x {
+            continue;
+        }
+        let rect = chapbook_core::Rect::new(
+            image_rect.origin.x + min_x * factor,
+            image_rect.origin.y + line.top * factor,
+            (max_x - min_x) * factor,
+            line.height * factor,
+        );
+        let glyphs: Vec<chapbook_paint::Glyph> = line
+            .glyphs
+            .iter()
+            .map(|g| chapbook_paint::Glyph {
+                id: 0,
+                x: (g.x - min_x) * factor,
+                y: 0.0,
+                advance: g.width * factor,
+                locator: g.offset,
+            })
+            .collect();
+        page.fragments.push(chapbook_paint::Fragment {
+            rect,
+            kind: chapbook_paint::FragmentKind::HiddenText(chapbook_paint::LineFragment {
+                baseline: rect.size.h * 0.8,
+                runs: vec![chapbook_paint::GlyphRun {
+                    font: cosmic_text::fontdb::ID::dummy(),
+                    font_size: rect.size.h,
+                    font_weight: 400,
+                    color: chapbook_core::Rgba::new(0, 0, 0, 0),
+                    glyphs,
+                }],
+                decorations: Vec::new(),
+                text: line.text.clone(),
+                locator_start: first.offset,
+            }),
+            tag: 0,
+        });
+    }
 }

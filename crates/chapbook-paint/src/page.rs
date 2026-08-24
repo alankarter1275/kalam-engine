@@ -40,6 +40,11 @@ pub enum FragmentKind {
     /// emits one slice per page; the slice flags gate the horizontal border
     /// edges so only outer edges paint (CSS box-decoration-break: slice).
     Box(BoxDecoration),
+    /// A text line carried for geometry only: the pixels are already in a
+    /// raster fragment underneath (a PDF page). Selection hit-testing and
+    /// highlight rects read it exactly like [`FragmentKind::Line`]; the
+    /// display list never paints its glyphs.
+    HiddenText(LineFragment),
 }
 
 #[derive(Debug, Clone)]
@@ -117,7 +122,7 @@ impl Page {
     pub fn offset_at(&self, point: Point) -> Option<u32> {
         let mut best: Option<(f32, u32)> = None;
         for fragment in &self.fragments {
-            let FragmentKind::Line(line) = &fragment.kind else {
+            let (FragmentKind::Line(line) | FragmentKind::HiddenText(line)) = &fragment.kind else {
                 continue;
             };
             let r = fragment.rect;
@@ -148,7 +153,7 @@ impl Page {
             return rects;
         }
         for fragment in &self.fragments {
-            let FragmentKind::Line(line) = &fragment.kind else {
+            let (FragmentKind::Line(line) | FragmentKind::HiddenText(line)) = &fragment.kind else {
                 continue;
             };
             let mut min_x = f32::INFINITY;

@@ -20,6 +20,9 @@ use hayro::hayro_syntax::Pdf;
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::{RenderCache, RenderSettings};
 
+mod text;
+pub use text::{TextGlyph, TextLine};
+
 use chapbook_core::{
     BookKind, BookMetadata, ChapbookError, Publication, Resource, Result, SpineItem, TocEntry,
 };
@@ -128,5 +131,62 @@ impl Publication for PdfBook {
             media_type: "image/png".into(),
             data: self.unit_bytes(0)?,
         }))
+    }
+}
+
+/// A page rasterized to straight (un-premultiplied) RGBA.
+pub struct RenderedPage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    /// Natural page size in PDF points (the space [`TextLine`]s live in).
+    pub natural: (f32, f32),
+}
+
+impl PdfBook {
+    /// Natural (point) dimensions of a page after rotation/cropping.
+    pub fn page_natural_size(&self, spine_index: usize) -> Option<(f32, f32)> {
+        self.pdf
+            .pages()
+            .get(spine_index)
+            .map(|p| p.render_dimensions())
+    }
+
+    /// Rasterize a page at [`RENDER_SCALE`] straight to RGBA — the viewer
+    /// path (skips the PNG round-trip `unit_bytes` does for the trait).
+    pub fn render_page(&self, spine_index: usize) -> Result<RenderedPage> {
+        let pages = self.pdf.pages();
+        let page = pages
+            .get(spine_index)
+            .ok_or(ChapbookError::SpineOutOfRange(spine_index))?;
+        let natural = page.render_dimensions();
+        let cache = RenderCache::new();
+        let settings = RenderSettings {
+            x_scale: RENDER_SCALE,
+            y_scale: RENDER_SCALE,
+            bg_color: WHITE,
+            ..RenderSettings::default()
+        };
+        let pixmap = hayro::render(page, &cache, &self.interpreter, &settings);
+        let (width, height) = (pixmap.width() as u32, pixmap.height() as u32);
+        // Premultiplied → straight RGBA (the page ground is opaque white,
+        // so alpha is 255 everywhere and the copy is direct).
+        let rgba = pixmap.data_as_u8_slice().to_vec();
+        Ok(RenderedPage {
+            width,
+            height,
+            rgba,
+            natural,
+        })
+    }
+
+    /// Extract the page's text layer: lines of positioned glyphs in
+    /// natural (point) coordinates, reading-ordered top to bottom.
+    pub fn text_page(&self, spine_index: usize) -> Result<Vec<TextLine>> {
+        let pages = self.pdf.pages();
+        let page = pages
+            .get(spine_index)
+            .ok_or(ChapbookError::SpineOutOfRange(spine_index))?;
+        Ok(text::extract(page, &self.interpreter))
     }
 }

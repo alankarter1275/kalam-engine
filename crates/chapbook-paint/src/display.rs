@@ -60,31 +60,16 @@ pub fn build_display_list(
 
     for fragment in &page.fragments {
         match &fragment.kind {
+            // Hidden text paints only its selection highlight — the pixels
+            // are in the raster underneath.
+            FragmentKind::HiddenText(line) => {
+                if let Some(sel) = selection {
+                    push_selection_rect(&mut ops, fragment, line, sel);
+                }
+            }
             FragmentKind::Line(line) => {
                 if let Some(sel) = selection {
-                    if sel.end > sel.start {
-                        let mut min_x = f32::INFINITY;
-                        let mut max_x = f32::NEG_INFINITY;
-                        for run in &line.runs {
-                            for glyph in &run.glyphs {
-                                if glyph.locator >= sel.start && glyph.locator < sel.end {
-                                    min_x = min_x.min(glyph.x);
-                                    max_x = max_x.max(glyph.x + glyph.advance);
-                                }
-                            }
-                        }
-                        if max_x > min_x {
-                            ops.push(DisplayOp::FillRect {
-                                rect: Rect::new(
-                                    fragment.rect.origin.x + min_x,
-                                    fragment.rect.origin.y,
-                                    max_x - min_x,
-                                    fragment.rect.size.h,
-                                ),
-                                color: sel.color,
-                            });
-                        }
-                    }
+                    push_selection_rect(&mut ops, fragment, line, sel);
                 }
                 let origin = Point::new(
                     fragment.rect.origin.x,
@@ -134,6 +119,40 @@ pub fn build_display_list(
     DisplayList {
         size: page.size,
         ops,
+    }
+}
+
+/// The per-line selection highlight: the union of the selected glyphs'
+/// extents, painted before the line's own ops.
+fn push_selection_rect(
+    ops: &mut Vec<DisplayOp>,
+    fragment: &crate::page::Fragment,
+    line: &crate::page::LineFragment,
+    sel: Selection,
+) {
+    if sel.end <= sel.start {
+        return;
+    }
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    for run in &line.runs {
+        for glyph in &run.glyphs {
+            if glyph.locator >= sel.start && glyph.locator < sel.end {
+                min_x = min_x.min(glyph.x);
+                max_x = max_x.max(glyph.x + glyph.advance);
+            }
+        }
+    }
+    if max_x > min_x {
+        ops.push(DisplayOp::FillRect {
+            rect: Rect::new(
+                fragment.rect.origin.x + min_x,
+                fragment.rect.origin.y,
+                max_x - min_x,
+                fragment.rect.size.h,
+            ),
+            color: sel.color,
+        });
     }
 }
 

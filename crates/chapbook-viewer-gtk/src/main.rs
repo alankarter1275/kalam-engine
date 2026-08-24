@@ -175,6 +175,23 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
         area.add_controller(drag);
     }
 
+    // ---- Background loads (comic/PDF pages) ----
+    // GTK's main context has no cheap cross-thread waker for a non-Send
+    // session; a 100ms poll is only live while the app runs and is a
+    // no-op channel check when nothing is loading.
+    {
+        let session = session.clone();
+        let area_weak = area.downgrade();
+        gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            if session.borrow_mut().poll_loaded() {
+                if let Some(area) = area_weak.upgrade() {
+                    area.queue_draw();
+                }
+            }
+            gtk::glib::ControlFlow::Continue
+        });
+    }
+
     // ---- Persistence on close ----
     {
         let session = session.clone();
