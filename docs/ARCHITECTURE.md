@@ -65,7 +65,14 @@ stays that way.
   fraction, whole-book progression) and its resolve chain — see
   `docs/LOCATORS.md`. `char_offset` indexes the *raw locator text*
   (`chapbook_dom::locator_text`, versioned by `LOCATOR_VERSION`), not the
-  collapsed display text. No heavy deps.
+  collapsed display text. Also the panel update seam: the `Panel` trait
+  (`blit`/`submit`/`wait` — submit returns a token because an e-ink update
+  takes 100ms to a second and blocking on it would make page turns feel
+  broken), `UpdateClass` as the vendor-neutral half of a waveform choice,
+  `PanelRect` rounding outward once for every backend, `RefreshPolicy` for
+  ghosting debt, and `RecordingPanel` so refresh behavior is testable with
+  no panel attached. A device crate implements against this and nothing
+  else — it never sees a display list. No heavy deps.
 - **chapbook-epub** — wraps `rbook` for OCF/OPF/spine/TOC; adds relative
   resource resolution, fixed-layout detection (rejected), font
   de-obfuscation (M5). The wrapper boundary means rbook gaps can be patched
@@ -137,9 +144,13 @@ stays that way.
 - **chapbook-paint** — owns the format-neutral page model (`Page`/`Fragment`,
   fragments tagged with an opaque producer-defined `u64`, never a DOM type),
   the `Frame` a backend consumes (ops plus a `FrameIntent` and optional
-  damage rect, so an e-ink panel can choose a refresh mode), the panel
+  damage rect, so an e-ink panel can choose a refresh mode;
+  `FrameIntent::update_class` maps it to a `chapbook_core::UpdateClass`, and
+  damage accumulates independently of the intent ordering so a highlight
+  does not discard the region a live selection already named), the panel
   policy every backend shares (`quantize` for grey panels, `rotate` for
-  orientation — properties of the target, not of the rasterizer), and the
+  orientation — properties of the target, not of the rasterizer; packing
+  grey into device layout belongs lower, in `Panel::blit`), and the
   dumb display ops. There are exactly three:
   `FillRect`, `GlyphRun { fontdb::ID, glyphs }` (no re-shaping at paint
   time), and `Image`. Borders, box backgrounds, rules, and text

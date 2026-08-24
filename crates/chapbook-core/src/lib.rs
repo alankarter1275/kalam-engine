@@ -11,6 +11,7 @@ mod error;
 mod geometry;
 mod locator;
 mod page;
+mod panel;
 
 pub use book::{BookKind, BookMetadata, Publication, Resource, SpineItem, TocEntry};
 pub use cfi::{Cfi, CfiStep};
@@ -21,6 +22,9 @@ pub use locator::{
     ResolvedOffset, LOCATOR_VERSION, QUOTE_CONTEXT_CHARS,
 };
 pub use page::{PageMetrics, PixelFormat, ReadingSettings, Rotation, Theme};
+pub use panel::{
+    Panel, PanelInfo, PanelRect, RecordingPanel, RefreshPolicy, UpdateClass, UpdateToken,
+};
 
 /// Convenience result type used across chapbook crates.
 pub type Result<T> = std::result::Result<T, ChapbookError>;

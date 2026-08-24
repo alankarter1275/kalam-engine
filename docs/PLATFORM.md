@@ -70,9 +70,16 @@ tells a panel whether it is looking at a full flash or a fast partial
 refresh, and only the engine can know which. The intents are ordered by how
 much of the page they disturb, so several changes before a frame collapse
 to the strongest, and a backend that only distinguishes "small" from
-"everything" can compare rather than match every variant. Damage is stated
-where it beats repainting, which today means selection changes; `None`
-means the whole page, always correct and sometimes pessimistic.
+"everything" can compare rather than match every variant.
+
+Damage accumulates *independently* of that ordering. Intent answers how
+disturbing a change is; damage answers where it is; and tying the second to
+the first meant a highlight discarded the region a live selection had
+already named, repainting the whole page to add a mark to two lines.
+Selections and highlights both state their region now, the frame reports
+the union, and `None` — the whole page, always correct and sometimes
+pessimistic — is reserved for changes that genuinely cannot say where they
+went.
 
 Panel colour is pipeline policy rather than per-shell improvisation:
 `PixelFormat::Grey { levels, dither }` quantizes luminance to a panel's
@@ -82,8 +89,35 @@ the buffer without touching layout, and `panel_to_page` is its inverse for
 input, so a rotated shell hands the session panel coordinates and the
 session untwists them. Both live in chapbook-paint over plain RGBA rows, so
 every backend applies the same policy — they belong to the target, not to
-the rasterizer. Packing grey levels into a device's buffer layout stays
-with the shell, which is the only party that knows the panel's word order.
+the rasterizer. Packing grey levels into a device's buffer layout belongs
+one step lower still, to whoever addresses the hardware: `Panel::blit`.
+
+**The update seam.** A panel is not presented to; it is *asked* to change,
+and how it is asked decides how the change looks. `UpdateClass` — none,
+monochrome, fast, quality, flash — is the vocabulary for that ask, and
+`FrameIntent::update_class` is the join: chapbook names the kind of change,
+a device names the waveform it calls that. Nothing device-specific appears
+above the `Panel` trait and nothing about books appears below it.
+`RefreshPolicy` tracks ghosting debt separately, because "what does this
+change need" and "is the screen due for a clean" are different questions,
+and only the second has a knob a user might want. Fast and monochrome
+updates accrue debt but never trigger the flash themselves: flashing the
+screen under a moving finger is worse than any amount of ghosting.
+
+`Panel` splits `blit` from `submit` because a real controller does — a
+memcpy into mapped memory, then an ioctl — and an update takes 100ms to a
+second, so folding the wait into the submit would make page turns feel
+broken. `submit` returns a token; the caller decides when it needs to know
+the pixels landed. `PanelRect` rounds outward, once, for everybody: a
+region trimmed by half a pixel leaves a stale sliver, and on e-ink a stale
+sliver stays until something else disturbs it. `RecordingPanel` keeps a log
+instead of a screen, so "a drag issued one update per pixel of travel" is
+an ordinary assertion on a build machine with no panel attached.
+
+The trait deliberately carries no rotation. `PageMetrics::rotation` is
+already the one place a turn is decided and applied; a panel reporting its
+own would be a second field meaning nearly the same thing with nothing to
+say which wins.
 
 **A second backend exists, and it earned its keep.**
 `chapbook-render-vello` rasterizes the same display list on the GPU through
@@ -117,9 +151,34 @@ list is exactly three variants (`FillRect`, `GlyphRun`, `Image`) rather
 than the six this document's sibling once claimed, because borders, rules,
 and decorations all lower to fills first.
 
-One increment left: damage beyond selections. A page turn that only moves a
-footer, or an image landing in a fixed rect, could both state their region
-and don't.
+Increments left, in the order they will hurt:
+
+- **A driver above `Panel`.** The rule "never blit a region while an update
+  covering it is in flight" is documented on the trait and enforced by
+  nobody. It also has to handle the monochrome cleanup pass — an `A2`
+  region stays two-level until something disturbs it, so when a gesture
+  ends its lines need reissuing at `Quality`. The session cannot see that:
+  it has no way to tell a mid-drag `select_range` from the last one. Only
+  the shell knows the pointer lifted, so this is driver behavior rather
+  than a new intent.
+- **Damage beyond selections and highlights.** A page turn that only moves
+  a footer, or an image landing in a fixed rect, could both state their
+  region and don't.
+- **RGBA end-to-end is the expensive assumption.** For a 1404×1872 panel:
+  a 10.5 MB buffer, a full `quantize` pass, then `rotate` returning a fresh
+  `Vec` rather than working in place — another 10.5 MB — to produce 1.3 MB
+  for a 4-bit panel. Three passes and ~21 MB of churn per page turn on a
+  ~1 GHz ARM core. Free on desktop, possibly a visible slice of the refresh
+  budget on device. Measure on hardware before optimizing, but do not be
+  surprised by it.
+- **`PixelFormat::Grey` clamps `levels` to 2..=16 silently.** A 32-level
+  panel gets quietly wrong output rather than an error, and colour e-ink
+  (Kaleido, Gallery 3) is foreclosed by a `clamp` call rather than by a
+  decision anyone wrote down.
+- **`dither` is page-global.** Its own doc says images need it and body
+  text does not, but one flag covers the whole page, so it cannot be both.
+  The display list knows which ops are images; that information is being
+  discarded. Mostly harmless at 16 levels, decisive at 2.
 
 ## 2. The reading model above the page
 

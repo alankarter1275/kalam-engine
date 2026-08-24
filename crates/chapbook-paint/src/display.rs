@@ -1,7 +1,7 @@
 //! The paint-neutral display list: dumb draw ops in page coordinates
 //! (CSS px), executed by any backend without re-shaping or style access.
 
-use chapbook_core::{Point, Rect, Rgba, Size};
+use chapbook_core::{Point, Rect, Rgba, Size, UpdateClass};
 
 use crate::page::{FragmentKind, Glyph, Page};
 
@@ -59,6 +59,32 @@ pub enum FrameIntent {
     UnitChange,
     /// Everything reflowed: font size, theme, page metrics.
     Relayout,
+}
+
+impl FrameIntent {
+    /// What a panel has to do to show this change — the join between what
+    /// the engine knows (the kind of change) and what a device knows (the
+    /// waveform it calls that).
+    ///
+    /// Each row is the *least* disruptive update that still renders the
+    /// change faithfully; [`chapbook_core::RefreshPolicy`] decides
+    /// separately when to spend a flash the content did not ask for.
+    ///
+    /// `Relayout` is the one row that asks for more than it strictly
+    /// needs. Every pixel changed anyway, so the flash costs nothing the
+    /// user was not already going to see — and it pays off the ghosting
+    /// debt for free, at the moment it is cheapest.
+    pub fn update_class(self) -> UpdateClass {
+        match self {
+            FrameIntent::Repaint => UpdateClass::None,
+            FrameIntent::Selection => UpdateClass::Monochrome,
+            FrameIntent::Annotation => UpdateClass::Fast,
+            FrameIntent::ContentArrived | FrameIntent::PageTurn | FrameIntent::UnitChange => {
+                UpdateClass::Quality
+            }
+            FrameIntent::Relayout => UpdateClass::Flash,
+        }
+    }
 }
 
 /// A page's display ops plus what a backend needs to decide how to put them

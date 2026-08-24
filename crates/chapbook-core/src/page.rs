@@ -5,9 +5,10 @@ use crate::Rgba;
 /// or 1-bit, and converting for them belongs in the render pipeline — a
 /// shell that does it itself gets a different answer per shell.
 ///
-/// The conversion produces grey *in RGBA*: packing those levels into a
-/// device's own buffer layout is the shell's job, since only it knows the
-/// panel's word order.
+/// The conversion produces grey *in RGBA*. Packing those levels into a
+/// device's own buffer layout belongs to whoever addresses the hardware —
+/// [`crate::Panel::blit`], which is the only party that knows the panel's
+/// word order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PixelFormat {
     /// Full color, as laid out. The default.

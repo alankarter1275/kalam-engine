@@ -42,6 +42,10 @@ pub enum ChapbookError {
     #[error("library database error: {0}")]
     Library(String),
 
+    /// A display panel rejected an update, or could not be reached.
+    #[error("panel error: {0}")]
+    Panel(String),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
