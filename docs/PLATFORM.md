@@ -83,7 +83,11 @@ went.
 
 Panel colour is pipeline policy rather than per-shell improvisation:
 `PixelFormat::Grey { levels, dither }` quantizes luminance to a panel's
-2..=16 steps, diffusing the error Floyd–Steinberg when asked. Orientation
+steps — floored at two, with no upper bound, since a cap there is a claim
+about which panels exist rather than a property of the arithmetic —
+diffusing the error Floyd–Steinberg when asked. It is orthogonal to
+`UpdateClass`: e-ink does not imply greyscale, and a colour e-ink panel
+takes `Rgba` alongside a full set of waveforms. Orientation
 is a page metric: `PageMetrics::rotation` turns the output on its way to
 the buffer without touching layout, and `panel_to_page` is its inverse for
 input, so a rotated shell hands the session panel coordinates and the
@@ -205,10 +209,6 @@ Increments left, in the order they will hurt:
   ~1 GHz ARM core. Free on desktop, possibly a visible slice of the refresh
   budget on device. Measure on hardware before optimizing, but do not be
   surprised by it.
-- **`PixelFormat::Grey` clamps `levels` to 2..=16 silently.** A 32-level
-  panel gets quietly wrong output rather than an error, and colour e-ink
-  (Kaleido, Gallery 3) is foreclosed by a `clamp` call rather than by a
-  decision anyone wrote down.
 - **`dither` is page-global.** Its own doc says images need it and body
   text does not, but one flag covers the whole page, so it cannot be both.
   The display list knows which ops are images; that information is being
@@ -266,14 +266,13 @@ that is all a caller knows, so a panel that went further must make its own
 `blit` safe — which on a bus falls out for free, since it cannot transmit
 while the controller is busy.
 
-Three things the matrix says the abstraction still gets wrong.
+E-ink implying greyscale was a third, and is settled: a colour e-ink panel
+sends RGB through a filter array, so `Rgba` with a full set of waveforms is
+an ordinary combination, and `PixelFormat` says so rather than leaving it
+to be inferred. The `2..=16` cap that contradicted it is gone — floored at
+two, which is arithmetic, with no ceiling, which was policy.
 
-**E-ink does not imply greyscale.** Kaleido is a colour filter array over a
-mono panel — you send RGB, the array resolves it, and the driver forces
-32bpp. `PixelFormat::Rgba` with a full set of waveforms is a real
-combination. `PixelFormat` and `UpdateClass` being orthogonal already
-handles it; the `2..=16` clamp and the "e-ink means grey" phrasing
-throughout this document do not.
+Two things the matrix says the abstraction still gets wrong.
 
 **Who quantizes is per-target.** The EPDC does it in hardware and better;
 a Waveshare panel needs the host to do it *and* to pack to 1 bit; a
@@ -281,10 +280,11 @@ desktop needs none of it. One session-wide decision cannot serve three
 answers — see the quantization item above.
 
 **Android argues for panel-owned staging.** Its natural shape is lock a
-surface, write, unlock, which is exactly `blit` into memory the panel
-owns. Handing a borrowed slice across an FFI boundary every frame works
-but fights the platform, and it is the same conclusion the SPI case
-reaches from the other side. Worth settling before §3 fixes the FFI shape.
+surface, write, unlock — a `blit` into storage the panel controls, which
+the reworded contract now permits but does not require. Handing a borrowed
+slice across an FFI boundary every frame works but fights the platform,
+and it is the same conclusion the SPI case reaches from the other side.
+Worth settling before §3 fixes the FFI shape.
 
 ## 2. The reading model above the page
 

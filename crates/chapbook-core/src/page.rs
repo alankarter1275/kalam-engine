@@ -1,9 +1,16 @@
 use crate::geometry::{EdgeSizes, Size};
 use crate::Rgba;
 
-/// What the target panel can actually show. E-ink panels are 16-level grey
-/// or 1-bit, and converting for them belongs in the render pipeline — a
-/// shell that does it itself gets a different answer per shell.
+/// What the target panel can actually show. Converting for it belongs in
+/// the render pipeline — a shell that does it itself gets a different
+/// answer per shell.
+///
+/// This says nothing about *how* a panel is asked to change; that is
+/// [`crate::UpdateClass`], and the two are orthogonal on purpose. E-ink
+/// does not imply greyscale: a colour e-ink panel takes RGB and resolves
+/// it through a filter array, so [`PixelFormat::Rgba`] and a full set of
+/// waveforms is an ordinary combination, and a monochrome LCD would be the
+/// reverse.
 ///
 /// The conversion produces grey *in RGBA*. Packing those levels into a
 /// device's own buffer layout belongs to whoever addresses the hardware —
@@ -11,13 +18,25 @@ use crate::Rgba;
 /// word order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PixelFormat {
-    /// Full color, as laid out. The default.
+    /// Full color, as laid out. The default, and the right answer for
+    /// colour e-ink as much as for a screen.
     #[default]
     Rgba,
-    /// Luminance quantized to `levels` steps (clamped to 2..=16: 1-bit and
-    /// 4-bit panels are the real cases). `dither` diffuses the
-    /// quantization error into neighboring pixels, which images need and
-    /// body text usually does not.
+    /// Luminance quantized to `levels` steps: 2 for a 1-bit panel, 4 and
+    /// 16 for the shallow and full waveforms of a monochrome e-ink one.
+    ///
+    /// No upper bound is imposed. A cap here would be a claim about what
+    /// panels exist rather than a property of the arithmetic, and the
+    /// previous one silently rewrote anything deeper than 16 instead of
+    /// honouring it. Fewer than two levels is not a picture, so that floor
+    /// stays.
+    ///
+    /// A panel that shows full-depth grey wants [`PixelFormat::Rgba`]
+    /// instead of `Grey { levels: 255 }` — its `blit` reduces to luminance
+    /// anyway, and quantizing first only discards precision.
+    ///
+    /// `dither` diffuses the quantization error into neighboring pixels,
+    /// which images need and body text usually does not.
     Grey { levels: u8, dither: bool },
 }
 

@@ -20,12 +20,18 @@ use chapbook_core::{PixelFormat, Rotation};
 /// Luminance is Rec. 709 over the sRGB values, quantized to the format's
 /// levels; with `dither` on, the quantization error is diffused
 /// Floyd–Steinberg so a 16-level panel still shows a gradient instead of
-/// banding. Alpha is untouched, and [`PixelFormat::Rgba`] is a no-op.
+/// banding. Alpha is untouched, and [`PixelFormat::Rgba`] is a no-op —
+/// including on a colour e-ink panel, which resolves RGB through a filter
+/// array and wants nothing done to it here.
 pub fn quantize(rgba: &mut [u8], width: u32, height: u32, format: PixelFormat) {
     let PixelFormat::Grey { levels, dither } = format else {
         return;
     };
-    let levels = f32::from(levels.clamp(2, 16));
+    // Floored, not capped: two levels is where the arithmetic stops
+    // meaning anything, while an upper bound would be a guess about which
+    // panels exist — and the guess used to be applied silently, rewriting
+    // a deeper request rather than honouring it.
+    let levels = f32::from(levels.max(2));
     let (w, h) = (width as usize, height as usize);
 
     // One row of forward error plus the next, so diffusion needs no full
@@ -198,6 +204,57 @@ mod tests {
                 (level - level.round()).abs() < 0.01,
                 "{} is not a 16-level step",
                 px[0]
+            );
+        }
+    }
+
+    #[test]
+    fn a_panel_deeper_than_sixteen_levels_is_honoured() {
+        // The cap used to be 16, applied with a silent clamp, so a deeper
+        // request was quietly rewritten into a shallower picture.
+        let ramp = |levels: u8| {
+            let mut page: Vec<u8> = (0..256u32)
+                .flat_map(|i| {
+                    let v = i as u8;
+                    [v, v, v, 255]
+                })
+                .collect();
+            quantize(
+                &mut page,
+                256,
+                1,
+                PixelFormat::Grey {
+                    levels,
+                    dither: false,
+                },
+            );
+            let mut seen: Vec<u8> = page.chunks_exact(4).map(|px| px[0]).collect();
+            seen.sort_unstable();
+            seen.dedup();
+            seen.len()
+        };
+        assert_eq!(ramp(16), 16);
+        assert_eq!(ramp(64), 64, "a 64-level panel was flattened");
+        assert_eq!(ramp(255), 255);
+    }
+
+    #[test]
+    fn fewer_than_two_levels_is_still_a_picture() {
+        // The floor is arithmetic, not policy: `levels - 1` divides.
+        for levels in [0, 1, 2] {
+            let mut page = flat(200, 4, 4);
+            quantize(
+                &mut page,
+                4,
+                4,
+                PixelFormat::Grey {
+                    levels,
+                    dither: false,
+                },
+            );
+            assert!(
+                page.chunks_exact(4).all(|px| px[0] == 0 || px[0] == 255),
+                "levels {levels} produced something other than black and white"
             );
         }
     }
