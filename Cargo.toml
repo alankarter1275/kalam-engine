@@ -139,3 +139,10 @@ opt-level = 2
 [profile.release]
 lto = "thin"
 codegen-units = 1
+# Cargo already drops debuginfo here; this drops the symbol table too,
+# which is a sixth of the binary and pure weight on a device whose whole
+# rootfs is measured in tens of megabytes. Panics still name the crate and
+# message, only the backtrace frames go — and a backtrace off a device is
+# not how any of this gets debugged anyway. Build with
+# `--config profile.release.strip=false` when you do want one.
+strip = "symbols"
