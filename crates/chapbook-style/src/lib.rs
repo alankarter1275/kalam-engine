@@ -3,12 +3,11 @@
 //! sheets from a chapter and user-origin override sheets, and runs the
 //! restyle traversal to land `ComputedValues` on each element.
 //!
-//! Known gaps at M2, tracked for later milestones: `@import` rules are parsed
-//! but not fetched (no stylesheet loader — chapbook-epub can inline-resolve
-//! them); `@font-face` families are surfaced but not yet registered with the
-//! text system (M5); font metrics for `ex`/`ch` units use stylo's fallback
-//! approximations until the cosmic-text-backed provider lands with layout
-//! (M3).
+//! Known gaps: `@import` rules are parsed but not fetched (no stylesheet
+//! loader — chapbook-epub can inline-resolve them); font metrics for
+//! `ex`/`ch` units use stylo's fallback approximations rather than real
+//! font tables (see `crate::fonts`). `@font-face` families are surfaced
+//! here and registered with the text system by chapbook-layout.
 
 mod dump;
 mod engine;

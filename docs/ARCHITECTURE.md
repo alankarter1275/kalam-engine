@@ -86,8 +86,10 @@ stays that way.
   the UA stylesheet (`ua.css` — the profile boundary: what is not in the
   EPUB 3 CSS profile gets no UA support), registers author sheets from the
   chapter and user-origin override sheets (reader settings, themes), runs the
-  restyle traversal, exposes `@font-face` rules for fontdb registration, and
-  provides a cosmic-text-backed `FontMetricsProvider` (ex/ch units).
+  restyle traversal, and exposes `@font-face` rules for fontdb registration
+  (chapbook-layout does the registering). Its `FontMetricsProvider` returns
+  no metrics, so `ex`/`ch` resolve through stylo's own approximations — an
+  accepted gap, not a placeholder.
   Themes (`chapbook_core::Theme`): `Light` is the identity theme; `Sepia`
   recolors the defaults at user origin (publisher colors win); `Dark`
   forces text/background colors with `!important` for night-mode

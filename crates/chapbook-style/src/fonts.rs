@@ -1,10 +1,10 @@
 //! Font metrics for stylo's `ex`/`ch`/`cap`-unit resolution.
 //!
-//! M2 ships a heuristic provider: returning no metrics makes stylo fall back
-//! to its own approximations (`ex` ≈ 0.5em etc.), which is adequate for book
-//! CSS where those units are rare. A cosmic-text-backed provider replaces
-//! this in M3 when the layout engine's `FontSystem` exists to query real
-//! font tables.
+//! Returning no metrics makes stylo fall back to its own approximations
+//! (`ex` ≈ 0.5em etc.), which is adequate for book CSS where those units
+//! are rare. Querying real font tables would mean handing this provider
+//! the layout engine's `FontSystem`; that has not been worth the coupling
+//! so far, so the approximations stand.
 
 use style::device::servo::FontMetricsProvider;
 use style::font_metrics::FontMetrics;

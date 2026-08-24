@@ -9,9 +9,9 @@
 //! locator docs) thread through every line fragment, so positions survive
 //! relayout via [`ChapterLayout::page_of`].
 //!
-//! v1 gaps (documented in the module that owns each): floats, hyphenation
-//! (cosmic-text has no soft-hyphen support), non-string `content` items,
-//! table rowspan (see `crate::table`).
+//! Gaps, documented in the module that owns each (all in `crate::boxtree`):
+//! `counter()`/`counters()` and images in generated `content`, and
+//! shrink-to-fit non-replaced floats, which stay in flow.
 
 mod boxtree;
 mod fonts;

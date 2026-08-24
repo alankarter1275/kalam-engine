@@ -56,7 +56,8 @@ See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:
 fixed-layout EPUB, JavaScript/scripted content, MathML, vertical writing
 modes, media overlays, DRM. Floated images and width-bearing asides wrap
 text for real; hyphenation is dictionary-based (en-US); remaining niche
-gaps: CSS counters in generated content, shrink-to-fit floats.
+gaps: CSS counters in generated content, shrink-to-fit floats, `ex`/`ch`
+units resolved by approximation.
 
 ## License
 
