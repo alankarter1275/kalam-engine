@@ -308,3 +308,60 @@ fn comic_pages_take_no_highlights() {
     assert_eq!(s.add_highlight(), None, "no text layer to anchor to");
     assert!(s.highlights(0).is_empty());
 }
+
+#[test]
+fn display_list_is_the_backend_contract() {
+    use chapbook_reader::chapbook_paint::DisplayOp;
+
+    let mut s = open_isolated("epub-displaylist", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    let dl = s.display_list().expect("page has a display list");
+
+    assert_eq!((dl.size.w, dl.size.h), (600.0, 800.0), "page-space size");
+    // The page ground is op 0 so a theme is a color choice, not a
+    // renderer concern.
+    match dl.ops.first().expect("at least the background") {
+        DisplayOp::FillRect { rect, color } => {
+            assert_eq!((rect.size.w, rect.size.h), (600.0, 800.0));
+            assert_eq!(*color, chapbook_core::Theme::Light.background());
+        }
+        op => panic!("expected the page ground first, got {op:?}"),
+    }
+    assert!(
+        dl.ops
+            .iter()
+            .any(|op| matches!(op, DisplayOp::GlyphRun { .. })),
+        "a text page paints glyphs"
+    );
+
+    // The seam is complete: a shell can reproduce render() from the
+    // public API alone — ops, fonts, images.
+    let mut pixmap = chapbook_reader::tiny_skia::Pixmap::new(600, 800).expect("pixmap");
+    let mut renderer = chapbook_reader::chapbook_render_tinyskia::Renderer::new();
+    let (fonts, images) = s.paint_resources();
+    renderer.render(&dl, fonts, images, 1.0, &mut pixmap);
+    let theirs = s.render().expect("render");
+    assert_eq!(pixmap.data(), theirs.data(), "same ops, same pixels");
+}
+
+#[test]
+fn image_units_key_their_ops_into_the_store() {
+    use chapbook_reader::chapbook_paint::DisplayOp;
+
+    let mut s = open_isolated("cbz-displaylist", &fixture("cbz/minimal.cbz"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+    let dl = s.display_list().expect("comic page has a display list");
+    let resource = dl
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            DisplayOp::Image { resource, .. } => Some(*resource),
+            _ => None,
+        })
+        .expect("a comic page is an image op");
+    assert!(
+        s.image_store().get(resource).is_some(),
+        "the op's key resolves in the store the session hands out"
+    );
+}

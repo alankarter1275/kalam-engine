@@ -53,16 +53,16 @@ unproven targets, not decisions to undo. The exceptions are called out.
 
 ## 1. The render seam (highest priority — and it has a clock)
 
-`Session::render()` builds the display list internally and returns a
-`tiny_skia::Pixmap`. The paint-neutral display list — the documented backend
-contract — never escapes the session, so every shell inherits CPU RGBA
-rasterization whether it wants it or not.
+`Session::display_list()` now returns the paint-neutral ops, and
+`paint_resources()` hands back the font database its glyph runs name faces
+in plus the image store its image ops key into — enough for a shell to
+reproduce `render()` without tiny-skia, which a test asserts pixel-for-pixel.
+`render()` remains the convenience path. That unblocks GPU backends,
+platform canvases, and export harnesses; the rest of the seam is still
+missing.
 
 Required:
 
-- **Expose the display list.** `Session::display_list()` (or `render_into`
-  over a `PaintTarget` trait) alongside the convenience pixmap path. This is
-  what unlocks GPU backends, platform canvases, and export/test harnesses.
 - **Damage tracking.** Return what changed, not just pixels. E-ink needs it
   to pick a refresh mode; every other backend benefits from it.
 - **Refresh intent.** The session knows whether a frame is a page turn, a

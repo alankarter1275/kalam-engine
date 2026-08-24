@@ -7,7 +7,8 @@
 //! library glue (import/match on open, layered-locator persistence on
 //! save). Shells — winit, GTK, anything with a keyboard and a pixel
 //! buffer — translate input events into `Session` calls and blit the
-//! [`Session::render`] result.
+//! [`Session::render`] result. A shell that rasterizes for itself takes
+//! [`Session::display_list`] instead and never touches tiny-skia.
 //!
 //! Text units run the full dom→stylo→layout pipeline; comic units fabricate
 //! a one-page [`ChapterLayout`] around a single scaled image fragment, so
@@ -33,8 +34,15 @@ use chapbook_layout::ChapterLayout;
 use chapbook_library::AnnotationKind;
 use chapbook_paint::{ImageStore, Selection};
 
+// Everything a shell needs to consume what the session produces, so it
+// depends on chapbook-reader alone and can't skew versions with it: the
+// display-list vocabulary, the font database its glyph runs name faces
+// in, and the bundled CPU backend.
 pub use chapbook_core;
+pub use chapbook_paint;
+pub use chapbook_render_tinyskia;
 pub use chapbook_render_tinyskia::tiny_skia;
+pub use cosmic_text;
 
 /// The open publication. Text units need the concrete EPUB surface
 /// (relative resource resolution, stylesheets) that deliberately isn't on
@@ -152,6 +160,9 @@ pub struct Session {
     resolved_highlights: HashMap<usize, Vec<Highlight>>,
     /// The open file is the edition the positions were captured against.
     same_edition: bool,
+    /// Handed out for units with no images of their own, so
+    /// [`Session::image_store`] can return a reference either way.
+    empty_images: ImageStore,
 }
 
 impl Session {
@@ -309,6 +320,7 @@ impl Session {
             stored_highlights,
             resolved_highlights: HashMap::new(),
             same_edition,
+            empty_images: ImageStore::default(),
         })
     }
 
@@ -764,10 +776,19 @@ impl Session {
 
     // ---- Rendering ----
 
-    /// Rasterize the current page at the current metrics. `None` until
-    /// metrics are set or when the unit fails to load.
-    pub fn render(&mut self) -> Option<tiny_skia::Pixmap> {
-        let metrics = self.metrics?;
+    /// The current page as paint-neutral display ops — the backend
+    /// contract from `docs/ARCHITECTURE.md`, for shells that rasterize
+    /// themselves: a GPU backend, a platform canvas, an e-ink panel, an
+    /// exporter. [`Session::render`] is this plus the bundled CPU
+    /// rasterizer.
+    ///
+    /// `Image` ops carry keys into the unit's [`Session::image_store`],
+    /// not pixels, so a shell needs both.
+    ///
+    /// `None` until metrics are set, and while the unit has no page — an
+    /// image book still loading, or a unit that failed to load.
+    pub fn display_list(&mut self) -> Option<chapbook_paint::DisplayList> {
+        self.metrics?;
         // Resolve a restored offset once the unit has laid out.
         if let Some(offset) = self.pending_offset {
             let spine = self.spine;
@@ -804,13 +825,40 @@ impl Session {
         let page_idx = page_idx.min(page_count - 1);
         let layout = self.layouts.get(&spine)?;
         let page = layout.pages.get(page_idx)?;
-        let dl = chapbook_paint::build_display_list(page, background, &selections);
+        Some(chapbook_paint::build_display_list(
+            page,
+            background,
+            &selections,
+        ))
+    }
 
+    /// The image store backing the current unit's `Image` ops. Empty for
+    /// units that carry no images.
+    pub fn image_store(&self) -> &ImageStore {
+        self.images.get(&self.spine).unwrap_or(&self.empty_images)
+    }
+
+    /// What a display list's ops resolve against: the font database its
+    /// `GlyphRun`s name faces in — glyphs are shaped already, so a backend
+    /// only rasterizes them — and the image store its `Image` ops key
+    /// into. A shell rasterizing for itself needs both, and they are
+    /// disjoint fields, so they come back together.
+    pub fn paint_resources(&mut self) -> (&mut cosmic_text::FontSystem, &ImageStore) {
+        let images = self.images.get(&self.spine).unwrap_or(&self.empty_images);
+        (&mut self.fonts, images)
+    }
+
+    /// Rasterize the current page at the current metrics with the bundled
+    /// CPU backend — the convenience path over [`Session::display_list`].
+    /// `None` under the same conditions.
+    pub fn render(&mut self) -> Option<tiny_skia::Pixmap> {
+        let metrics = self.metrics?;
+        let dl = self.display_list()?;
+        let spine = self.spine;
         let scale = metrics.dpi_scale;
         let mut pixmap =
             tiny_skia::Pixmap::new((dl.size.w * scale) as u32, (dl.size.h * scale) as u32)?;
-        let empty = ImageStore::default();
-        let images = self.images.get(&spine).unwrap_or(&empty);
+        let images = self.images.get(&spine).unwrap_or(&self.empty_images);
         self.renderer
             .render(&dl, &mut self.fonts, images, scale, &mut pixmap);
         Some(pixmap)
