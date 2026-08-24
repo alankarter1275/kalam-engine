@@ -86,6 +86,15 @@ struct LoadedUnit {
     natural: (f32, f32),
 }
 
+/// Where a settings change should stick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsScope {
+    /// The reader's default, for every book without an override.
+    Global,
+    /// This book only. It keeps these settings when the default changes.
+    ThisBook,
+}
+
 /// One search hit, in the same locator space positions and annotations
 /// live in — so a hit feeds straight into [`Session::goto`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,12 +335,19 @@ impl Session {
                 }),
             )
         });
+        // The book's override if it has one, else the reader's default,
+        // else the built-in defaults.
+        let settings = library
+            .as_ref()
+            .map(|lib| lib.effective_settings(book_id))
+            .unwrap_or_default();
+
         Ok(Session {
             book,
             title,
             fonts: chapbook_layout::system_font_system(),
             renderer: chapbook_render_tinyskia::Renderer::new(),
-            settings: ReadingSettings::default(),
+            settings,
             metrics: None,
             layouts: HashMap::new(),
             images: HashMap::new(),
@@ -539,14 +555,69 @@ impl Session {
 
     // ---- Settings ----
 
-    pub fn adjust_font(&mut self, delta: f32) {
-        self.settings.base_font_px = (self.settings.base_font_px + delta).clamp(10.0, 40.0);
-        self.relayout_keeping_position();
+    /// Apply settings and remember them. Covers every field, including the
+    /// three no shell could reach before: line height, justification, and
+    /// whether publisher styles apply.
+    ///
+    /// Settings persist to the library, so font size survives a restart.
+    /// `Global` is the reader's default from here on; `ThisBook` is an
+    /// override that outlives later changes to the default.
+    pub fn set_settings(&mut self, settings: ReadingSettings, scope: SettingsScope) {
+        let changed = self.settings != settings;
+        self.settings = settings;
+        if changed {
+            self.relayout_keeping_position();
+        }
+        self.persist_settings(scope);
     }
 
+    /// Drop this book's override so it follows the reader's default again,
+    /// applying that default now.
+    pub fn clear_book_settings(&mut self) {
+        let (Some(library), Some(id)) = (self.library.as_mut(), self.book_id) else {
+            return;
+        };
+        if let Err(e) = library.clear_reading_settings(id) {
+            eprintln!("chapbook: failed to clear book settings: {e}");
+            return;
+        }
+        let settings = library.effective_settings(None);
+        self.set_settings(settings, SettingsScope::Global);
+    }
+
+    /// Step the base font size, keeping the reader's place. A convenience
+    /// over [`Session::set_settings`]; persists globally.
+    pub fn adjust_font(&mut self, delta: f32) {
+        let mut settings = self.settings.clone();
+        settings.base_font_px = (settings.base_font_px + delta).clamp(10.0, 40.0);
+        self.set_settings(settings, SettingsScope::Global);
+    }
+
+    /// Cycle light → sepia → dark. A convenience over
+    /// [`Session::set_settings`]; persists globally.
     pub fn cycle_theme(&mut self) {
-        self.settings.theme = self.settings.theme.cycle();
-        self.relayout_keeping_position();
+        let mut settings = self.settings.clone();
+        settings.theme = settings.theme.cycle();
+        self.set_settings(settings, SettingsScope::Global);
+    }
+
+    fn persist_settings(&mut self, scope: SettingsScope) {
+        let book_id = self.book_id;
+        let settings = self.settings.clone();
+        let Some(library) = self.library.as_mut() else {
+            return;
+        };
+        let target = match scope {
+            SettingsScope::Global => None,
+            // No library record, nothing to hang an override on.
+            SettingsScope::ThisBook => match book_id {
+                Some(id) => Some(id),
+                None => return,
+            },
+        };
+        if let Err(e) = library.set_reading_settings(target, &settings) {
+            eprintln!("chapbook: failed to save settings: {e}");
+        }
     }
 
     fn relayout_keeping_position(&mut self) {

@@ -97,6 +97,22 @@ const MIGRATIONS: &[&str] = &[
         deleted INTEGER NOT NULL DEFAULT 0
     );
     ",
+    // v2
+    "
+    -- Reading settings, stored complete per scope: book_id 0 is the
+    -- reader's default and any other id is that book's override, so a
+    -- customized book keeps its own settings when the default changes.
+    -- No foreign key: 0 is deliberately not a book.
+    CREATE TABLE reading_settings (
+        book_id INTEGER PRIMARY KEY,
+        base_font_px REAL NOT NULL,
+        line_height REAL NOT NULL,
+        justify INTEGER NOT NULL,
+        publisher_styles INTEGER NOT NULL,
+        theme TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    ",
 ];
 
 pub(crate) fn open_and_migrate(path: &std::path::Path) -> Result<Connection> {

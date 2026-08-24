@@ -123,14 +123,16 @@ folds case one character at a time, which keeps every hit on an exact
 offset; full case folding and diacritic folding would not.
 Library-level search across books is a second, separate want.
 
-**Settings (harness-shaped).** `cycle_theme()` and `adjust_font(delta)` are
-UI verbs, not a model, and they are the only two the session exposes:
-`ReadingSettings` also carries `line_height`, `justify`, and
-`publisher_styles`, which no shell can reach. There is no persistence —
-font size does not survive a restart — no per-book overrides, and no
-font-family selection at all. (Margins are fine: they live in `PageMetrics`,
-supplied by the shell.) Wanted: settings in / settings out, persisted
-globally with per-book overrides.
+**Settings (landed, minus font family).** `set_settings` takes the whole
+`ReadingSettings` — including `line_height`, `justify`, and
+`publisher_styles`, which no shell could reach before — and persists it to
+the library, so font size survives a restart. `SettingsScope` picks whether
+a change is the reader's default or this book's override; an override
+outlives later changes to the default, and `clear_book_settings` hands the
+book back. `cycle_theme` and `adjust_font` remain as conveniences over it.
+Still missing: font-family selection, which needs a font-enumeration story
+before it needs an API. (Margins are fine: they live in `PageMetrics`,
+supplied by the shell.)
 
 **Session lifecycle.** `open(source: &str)` sniffs a string. A platform wants
 typed sources plus injectable I/O — Android content URIs, iOS

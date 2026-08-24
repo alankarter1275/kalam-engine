@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
-use chapbook_core::{BookMetadata, LayeredLocator, Quote, Result};
+use chapbook_core::{BookMetadata, LayeredLocator, Quote, ReadingSettings, Result, Theme};
 
 use crate::db::db_err;
 pub use crate::restore::{restore_position, RestoreTier};
@@ -513,6 +513,85 @@ impl Library {
                 "UPDATE annotations SET deleted = 1, updated_at = strftime('%s','now')
                  WHERE id = ?1",
                 params![annotation_id],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    // ---- Reading settings ----
+
+    /// Settings for a scope: `None` is the reader's default, `Some(id)` is
+    /// that book's override. `Ok(None)` when the scope has never been set.
+    pub fn reading_settings(&self, book: Option<BookId>) -> Result<Option<ReadingSettings>> {
+        let scope = book.map_or(0, |b| b.0);
+        self.conn
+            .query_row(
+                "SELECT base_font_px, line_height, justify, publisher_styles, theme
+                 FROM reading_settings WHERE book_id = ?1",
+                params![scope],
+                |row| {
+                    Ok(ReadingSettings {
+                        base_font_px: row.get::<_, f64>(0)? as f32,
+                        line_height: row.get::<_, f64>(1)? as f32,
+                        justify: row.get::<_, i64>(2)? != 0,
+                        publisher_styles: row.get::<_, i64>(3)? != 0,
+                        theme: row
+                            .get::<_, String>(4)
+                            .map(|name| Theme::from_name(&name).unwrap_or_default())?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(db_err)
+    }
+
+    /// The settings a book should open with: its own override, else the
+    /// reader's default, else the built-in defaults. Never fails — a
+    /// database that can't answer falls back rather than blocking reading.
+    pub fn effective_settings(&self, book: Option<BookId>) -> ReadingSettings {
+        book.and_then(|id| self.reading_settings(Some(id)).ok().flatten())
+            .or_else(|| self.reading_settings(None).ok().flatten())
+            .unwrap_or_default()
+    }
+
+    pub fn set_reading_settings(
+        &mut self,
+        book: Option<BookId>,
+        settings: &ReadingSettings,
+    ) -> Result<()> {
+        let scope = book.map_or(0, |b| b.0);
+        self.conn
+            .execute(
+                "INSERT INTO reading_settings
+                    (book_id, base_font_px, line_height, justify, publisher_styles,
+                     theme, updated_at)
+                 VALUES (?1,?2,?3,?4,?5,?6, strftime('%s','now'))
+                 ON CONFLICT(book_id) DO UPDATE SET
+                    base_font_px = excluded.base_font_px,
+                    line_height = excluded.line_height,
+                    justify = excluded.justify,
+                    publisher_styles = excluded.publisher_styles,
+                    theme = excluded.theme,
+                    updated_at = excluded.updated_at",
+                params![
+                    scope,
+                    settings.base_font_px as f64,
+                    settings.line_height as f64,
+                    settings.justify as i64,
+                    settings.publisher_styles as i64,
+                    settings.theme.name(),
+                ],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// Drop a book's override so it follows the reader's default again.
+    pub fn clear_reading_settings(&mut self, book: BookId) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM reading_settings WHERE book_id = ?1",
+                params![book.0],
             )
             .map_err(db_err)?;
         Ok(())

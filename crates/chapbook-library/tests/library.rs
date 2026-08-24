@@ -246,3 +246,52 @@ fn restore_degrades_to_chapter_start() {
     assert!(locator.spine_index < 3);
     assert_eq!(locator.char_offset, 0);
 }
+
+#[test]
+fn reading_settings_resolve_book_then_default_then_builtin() {
+    use chapbook_core::{ReadingSettings, Theme};
+
+    let (mut lib, dir) = temp_library();
+    let path = sample_book(&dir, "settings.epub", b"settings fixture");
+    let id = lib.import(&path, &metadata("Settings")).unwrap();
+
+    // Nothing stored: the built-in defaults.
+    assert_eq!(lib.effective_settings(Some(id)), ReadingSettings::default());
+    assert_eq!(lib.reading_settings(None).unwrap(), None);
+
+    let global = ReadingSettings {
+        base_font_px: 21.0,
+        theme: Theme::Dark,
+        ..Default::default()
+    };
+    lib.set_reading_settings(None, &global).unwrap();
+    assert_eq!(
+        lib.effective_settings(Some(id)),
+        global,
+        "book follows the default"
+    );
+
+    let mut mine = global.clone();
+    mine.base_font_px = 15.0;
+    mine.justify = true;
+    lib.set_reading_settings(Some(id), &mine).unwrap();
+    assert_eq!(lib.effective_settings(Some(id)), mine);
+    assert_eq!(
+        lib.effective_settings(None),
+        global,
+        "the default is untouched"
+    );
+
+    // A later change to the default leaves the override alone.
+    let mut moved = global.clone();
+    moved.base_font_px = 30.0;
+    lib.set_reading_settings(None, &moved).unwrap();
+    assert_eq!(lib.effective_settings(Some(id)).base_font_px, 15.0);
+
+    lib.clear_reading_settings(id).unwrap();
+    assert_eq!(
+        lib.effective_settings(Some(id)),
+        moved,
+        "back to the default"
+    );
+}
