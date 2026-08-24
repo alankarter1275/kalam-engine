@@ -93,10 +93,15 @@ The session can turn pages, change fonts, select, copy, and highlight. An
 ereader app needs more, and most of what's left is not expressible through
 the API, so every shell would reinvent it differently.
 
-**Navigation (missing entirely).** No goto-locator, no TOC jump, no internal
-link following, no fragment-anchor resolution, no back-stack for returning
-from a footnote. `ChapterLayout` already computes `anchors: id→page`, so the
-data exists and only the API doesn't. This is table stakes.
+**Navigation (landed).** `goto`, `goto_anchor`, `goto_toc`, `link_at`,
+`follow_link`, and a capped back-stack: jumps remember where they came from,
+ordinary page turns don't, so a footnote returns to the sentence that sent
+you. Fragments resolve through the `anchors: id→page` map layout already
+computed, and a fragment the unit turns out not to have lands at its start
+rather than failing. Links ride the locator offset space rather than the
+fragment tree — paint carries no DOM types — which also means a link hit
+test survives relayout for free, and that a tap in the margin beside a link
+is not a tap on the link.
 
 **Annotations (half-collected).** The write path is joined:
 `Session::add_highlight` captures both selection endpoints as layered

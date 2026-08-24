@@ -27,8 +27,8 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    resolve_in_text, BookKind, ChapbookError, LayeredLocator, PageMetrics, PixelFormat, Point,
-    Publication, ReadingSettings, Rect, Result, Rotation, SpineItem,
+    resolve_in_text, BookKind, ChapbookError, LayeredLocator, Locator, PageMetrics, PixelFormat,
+    Point, Publication, ReadingSettings, Rect, Result, Rotation, SpineItem, TocEntry,
 };
 use chapbook_layout::ChapterLayout;
 use chapbook_library::AnnotationKind;
@@ -170,6 +170,14 @@ pub struct Session {
     painted_selection: Option<(u32, u32)>,
     /// What the target panel can show; applied to rendered pixels.
     pixel_format: PixelFormat,
+    /// Per-unit hyperlinks in locator space, filled as units lay out.
+    links: HashMap<usize, Vec<chapbook_dom::Link>>,
+    /// Where jumps came from, so a footnote can be returned from. Only
+    /// jumps push; ordinary page turns don't.
+    back_stack: Vec<Locator>,
+    /// Fragment to land on once the target unit has laid out — the
+    /// anchor-flavored sibling of `pending_offset`.
+    pending_anchor: Option<String>,
 }
 
 impl Session {
@@ -331,6 +339,9 @@ impl Session {
             pending: FrameIntent::default(),
             painted_selection: None,
             pixel_format: PixelFormat::default(),
+            links: HashMap::new(),
+            back_stack: Vec::new(),
+            pending_anchor: None,
         })
     }
 
@@ -535,6 +546,153 @@ impl Session {
             self.page = layout.page_of(locator);
         }
         self.mark(FrameIntent::Relayout);
+    }
+
+    // ---- Navigation ----
+
+    /// The book's table of contents, for a shell that offers one.
+    pub fn toc(&self) -> &[TocEntry] {
+        self.book.publication().toc()
+    }
+
+    /// Where the reader is now, as a locator.
+    pub fn locator(&self) -> Locator {
+        Locator::new(self.spine, self.current_offset())
+    }
+
+    /// Jump to a locator, remembering where we came from. `false` if the
+    /// spine index doesn't exist.
+    pub fn goto(&mut self, target: Locator) -> bool {
+        self.jump(target.spine_index, Some(target.char_offset), None)
+    }
+
+    /// Jump to an element `id` within a unit — a TOC fragment or a
+    /// footnote. `false` if the spine index doesn't exist; a fragment that
+    /// turns out not to be in the unit lands at its start.
+    pub fn goto_anchor(&mut self, spine_index: usize, fragment: &str) -> bool {
+        self.jump(spine_index, None, Some(fragment.to_string()))
+    }
+
+    /// Jump to a TOC entry, by spine index where the entry has one and by
+    /// href otherwise.
+    pub fn goto_toc(&mut self, entry: &TocEntry) -> bool {
+        let Some(spine) = entry
+            .spine_index
+            .or_else(|| entry.href.as_deref().and_then(|h| self.spine_index_of(h)))
+        else {
+            return false;
+        };
+        match &entry.fragment {
+            Some(fragment) => self.goto_anchor(spine, fragment),
+            None => self.goto(Locator::chapter_start(spine)),
+        }
+    }
+
+    /// The link under a point in panel coordinates, as written in the
+    /// document. Only inside the link's own text: pressing the margin
+    /// beside a link is not pressing the link.
+    pub fn link_at(&mut self, x: f32, y: f32) -> Option<String> {
+        let (px, py) = self.metrics.map_or((x, y), |m| m.panel_to_page(x, y));
+        let (spine, page) = (self.spine, self.page);
+        let offset = self
+            .layout_unit(spine)?
+            .pages
+            .get(page)?
+            .offset_at_exact(Point::new(px, py))?;
+        self.links
+            .get(&spine)?
+            .iter()
+            .find(|link| offset >= link.start && offset < link.end)
+            .map(|link| link.href.clone())
+    }
+
+    /// Follow a document-internal link. External links (anything with a
+    /// scheme) are a shell decision, not a reading position, so they
+    /// return `false` untouched.
+    pub fn follow_link(&mut self, href: &str) -> bool {
+        if href.contains("://") || href.starts_with("mailto:") {
+            return false;
+        }
+        let (path, fragment) = match href.split_once('#') {
+            Some((path, fragment)) => (path, Some(fragment.to_string())),
+            None => (href, None),
+        };
+        // An empty path is a jump within this unit.
+        let spine = if path.is_empty() {
+            self.spine
+        } else {
+            let Ok(item) = self.book.publication().spine_item(self.spine) else {
+                return false;
+            };
+            let resolved = chapbook_epub::resolve_href(&item.href.clone(), path);
+            match self.spine_index_of(&resolved) {
+                Some(spine) => spine,
+                None => return false,
+            }
+        };
+        match fragment {
+            Some(fragment) => self.goto_anchor(spine, &fragment),
+            None => self.goto(Locator::chapter_start(spine)),
+        }
+    }
+
+    /// Return to where the last jump started. `false` with nothing to go
+    /// back to.
+    pub fn back(&mut self) -> bool {
+        let Some(target) = self.back_stack.pop() else {
+            return false;
+        };
+        self.land(target.spine_index, Some(target.char_offset), None);
+        true
+    }
+
+    pub fn can_go_back(&self) -> bool {
+        !self.back_stack.is_empty()
+    }
+
+    /// Spine index of a container-root path, tolerating the leading slash
+    /// EPUB manifests may or may not carry.
+    fn spine_index_of(&self, href: &str) -> Option<usize> {
+        let want = href
+            .split('#')
+            .next()
+            .unwrap_or(href)
+            .trim_start_matches('/');
+        self.book
+            .publication()
+            .spine()
+            .iter()
+            .position(|item| item.href.trim_start_matches('/') == want)
+    }
+
+    /// A jump: remember where we were, then land.
+    fn jump(&mut self, spine: usize, offset: Option<u32>, anchor: Option<String>) -> bool {
+        if spine >= self.book.publication().spine().len() {
+            return false;
+        }
+        let from = self.locator();
+        self.land(spine, offset, anchor);
+        // Cap the trail: a reader chasing footnotes shouldn't grow it
+        // without bound.
+        self.back_stack.push(from);
+        if self.back_stack.len() > 64 {
+            self.back_stack.remove(0);
+        }
+        true
+    }
+
+    fn land(&mut self, spine: usize, offset: Option<u32>, anchor: Option<String>) {
+        let same_unit = spine == self.spine;
+        self.spine = spine;
+        self.page = 0;
+        self.pending_offset = offset;
+        self.pending_anchor = anchor;
+        self.selection = None;
+        self.mark(if same_unit {
+            FrameIntent::PageTurn
+        } else {
+            FrameIntent::UnitChange
+        });
     }
 
     // ---- Selection ----
@@ -868,7 +1026,18 @@ impl Session {
 
     fn page_display_list(&mut self) -> Option<chapbook_paint::DisplayList> {
         self.metrics?;
-        // Resolve a restored offset once the unit has laid out.
+        // Resolve a restored offset, or a jump's anchor, once the unit
+        // has laid out.
+        if let Some(fragment) = self.pending_anchor.take() {
+            let spine = self.spine;
+            match self.layout_unit(spine) {
+                Some(layout) => {
+                    // A fragment that isn't in the unit lands at its start.
+                    self.page = layout.anchors.get(&fragment).copied().unwrap_or(0);
+                }
+                None => self.pending_anchor = Some(fragment),
+            }
+        }
         if let Some(offset) = self.pending_offset {
             let spine = self.spine;
             if let Some(layout) = self.layout_unit(spine) {
@@ -1145,6 +1314,9 @@ impl Session {
         let mut engine = chapbook_style::StyleEngine::new(metrics, &self.settings);
         engine.set_author_sheets(&sheets);
         engine.style_document(&mut doc);
+        // The document is parsed here and nowhere else; take its links
+        // while we have it.
+        self.links.insert(spine, chapbook_dom::links(&doc));
         let layout = chapbook_layout::paginate(&doc, &sheets, metrics, &mut self.fonts, &images);
         Some((layout, images))
     }

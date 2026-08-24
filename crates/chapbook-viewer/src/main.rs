@@ -5,8 +5,9 @@
 //! Sources: an `.epub` or `.cbz` path, or an OPDS URL (page-streamed
 //! comic). Keys: Right/PageDown/Space next page · Left/PageUp previous ·
 //! n/p unit · +/- font size · t theme (light/sepia/dark) · c copy
-//! selection · h highlight it · q/Escape quit. Mouse or touch: press-drag
-//! over text selects; a tap clears. Touch tracks the first finger only.
+//! selection · h highlight it · b back · q/Escape quit. Mouse or touch:
+//! press-drag over text selects; a tap clears; a press on a link follows
+//! it. Touch tracks the first finger only.
 //!
 //! Image-book units (comic pages, PDF rasterizations) load on the
 //! session's worker thread; the loader wakes this shell through the event
@@ -249,6 +250,14 @@ impl ApplicationHandler<()> for App {
                 }
                 match state {
                     ElementState::Pressed => {
+                        // A press on a link follows it rather than
+                        // starting a selection there.
+                        if let Some(href) = self.session.link_at(self.cursor.0, self.cursor.1) {
+                            if self.session.follow_link(&href) {
+                                self.request_redraw();
+                                return;
+                            }
+                        }
                         self.selecting = self.session.selection_begin(self.cursor.0, self.cursor.1);
                         self.request_redraw();
                     }
@@ -299,6 +308,9 @@ impl ApplicationHandler<()> for App {
                             // that made it.
                             self.session.add_highlight();
                             self.session.selection_clear();
+                        }
+                        "b" => {
+                            self.session.back();
                         }
                         _ => return,
                     },

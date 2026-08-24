@@ -76,6 +76,19 @@ fn sweep_for_text(s: &mut Session) -> (f32, f32) {
     panic!("no hit-testable text on this page");
 }
 
+/// Find a point on the current page that sits inside a hyperlink. Where
+/// the link lands depends on the fixture font and page size, so sweep.
+fn sweep_for_link(s: &mut Session) -> Option<(f32, f32, String)> {
+    for y in (40..760).step_by(4) {
+        for x in (40..560).step_by(4) {
+            if let Some(href) = s.link_at(x as f32, y as f32) {
+                return Some((x as f32, y as f32, href));
+            }
+        }
+    }
+    None
+}
+
 fn metrics() -> PageMetrics {
     PageMetrics {
         size: Size::new(600.0, 800.0),
@@ -519,5 +532,83 @@ fn a_turned_panel_gets_turned_pixels_and_untwisted_input() {
         s.selected_range(),
         Some(expected),
         "the same words, reached through the turned panel"
+    );
+}
+
+#[test]
+fn links_and_the_toc_both_navigate_and_the_trail_comes_back() {
+    let mut s = open_isolated("epub-nav", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+    assert_eq!(s.spine(), 0);
+
+    let (lx, ly, href) = sweep_for_link(&mut s).expect("chapter one links to chapter two");
+    assert_eq!(href, "chapter2.xhtml");
+    // A tap in the margin beside the link is not a tap on the link.
+    assert_eq!(s.link_at(2.0, ly), None);
+    assert!(s.link_at(lx, ly).is_some());
+
+    assert!(s.follow_link(&href));
+    assert_eq!(s.spine(), 1, "the link crossed to chapter two");
+    assert!(s.can_go_back());
+    assert!(s.back());
+    assert_eq!(s.spine(), 0, "and back again");
+    assert!(!s.can_go_back(), "the trail is spent");
+
+    // The TOC's nested entry carries a fragment.
+    let entry = s.toc()[1].children[0].clone();
+    assert_eq!(entry.fragment.as_deref(), Some("part2"));
+    assert!(s.goto_toc(&entry));
+    s.render().expect("page renders");
+    assert_eq!(s.spine(), 1);
+    let anchor_page = s.page();
+
+    // A fragment the unit doesn't have lands at its start rather than
+    // failing outright.
+    assert!(s.goto_anchor(1, "not-in-this-chapter"));
+    s.render().expect("page renders");
+    assert_eq!(s.page(), 0);
+    assert!(anchor_page >= s.page());
+}
+
+#[test]
+fn external_links_are_not_a_reading_position() {
+    let mut s = open_isolated("epub-nav-external", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+    assert!(!s.follow_link("https://example.com/"));
+    assert!(!s.follow_link("mailto:nobody@example.com"));
+    assert!(!s.follow_link("chapter9.xhtml"), "no such unit");
+    assert_eq!(s.spine(), 0);
+    assert!(!s.can_go_back(), "a refused link leaves no trail");
+}
+
+#[test]
+fn a_jump_remembers_the_offset_it_left() {
+    let mut s = open_isolated("epub-nav-offset", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+
+    // Read into chapter two, past its forced page break, so the position
+    // being remembered is an offset and not just a unit.
+    assert!(s.goto(chapbook_core::Locator::chapter_start(1)));
+    s.render().expect("page renders");
+    s.next_page();
+    s.render().expect("page renders");
+    let before = s.locator();
+    assert_eq!(before.spine_index, 1);
+    assert!(before.char_offset > 0, "reading past the first page");
+
+    assert!(s.goto(chapbook_core::Locator::chapter_start(0)));
+    s.render().expect("page renders");
+    assert_eq!(s.spine(), 0);
+
+    assert!(s.back());
+    s.render().expect("page renders");
+    assert_eq!(s.locator().spine_index, before.spine_index);
+    assert_eq!(
+        s.locator().char_offset,
+        before.char_offset,
+        "back lands on the offset it left, not the chapter start"
     );
 }

@@ -145,6 +145,29 @@ impl Page {
         best.map(|(_, offset)| offset)
     }
 
+    /// Like [`Page::offset_at`], but only when the point is actually inside
+    /// a line's box — no snapping to the nearest line. What a tap on a link
+    /// needs: pressing the margin beside a link is not pressing the link.
+    pub fn offset_at_exact(&self, point: Point) -> Option<u32> {
+        for fragment in &self.fragments {
+            let (FragmentKind::Line(line) | FragmentKind::HiddenText(line)) = &fragment.kind else {
+                continue;
+            };
+            let r = fragment.rect;
+            if point.x < r.origin.x
+                || point.x > r.origin.x + r.size.w
+                || point.y < r.origin.y
+                || point.y > r.origin.y + r.size.h
+            {
+                continue;
+            }
+            if let Some(offset) = line.offset_at_x(point.x - r.origin.x) {
+                return Some(offset);
+            }
+        }
+        None
+    }
+
     /// Highlight rects (page space) covering the locator range
     /// `[start, end)`: one rect per line the range touches.
     pub fn rects_for_range(&self, start: u32, end: u32) -> Vec<Rect> {

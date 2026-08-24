@@ -20,7 +20,7 @@ mod text;
 mod tree;
 
 pub use cfi::{cfi_for_offset, offset_for_cfi};
-pub use offsets::{locator_offset_of, locator_offsets, locator_text, node_tag};
+pub use offsets::{links, locator_offset_of, locator_offsets, locator_text, node_tag, Link};
 pub use parse::parse_xhtml;
 pub use stylo_impls::DomNode;
 // Re-exported so layout can name eager pseudo-elements without a direct

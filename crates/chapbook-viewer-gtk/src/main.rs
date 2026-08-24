@@ -5,8 +5,8 @@
 //! Sources: an `.epub` or `.cbz` path, or an OPDS URL (page-streamed
 //! comic). Keys match the winit shell: Right/PageDown/space next page ·
 //! Left/PageUp previous · n/p unit · +/- font size · t theme · c copy
-//! selection · h highlight it · q/Escape quit. Mouse press-drag over text
-//! selects.
+//! selection · h highlight it · b back · q/Escape quit. Mouse press-drag
+//! over text selects; a press on a link follows it.
 //!
 //! Rendering: the session rasterizes with tiny-skia at device pixels; the
 //! draw func converts premultiplied RGBA → cairo ARGB32 and paints it at
@@ -128,6 +128,9 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                 Some("plus") | Some("equal") => s.adjust_font(2.0),
                 Some("minus") => s.adjust_font(-2.0),
                 Some("t") => s.cycle_theme(),
+                Some("b") => {
+                    s.back();
+                }
                 Some("h") => {
                     // The stored highlight replaces the selection that
                     // made it.
@@ -171,7 +174,20 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             let session = session.clone();
             let area_weak = area_weak.clone();
             drag.connect_drag_begin(move |_, x, y| {
-                session.borrow_mut().selection_begin(x as f32, y as f32);
+                let mut s = session.borrow_mut();
+                // A press on a link follows it rather than starting a
+                // selection there.
+                if let Some(href) = s.link_at(x as f32, y as f32) {
+                    if s.follow_link(&href) {
+                        drop(s);
+                        if let Some(area) = area_weak.upgrade() {
+                            area.queue_draw();
+                        }
+                        return;
+                    }
+                }
+                s.selection_begin(x as f32, y as f32);
+                drop(s);
                 if let Some(area) = area_weak.upgrade() {
                     area.queue_draw();
                 }

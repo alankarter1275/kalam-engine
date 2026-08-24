@@ -116,3 +116,32 @@ fn layered_capture_and_reanchor_roundtrip() {
     let drift = "An editorial note was inserted here. ".chars().count() as u32;
     assert_eq!(r.offset(), offset + drift);
 }
+
+#[test]
+fn links_carry_the_locator_range_of_their_text() {
+    let doc = parse_xhtml(
+        concat!(
+            "<html><body><p>See <a href=\"ch2.xhtml#note\">the note</a> and ",
+            "<a href=\"http://example.com/\">the site</a>.</p>",
+            "<p><a href=\"cover.xhtml\"><img src=\"c.png\" alt=\"\"/></a></p>",
+            "</body></html>"
+        )
+        .as_bytes(),
+        "OEBPS/ch1.xhtml",
+    )
+    .unwrap();
+    let text = chapbook_dom::locator_text(&doc);
+    let links = chapbook_dom::links(&doc);
+
+    assert_eq!(links.len(), 2, "the image link wraps no text: {links:?}");
+    let slice = |l: &chapbook_dom::Link| -> String {
+        text.chars()
+            .skip(l.start as usize)
+            .take((l.end - l.start) as usize)
+            .collect()
+    };
+    assert_eq!(slice(&links[0]), "the note");
+    assert_eq!(links[0].href, "ch2.xhtml#note");
+    assert_eq!(slice(&links[1]), "the site");
+    assert_eq!(links[1].href, "http://example.com/");
+}

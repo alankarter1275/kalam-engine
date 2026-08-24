@@ -80,6 +80,62 @@ fn walk_map(
     }
 }
 
+/// One `<a href>` and the locator-offset span of the text it wraps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    /// Half-open locator range `[start, end)` covered by the link's text.
+    pub start: u32,
+    pub end: u32,
+    /// The `href` as written. Resolving it against the containing document
+    /// is the caller's job — see `chapbook_epub::resolve_href`.
+    pub href: String,
+}
+
+/// Hyperlinks by locator range, in document order.
+///
+/// Paint carries no DOM types by design, so a link cannot ride on a
+/// fragment; it rides on the offset space every glyph already carries
+/// instead, which also means a hit test survives relayout for free.
+/// Anchors wrapping no text — an image link — have an empty range and are
+/// dropped, since there is nothing to hit-test against.
+pub fn links(doc: &Document) -> Vec<Link> {
+    let mut out = Vec::new();
+    if let Some(html) = doc.document_element() {
+        let mut count = 0;
+        collect_links(doc, html, &mut count, &mut out);
+    }
+    out
+}
+
+fn collect_links(doc: &Document, id: NodeId, count: &mut u32, out: &mut Vec<Link>) {
+    if excluded(doc, id) {
+        return;
+    }
+    if let NodeData::Text(text) = &doc.node(id).data {
+        *count += text.chars().count() as u32;
+        return;
+    }
+    let href = match &doc.node(id).data {
+        NodeData::Element(el) if *el.local_name() == local_name!("a") => {
+            el.attr(&local_name!("href")).map(str::to_string)
+        }
+        _ => None,
+    };
+    let start = *count;
+    for child in &doc.node(id).children {
+        collect_links(doc, *child, count, out);
+    }
+    if let Some(href) = href {
+        if *count > start {
+            out.push(Link {
+                start,
+                end: *count,
+                href,
+            });
+        }
+    }
+}
+
 pub(crate) fn excluded(doc: &Document, id: NodeId) -> bool {
     match &doc.node(id).data {
         NodeData::Element(el) => matches!(
