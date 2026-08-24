@@ -171,11 +171,13 @@ Increments left, in the order they will hurt:
   refresh functions, several `mxcfb_update_data` struct versions, and
   waveform constants that differ per vendor for the same logical update;
   Allwinner Kobos reach it through a shim and need their own backend,
-  MediaTek is a third path, reMarkable 2 has no framebuffer at all. So the
-  first backend should be a plain Linux fbdev panel — no EPDC, `UpdateClass`
-  ignored, testable in a VM — which gives the trait a second implementor
-  the way vello did for the display list. The ioctl layer waits for
-  hardware, because code that runs is not evidence it is right.
+  MediaTek is a third path, reMarkable 2 has no framebuffer at all.
+  `chapbook-panel-fbdev` is the stand-in: a plain Linux framebuffer, no
+  EPDC, `UpdateClass` accepted and ignored, which gives the trait a second
+  implementor the way vello did for the display list and runs on hardware
+  that exists. Everything above `Panel` is exercised by it end to end. The
+  ioctl layer waits for a device, because code that runs is not evidence
+  that it is right.
 - **Damage beyond selections and highlights.** A page turn that only moves
   a footer, or an image landing in a fixed rect, could both state their
   region and don't.

@@ -27,6 +27,7 @@ not an afterthought bolted onto a scrolling browser.
 | `chapbook-paint` | Format-neutral page model + paint-neutral display list |
 | `chapbook-render-tinyskia` | CPU rasterization backend |
 | `chapbook-render-vello` | GPU rasterization backend (vello + wgpu) |
+| `chapbook-panel-fbdev` | Linux framebuffer panel backend (`/dev/fb0`) |
 | `chapbook-opds` | OPDS 1.2/2.0 catalog client + OPDS-PSE streamed comics |
 | `chapbook-cbz` | CBZ comic-book archive reading |
 | `chapbook-pdf` | PDF reading, rasterized via hayro (pure Rust) |
@@ -56,7 +57,12 @@ run -p chapbook-viewer -- <book.epub|comic.cbz|doc.pdf|opds-url>` (winit)
 or `-p chapbook-viewer-gtk` (GTK4) to read. Pages rasterize on the CPU with
 tiny-skia, or on the GPU through vello and wgpu (`chapbook-viewer --gpu`) —
 the same session and the same display list, a different backend consuming
-it.
+it. Panels — screens that are asked to change rather than presented to —
+go through a `Panel` trait with a driver that picks the update class,
+avoids writing under an in-flight refresh, and rations the ghosting
+flash; `chapbook-panel-fbdev` implements it over a plain Linux
+framebuffer (`--example probe` to see what a device reports, `--example
+show` to read a book on it).
 
 See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:
 fixed-layout EPUB, JavaScript/scripted content, MathML, vertical writing

@@ -705,6 +705,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chapbook-panel-fbdev"
+version = "0.1.0"
+dependencies = [
+ "chapbook-core",
+ "chapbook-reader",
+ "libc",
+]
+
+[[package]]
 name = "chapbook-pdf"
 version = "0.1.0"
 dependencies = [

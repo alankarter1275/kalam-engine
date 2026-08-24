@@ -165,6 +165,15 @@ stays that way.
   pixels (swash applies cosmic-text's vertical sub-pixel bin in the
   opposite direction, so the true fraction lifts every line); horizontal
   sub-pixel positioning is kept.
+- **chapbook-panel-fbdev** — a `Panel` over `/dev/fb0`. No EPDC behind it,
+  so `UpdateClass` is accepted and ignored: pixels are on screen when
+  `blit` returns. Its value is being a second implementor of the panel
+  seam that can actually run — on a VM or a Pi — while an e-ink backend
+  cannot be written without the device. Pixel packing is a pure module
+  driven by the framebuffer's own bitfields, so one path covers RGB565,
+  XRGB8888 and the rest, and it is tested against a `Vec` rather than a
+  screen; the `#[repr(C)]` geometry structs are what `--example probe`
+  checks on real hardware.
 - **chapbook-render-vello** — the GPU backend, over the same display list:
   vello's glyph API takes pre-positioned glyph ids, so a `GlyphRun`
   transcribes onto it, and device scale becomes a scene transform. Renders

@@ -9,6 +9,7 @@ members = [
     "crates/chapbook-paint",
     "crates/chapbook-render-tinyskia",
     "crates/chapbook-render-vello",
+    "crates/chapbook-panel-fbdev",
     "crates/chapbook-opds",
     "crates/chapbook-cbz",
     "crates/chapbook-pdf",
@@ -36,6 +37,7 @@ chapbook-layout = { path = "crates/chapbook-layout" }
 chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
 chapbook-render-vello = { path = "crates/chapbook-render-vello" }
+chapbook-panel-fbdev = { path = "crates/chapbook-panel-fbdev" }
 chapbook-opds = { path = "crates/chapbook-opds" }
 chapbook-cbz = { path = "crates/chapbook-cbz" }
 chapbook-pdf = { path = "crates/chapbook-pdf" }
@@ -102,6 +104,7 @@ arboard = { version = "3", default-features = false, features = [
 ] }
 
 # Misc
+libc = "0.2"
 slotmap = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
