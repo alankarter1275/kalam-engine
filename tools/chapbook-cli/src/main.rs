@@ -18,9 +18,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Print book metadata (title, authors, language, identifiers)
-    Meta { epub: PathBuf },
+    Meta { book: PathBuf },
     /// Print the table of contents
-    Toc { epub: PathBuf },
+    Toc { book: PathBuf },
     /// Extract plain text from a spine item (or the whole book)
     Text {
         epub: PathBuf,
@@ -116,8 +116,8 @@ fn main() -> ExitCode {
         }
     };
     match cli.command {
-        Command::Meta { epub } => print(commands::meta(&epub)),
-        Command::Toc { epub } => print(commands::toc(&epub)),
+        Command::Meta { book } => print(commands::meta(&book)),
+        Command::Toc { book } => print(commands::toc(&book)),
         Command::Text { epub, spine } => print(commands::text(&epub, spine)),
         Command::Styles { epub, spine } => print(commands::styles(&epub, spine)),
         Command::Layout { epub, spine } => print(commands::layout(&epub, spine)),

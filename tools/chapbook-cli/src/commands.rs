@@ -27,17 +27,17 @@ fn is_image_book(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("cbz") || e.eq_ignore_ascii_case("pdf"))
 }
 
-pub fn meta(epub: &Path) -> Result<String> {
+pub fn meta(book_path: &Path) -> Result<String> {
     // EPUBs report their fixed-layout status; the trait surface doesn't
     // carry it (comics are inherently fixed pages).
-    let layout_note = if is_image_book(epub) {
+    let layout_note = if is_image_book(book_path) {
         "pages (image book)"
-    } else if Book::open(epub)?.is_fixed_layout() {
+    } else if Book::open(book_path)?.is_fixed_layout() {
         "fixed (unsupported)"
     } else {
         "reflowable"
     };
-    let book = open_publication(epub)?;
+    let book = open_publication(book_path)?;
     let md = book.metadata();
     let mut out = String::new();
     push_field(&mut out, "title", md.title.as_deref());
@@ -52,8 +52,10 @@ pub fn meta(epub: &Path) -> Result<String> {
     Ok(out)
 }
 
-pub fn toc(epub: &Path) -> Result<String> {
-    let book = Book::open(epub)?;
+/// Any publication's toc, not just an EPUB's: a PDF's outline and a CBZ's
+/// ComicInfo bookmarks land here too.
+pub fn toc(book_path: &Path) -> Result<String> {
+    let book = open_publication(book_path)?;
     let mut out = String::new();
     fn walk(entries: &[TocEntry], depth: usize, out: &mut String) {
         for e in entries {
