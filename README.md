@@ -41,16 +41,18 @@ The core pipeline works end-to-end: open (or download via OPDS) an EPUB,
 cascade its styles through stylo, paginate with cosmic-text, render pages
 with tiny-skia, and read it in the reference viewer with positions that
 survive relayout, font-size changes, and even replaced editions (see
-`docs/LOCATORS.md`) — and exchange them as EPUB CFIs (`chapbook cfi`). Embedded fonts (including obfuscated ones), images,
-and text decorations render, with light/sepia/dark themes (sepia recolors
-defaults; dark forces readability), and press-drag text selection
-with copy-to-clipboard (`c`; annotations will build on it). Comics and PDFs work too:
-local CBZ archives, OPDS-PSE page streams, and PDFs (rasterized with the
+`docs/LOCATORS.md`) — and exchange them as EPUB CFIs (`chapbook cfi`).
+Embedded fonts (including obfuscated ones), images, and text decorations
+render, with light/sepia/dark themes (sepia recolors defaults; dark forces
+readability), and press-drag text selection that copies to the clipboard
+(`c`) or becomes a stored highlight (`h`), kept in the library as layered
+locators so it re-anchors like a position. Comics and PDFs work too: local
+CBZ archives, OPDS-PSE page streams, and PDFs (rasterized with the
 pure-Rust hayro engine, with a text layer so selection works there too)
 read in the same viewers with page-unit positions — their pages load and
-decode on a background thread. `chapbook --help` for the dev CLI;
-`cargo run -p chapbook-viewer -- <book.epub|comic.cbz|doc.pdf|opds-url>` (winit) or
-`-p chapbook-viewer-gtk` (GTK4) to read.
+decode on a background thread. `chapbook --help` for the dev CLI; `cargo
+run -p chapbook-viewer -- <book.epub|comic.cbz|doc.pdf|opds-url>` (winit)
+or `-p chapbook-viewer-gtk` (GTK4) to read.
 
 See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:
 fixed-layout EPUB, JavaScript/scripted content, MathML, vertical writing
