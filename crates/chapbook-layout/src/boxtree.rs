@@ -3,11 +3,11 @@
 //! have block siblings).
 //!
 //! v1 degradations, per ARCHITECTURE.md: list items become plain blocks
-//! with a text marker; positioning is ignored; floated *images* float for
-//! real (see `paginate`), floated non-replaced blocks stay in flow; images
-//! nested deeper than one level inside inline content are skipped.
-//! `::before`/`::after` emit literal string content (counters/attr()/images
-//! in `content` are skipped).
+//! with a text marker; positioning is ignored; floats lay out for real
+//! (see `paginate`) except shrink-to-fit non-replaced floats, which stay
+//! in flow; images nested deeper than one level inside inline content are
+//! skipped. `::before`/`::after` emit string, `attr()`, and quote content
+//! (`counter()`/`counters()` and images in `content` are skipped).
 
 use std::collections::HashMap;
 
@@ -29,6 +29,10 @@ pub struct BlockBox {
     pub frag: FragStyle,
     /// True for generated anonymous boxes (no own margins/padding/breaks).
     pub anonymous: bool,
+    /// On an anonymous box: it is the container's first in-flow content,
+    /// so the container's `text-indent` applies to its first line (floats
+    /// are out of flow and do not consume the indent).
+    pub indent_first: bool,
     pub kind: BlockKind,
 }
 
@@ -116,6 +120,9 @@ pub struct BoxTreeInput<'a> {
     pub locator: &'a HashMap<NodeId, u32>,
     /// Decoded images keyed by node tag (from `crate::collect_images`).
     pub images: &'a ImageStore,
+    /// CSS quote nesting depth for `open-quote`/`close-quote` content,
+    /// advanced in document order as the box tree is walked.
+    pub quote_depth: std::cell::Cell<usize>,
 }
 
 /// Build the box tree from the `<body>` element. Returns `None` when there
@@ -176,6 +183,7 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
                 style,
                 frag,
                 anonymous: false,
+                indent_first: false,
                 kind: BlockKind::Table(Box::new(table)),
             };
         }
@@ -206,6 +214,18 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
             node,
         );
         flush_anonymous(input, &mut children, &mut pending_inline, node, &style);
+        // The container's text-indent belongs to its first in-flow line
+        // box: mark the first non-floated child if it is an anonymous
+        // inline (a hoisted floated image does not consume the indent).
+        for child in &mut children {
+            if !child.anonymous && child.style.get_box().float.is_floating() {
+                continue;
+            }
+            if child.anonymous {
+                child.indent_first = true;
+            }
+            break;
+        }
         BlockKind::Container(children)
     } else {
         let mut inline = InlineContent::default();
@@ -232,6 +252,7 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
         style,
         frag,
         anonymous: false,
+        indent_first: false,
         kind,
     }
 }
@@ -318,6 +339,7 @@ fn flush_anonymous(
         style: style.clone(),
         frag: FragStyle::default(),
         anonymous: true,
+        indent_first: false,
         kind: BlockKind::Inline(inline),
     });
 }
@@ -381,10 +403,12 @@ fn collect_inline_element(
     push_generated(out, input, node, chapbook_dom::PseudoElement::After);
 }
 
-/// `::before`/`::after` generated content: literal string items only
-/// (counters, attr(), and images are unsupported and skipped). Generated
-/// chars carry their element's locator offset, like list markers — they are
-/// presentation, not source text.
+/// `::before`/`::after` generated content: string, `attr()`, and quote
+/// items (with proper nesting depth, tracked in document order across the
+/// box-tree walk). `counter()`/`counters()` need document counter scopes
+/// and `url()` images are not text — both are skipped (documented).
+/// Generated chars carry their element's locator offset, like list
+/// markers — they are presentation, not source text.
 fn push_generated(
     out: &mut InlineContent,
     input: &BoxTreeInput,
@@ -395,17 +419,39 @@ fn push_generated(
         return;
     };
     use style::values::generics::counters::{Content, ContentItem};
-    let text: String = match &style.get_counters().content {
-        Content::Items(items) => items
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                ContentItem::String(s) => Some(s.to_string()),
-                _ => None,
-            })
-            .collect(),
-        _ => return,
+    let Content::Items(items) = &style.get_counters().content else {
+        return;
     };
+    let mut text = String::new();
+    for item in items.items.iter() {
+        match item {
+            ContentItem::String(s) => text.push_str(s),
+            ContentItem::Attr(attr) => {
+                if let NodeData::Element(el) = &input.doc.node(node).data {
+                    let name: &str = &attr.attribute;
+                    match el.attrs.iter().find(|(q, _)| &*q.local == name) {
+                        Some((_, value)) => text.push_str(value),
+                        None => text.push_str(&attr.fallback),
+                    }
+                }
+            }
+            ContentItem::OpenQuote => {
+                let depth = input.quote_depth.get();
+                text.push_str(&quote_mark(&style, depth, true));
+                input.quote_depth.set(depth + 1);
+            }
+            ContentItem::CloseQuote => {
+                let depth = input.quote_depth.get().saturating_sub(1);
+                input.quote_depth.set(depth);
+                text.push_str(&quote_mark(&style, depth, false));
+            }
+            ContentItem::NoOpenQuote => input.quote_depth.set(input.quote_depth.get() + 1),
+            ContentItem::NoCloseQuote => input
+                .quote_depth
+                .set(input.quote_depth.get().saturating_sub(1)),
+            _ => {}
+        }
+    }
     if text.is_empty() {
         return;
     }
@@ -416,6 +462,31 @@ fn push_generated(
         offsets,
         style,
     });
+}
+
+/// The quote mark for `open-quote`/`close-quote` at `depth`: from the
+/// computed `quotes` list, or English typographic quotes for `auto`.
+/// Deeper nesting than the list provides repeats the last pair.
+fn quote_mark(style: &ComputedValues, depth: usize, open: bool) -> String {
+    use style::values::specified::list::Quotes;
+    match &style.get_list().quotes {
+        Quotes::QuoteList(list) => match list.0.iter().count() {
+            0 => String::new(),
+            n => {
+                let pair = &list.0[depth.min(n - 1)];
+                if open {
+                    pair.opening.to_string()
+                } else {
+                    pair.closing.to_string()
+                }
+            }
+        },
+        Quotes::Auto => {
+            let pairs = [("\u{201C}", "\u{201D}"), ("\u{2018}", "\u{2019}")];
+            let (o, c) = pairs[depth.min(1)];
+            (if open { o } else { c }).to_string()
+        }
+    }
 }
 
 /// Append a text node's content with CSS `white-space: normal` collapsing
@@ -542,6 +613,7 @@ fn replaced_block(
         style: style.clone(),
         frag: input.frag.get(&node).copied().unwrap_or_default(),
         anonymous: false,
+        indent_first: false,
         kind,
     })
 }

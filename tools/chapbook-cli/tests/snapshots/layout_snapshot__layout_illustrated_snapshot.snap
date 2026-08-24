@@ -52,4 +52,12 @@ anchor #ch1 -> page 0
   [  174.5,  446.0   73.7x 27.0] base= 18.9 loc=1241  "24 ft beam"
   [   42.0,  479.0  516.0x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
   [   49.0,  483.0  235.4x 27.0] base= 18.9 loc=1258  "Figures as recorded at first survey"
-  [   40.0,  534.0  258.2x 27.0] base= 18.9 loc=1303  "Text after the rule closes the chapter."
+  [   40.0,  534.0  507.1x 27.0] base= 18.9 loc=1303  "As the log has it, “we sighted land at dawn, and the men cried ‘land, land’"
+  [   40.0,  561.0  258.1x 27.0] base= 18.9 loc=1380  "with one voice” — so the entry ends."
+  [  392.0,  606.0  168.0x 62.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 0.0, right: 0.0, bottom: 0.0, left: 2.0 }, border_color: Rgba { r: 0, g: 0, b: 0, a: 255 }, first_slice: true, last_slice: true })
+  [  402.0,  610.0  104.8x 27.0] base= 18.9 loc=1420  "Set to one side, a"
+  [  402.0,  637.0  124.8x 27.0] base= 18.9 loc=1439  "narrow pulled note."
+  [   40.0,  606.0  320.0x 27.0] base= 18.9 loc=1463  "Text after the rule closes the chapter, running"
+  [   40.0,  633.0  333.5x 27.0] base= 18.9 loc=1511  "long enough to wrap beside the pulled note and"
+  [   40.0,  676.0  494.0x 27.0] base= 18.9 loc=1562  "then recover the full measure beneath it, as the last lines of the chapter"
+  [   40.0,  703.0  140.7x 27.0] base= 18.9 loc=1641  "settle onto the page."

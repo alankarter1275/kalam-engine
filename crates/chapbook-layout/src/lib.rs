@@ -81,6 +81,7 @@ pub fn paginate(
         frag: &frag,
         locator: &locator,
         images,
+        quote_depth: std::cell::Cell::new(0),
     };
 
     let mut paginator = paginate::Paginator::new(fonts, *page);

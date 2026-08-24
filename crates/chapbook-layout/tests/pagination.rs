@@ -1076,3 +1076,153 @@ fn rowspan_zero_spans_to_last_row() {
         );
     }
 }
+
+// ---- Floated blocks, indent beside floats, content items, decoration
+// ---- stretch ----
+
+#[test]
+fn floated_block_with_width_wraps_text() {
+    let words = "wrap ".repeat(60);
+    let html = format!(
+        "<html><body>\
+         <aside>Pull quote line one<br/>and line two</aside>\
+         <p>{words}</p></body></html>"
+    );
+    let (layout, _) = layout_html(
+        &html,
+        "p { margin: 0; } aside { float: right; width: 150px; margin: 0 0 10px 10px; \
+         border: 1px solid black; padding: 4px; }",
+        &page_for_lines(12),
+    );
+    let (boxes, lines) = boxes_and_lines(&layout, 0);
+    // The aside's border box sits at the right content edge.
+    // Margin box = 10 + 1 + 4 + 150 + 4 + 1 = 170; box at 40 + 520 - 160.
+    let aside_box = boxes.first().expect("aside box decoration");
+    assert!(
+        aside_box.0 > 380.0,
+        "aside must sit at the right edge: {aside_box:?}"
+    );
+    // Its content lines line up inside it.
+    let quote = lines.iter().find(|l| l.2.contains("Pull quote")).unwrap();
+    assert!(quote.0 > aside_box.0);
+    // Body lines beside the float are shortened; below they are full.
+    let body: Vec<_> = lines.iter().filter(|l| l.2.starts_with("wrap")).collect();
+    assert!(body.iter().any(|l| {
+        let (_, layout_lines) = (0, l);
+        let _ = layout_lines;
+        l.1 < quote.1 + 54.0
+    }));
+    let beside: Vec<_> = body
+        .iter()
+        .filter(|l| l.1 < aside_box.1 + aside_box.3)
+        .collect();
+    let below: Vec<_> = body
+        .iter()
+        .filter(|l| l.1 > aside_box.1 + aside_box.3 + 10.0)
+        .collect();
+    assert!(!beside.is_empty(), "lines beside the aside: {body:?}");
+    assert!(!below.is_empty(), "lines below the aside");
+    for l in &beside {
+        assert!(
+            l.0 < 45.0,
+            "beside lines stay at the left edge for a right float: {l:?}"
+        );
+    }
+    assert!(
+        below.iter().any(|l| l.0 < 45.0),
+        "below lines return to the full measure"
+    );
+}
+
+#[test]
+fn text_indent_applies_beside_float() {
+    let words = "indent wrap words ".repeat(20);
+    let html = format!("<html><body><p><img src=\"x.png\"/>{words}</p></body></html>");
+    let (layout, _) = layout_html_with_image(
+        &html,
+        "p { margin: 0; text-indent: 30px; } img { float: left; margin: 0 10px 10px 0; }",
+        &page_for_lines(12),
+        (100, 54),
+    );
+    let lines = line_frags(&layout);
+    // Band inset = 110. First line: 40 + 110 + 30 indent; second: 40 + 110.
+    let first = &lines[0];
+    let second = &lines[1];
+    assert!(
+        (first.0 - (40.0 + 110.0 + 30.0)).abs() < 0.5,
+        "first line must carry the indent beside the float: {first:?}"
+    );
+    assert!(
+        (second.0 - (40.0 + 110.0)).abs() < 0.5,
+        "second line beside the float has no indent: {second:?}"
+    );
+}
+
+#[test]
+fn quotes_and_attr_content_items() {
+    let html = "<html><body>\
+                <p class=\"q\">Outer <span class=\"q\">inner</span> tail</p>\
+                <p class=\"n\" data-note=\"N7\">noted</p>\
+                </body></html>";
+    let (layout, _) = layout_html(
+        html,
+        ".q::before { content: open-quote; } .q::after { content: close-quote; } \
+         .n::before { content: attr(data-note) \". \"; }",
+        &page_for_lines(10),
+    );
+    let texts = line_texts_in_order(&layout);
+    let joined = texts.join(" ");
+    assert!(
+        joined.contains("\u{201C}Outer \u{2018}inner\u{2019} tail\u{201D}"),
+        "nested quotes with depth: {joined:?}"
+    );
+    assert!(joined.contains("N7. noted"), "attr() content: {joined:?}");
+}
+
+#[test]
+fn quotes_property_overrides_marks() {
+    let html = "<html><body><p class=\"q\">guillemets</p></body></html>";
+    let (layout, _) = layout_html(
+        html,
+        ".q { quotes: \"\u{AB}\" \"\u{BB}\"; } \
+         .q::before { content: open-quote; } .q::after { content: close-quote; }",
+        &page_for_lines(10),
+    );
+    let joined = line_texts_in_order(&layout).join(" ");
+    assert!(
+        joined.contains("\u{AB}guillemets\u{BB}"),
+        "quotes property must supply the marks: {joined:?}"
+    );
+}
+
+#[test]
+fn decoration_stretches_on_justified_indented_first_line() {
+    // The whole paragraph is underlined; the split-off first line gets
+    // manually justified, and its underline must stretch with it.
+    let words = "stretch these underlined words again and again ".repeat(6);
+    let html = format!("<html><body><p><u>{words}</u></p></body></html>");
+    let (layout, _) = layout_html(
+        &html,
+        "p { margin: 0; text-indent: 40px; text-align: justify; }",
+        &page_for_lines(12),
+    );
+    let first = layout.pages[0]
+        .fragments
+        .iter()
+        .find_map(|f| match &f.kind {
+            FragmentKind::Line(l) => Some((f.rect, l.decorations.clone())),
+            _ => None,
+        })
+        .expect("first line");
+    let (rect, decorations) = first;
+    assert!(!decorations.is_empty(), "underline present");
+    let dec_right = decorations
+        .iter()
+        .map(|d| d.x + d.width)
+        .fold(0.0f32, f32::max);
+    assert!(
+        (dec_right - rect.size.w).abs() < 1.5,
+        "underline must span the justified line: dec_right={dec_right} line_w={}",
+        rect.size.w
+    );
+}

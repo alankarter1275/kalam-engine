@@ -3,20 +3,23 @@
 //!
 //! Break rules honored in v1: forced `break-before/after: page` (+ legacy
 //! aliases), `break-inside: avoid` (retry on a fresh page, else break
-//! anyway), widows/orphans (default 2/2), margins collapsed between
-//! siblings and discarded at page boundaries. `avoid` on before/after
-//! (keep-with-next/previous) is parsed but not yet enforced. A line taller
-//! than a page is placed alone and may overflow (clipped at paint).
+//! anyway), `break-before/after: avoid` (keep-with-next: the anchored
+//! block migrates with its successor's first content), widows/orphans
+//! (default 2/2), margins collapsed between siblings and discarded at page
+//! boundaries. A line taller than a page is placed alone and may overflow
+//! (clipped at paint).
 //!
-//! Floats, v1 scope: `float: left/right` on replaced images only (the book
-//! case — a floated illustration with wrapped text). The float is placed
-//! against the content edge without advancing the flow, and line boxes of
+//! Floats, v1 scope: `float: left/right` on images (intrinsic size) and on
+//! non-replaced blocks with an explicit CSS width (laid out in a detached
+//! sub-paginator and translated into place). The float is placed against
+//! the content edge without advancing the flow, and line boxes of
 //! following inline content shorten beside it — a line sits beside the
-//! float only when it fits entirely above the float's bottom margin edge.
-//! `clear` works on any block. Floats never cross a page boundary: bands
-//! are dropped at every page break. Floated non-replaced blocks stay in
-//! normal flow; text-indent is skipped for segments shaped beside a float;
-//! images and tables ignore float bands (documented degradations).
+//! float only when it fits entirely above the float's bottom margin edge;
+//! first-line indents apply beside floats too. `clear` works on any block.
+//! Floats never cross a page boundary: bands are dropped at every page
+//! break, and a float taller than a page truncates. Shrink-to-fit floated
+//! blocks and floats nested in floats stay in normal flow; images and
+//! tables ignore float bands (documented degradations).
 //!
 //! Hyphenation: `hyphens: auto` content arrives with soft hyphens already
 //! inserted (see `crate::hyphenate`); cosmic-text breaks after them and
@@ -87,6 +90,9 @@ pub(crate) struct Paginator<'f> {
     /// Hyphen glyph (id, advance per em) per font, for visible hyphens at
     /// soft-hyphen line breaks. `None` = font has no '-' glyph.
     hyphen_cache: std::collections::HashMap<cosmic_text::fontdb::ID, Option<(u16, f32)>>,
+    /// True in the detached sub-paginator that lays out a float's content:
+    /// suppresses float interception (floats never nest).
+    in_float: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -157,6 +163,7 @@ impl<'f> Paginator<'f> {
             float_left: None,
             float_right: None,
             hyphen_cache: std::collections::HashMap::new(),
+            in_float: false,
         };
         p.new_page();
         p
@@ -205,21 +212,30 @@ impl<'f> Paginator<'f> {
     /// content box; `width` its content width.
     pub fn place_block(&mut self, block: &BlockBox, x: f32, width: f32) {
         let style = &block.style;
-        // A floated image leaves the flow entirely: it is placed against a
-        // content edge and registers an exclusion band instead of advancing
-        // the cursor. (Floated non-replaced blocks fall through to normal
-        // flow — the documented v1 degradation.)
-        if !block.anonymous {
-            if let (
-                BlockKind::Image {
-                    width: iw,
-                    height: ih,
-                },
-                Some(side),
-            ) = (&block.kind, float_side(style))
-            {
-                self.place_float_image(block, *iw, *ih, x, width, side);
-                return;
+        // A float leaves the flow entirely: it is placed against a content
+        // edge and registers an exclusion band instead of advancing the
+        // cursor. Images use their intrinsic size; non-replaced blocks need
+        // an explicit CSS width (shrink-to-fit floats stay in flow — the
+        // documented v1 degradation). Floats inside floats also stay in
+        // flow.
+        if !block.anonymous && !self.in_float {
+            if let Some(side) = float_side(style) {
+                match &block.kind {
+                    BlockKind::Image {
+                        width: iw,
+                        height: ih,
+                    } => {
+                        self.place_float_image(block, *iw, *ih, x, width, side);
+                        return;
+                    }
+                    BlockKind::Container(_) | BlockKind::Inline(_) => {
+                        if let Some(w) = explicit_width_px(style, width) {
+                            self.place_float_block(block, x, width, w, side);
+                            return;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         let cw = width;
@@ -323,7 +339,10 @@ impl<'f> Paginator<'f> {
                 }
             }
             BlockKind::Inline(inline) => {
-                let indent = if block.anonymous {
+                // Anonymous boxes carry the indent only when they are their
+                // container's first in-flow content (text-indent inherits,
+                // so the parent's value is on the borrowed style).
+                let indent = if block.anonymous && !block.indent_first {
                     0.0
                 } else {
                     text_indent_px(style, inner_w)
@@ -339,7 +358,7 @@ impl<'f> Paginator<'f> {
                     .iter()
                     .any(|b| b.is_some_and(|b| b.y_end > y_flow + 0.01));
                 if band_active {
-                    self.place_inline_with_floats(inline, block, inner_x, inner_w, tag);
+                    self.place_inline_with_floats(inline, block, inner_x, inner_w, indent, tag);
                 } else {
                     let lines = if indent > 0.5 {
                         self.shape_inline_indented(inline, style, inner_w, indent)
@@ -613,6 +632,97 @@ impl<'f> Paginator<'f> {
         }
     }
 
+    /// Place a floated non-replaced block (an aside, a pull quote) with an
+    /// explicit CSS width: its content is laid out in a detached
+    /// sub-paginator the width of the float's margin box, then the
+    /// fragments are translated to the float position and an exclusion
+    /// band is registered. A float taller than a page truncates at the
+    /// first sub-page (documented degradation).
+    fn place_float_block(&mut self, block: &BlockBox, x: f32, cw: f32, w: f32, side: FloatSide) {
+        let style = &block.style;
+        let m = style.get_margin();
+        let (mt, mb, ml, mr) = (
+            resolve_margin(&m.margin_top, cw),
+            resolve_margin(&m.margin_bottom, cw),
+            resolve_margin(&m.margin_left, cw),
+            resolve_margin(&m.margin_right, cw),
+        );
+        // CSS width is the content-box width; the sub-paginator gets the
+        // full margin-box width and re-derives the content box inside it
+        // (percentage padding then resolves against the margin box — an
+        // accepted approximation).
+        let p = style.get_padding();
+        let border = box_decoration_of(style)
+            .map(|d| d.border_widths)
+            .unwrap_or_default();
+        let w = w.max(1.0).min((cw - ml - mr).max(1.0));
+        let margin_box_w = ml
+            + border.left
+            + resolve_padding(&p.padding_left, cw)
+            + w
+            + resolve_padding(&p.padding_right, cw)
+            + border.right
+            + mr;
+
+        let sub_metrics = PageMetrics {
+            size: Size::new(margin_box_w, self.content.size.h),
+            margins: chapbook_core::EdgeSizes::uniform(0.0),
+            dpi_scale: self.page.dpi_scale,
+        };
+        let mut sub = Paginator::new(&mut *self.fonts, sub_metrics);
+        sub.in_float = true;
+        sub.place_block(block, 0.0, margin_box_w);
+        let (mut sub_pages, _) = sub.finish();
+        let fragments = std::mem::take(&mut sub_pages[0].fragments);
+        let height = fragments
+            .iter()
+            .map(|f| f.rect.origin.y + f.rect.size.h)
+            .fold(0.0f32, f32::max);
+        if fragments.is_empty() || height <= 0.0 {
+            return;
+        }
+
+        let mut y0 = self.y
+            + if self.at_page_top() {
+                0.0
+            } else {
+                self.pending_margin
+            };
+        let same_side = match side {
+            FloatSide::Left => &self.float_left,
+            FloatSide::Right => &self.float_right,
+        };
+        if let Some(band) = same_side {
+            y0 = y0.max(band.y_end);
+        }
+        if y0 + mt + height + mb > self.content.size.h + 0.01 && !self.at_page_top() {
+            self.new_page();
+            y0 = 0.0;
+        }
+        let x_pos = match side {
+            FloatSide::Left => x,
+            FloatSide::Right => x + cw - margin_box_w,
+        };
+        for mut fragment in fragments {
+            fragment.rect.origin.x += self.content.origin.x + x_pos;
+            fragment.rect.origin.y += self.content.origin.y + y0 + mt;
+            if let FragmentKind::Line(line) = &fragment.kind {
+                let page_loc = self.page_locators.last_mut().unwrap();
+                *page_loc = (*page_loc).min(line.locator_start);
+            }
+            self.pages.last_mut().unwrap().fragments.push(fragment);
+            self.placed_on_page += 1;
+        }
+        let band = FloatBand {
+            width: margin_box_w,
+            y_end: (y0 + mt + height + mb).min(self.content.size.h),
+        };
+        match side {
+            FloatSide::Left => self.float_left = Some(band),
+            FloatSide::Right => self.float_right = Some(band),
+        }
+    }
+
     /// `clear`: move the cursor below the named floats' bottom edges.
     fn apply_clear(&mut self, left: bool, right: bool) {
         let mut target = self.y;
@@ -661,19 +771,21 @@ impl<'f> Paginator<'f> {
     /// floats: shape at the reduced measure, emit the lines that fit above
     /// the float's bottom edge, split the IFC there, and repeat until the
     /// bands expire — the remainder flows through the normal path (which
-    /// restores widow/orphan handling). Text-indent is skipped for segments
-    /// shaped beside a float (v1).
+    /// restores widow/orphan handling). A first-line indent narrows the
+    /// first emitted line's measure like the normal indent path does.
     fn place_inline_with_floats(
         &mut self,
         inline: &InlineContent,
         block: &BlockBox,
         x: f32,
         inner_w: f32,
+        indent: f32,
         tag: u64,
     ) {
         self.commit_margin();
         let min_measure = font_size_px(&block.style) * 2.0;
         let mut content = inline.clone();
+        let mut indent_pending = indent.max(0.0);
         loop {
             if content.runs.is_empty() {
                 return;
@@ -681,7 +793,11 @@ impl<'f> Paginator<'f> {
             let y = self.y;
             let (l, r, edge) = self.bands_at(y);
             if l == 0.0 && r == 0.0 {
-                let lines = self.shape_inline(&content, &block.style, inner_w);
+                let lines = if indent_pending > 0.5 {
+                    self.shape_inline_indented(&content, &block.style, inner_w, indent_pending)
+                } else {
+                    self.shape_inline(&content, &block.style, inner_w)
+                };
                 self.place_lines(lines, block, x, tag);
                 return;
             }
@@ -690,6 +806,46 @@ impl<'f> Paginator<'f> {
                 // Not enough measure beside the float: drop below it.
                 self.y = edge.min(self.content.size.h);
                 continue;
+            }
+            // First-line indent beside a float: split the first line off at
+            // the narrowed measure and emit it; the remainder re-enters the
+            // loop with the indent consumed.
+            if indent_pending > 0.5 {
+                let indent = indent_pending.min(avail * 0.8);
+                indent_pending = 0.0;
+                let probe = self.shape_inline(&content, &block.style, avail - indent);
+                let Some(first) = probe.first() else { return };
+                if self.y + first.height > edge + 0.01 {
+                    // The indented first line doesn't fit beside the float;
+                    // drop below and re-run with the indent restored.
+                    indent_pending = indent;
+                    self.y = edge.min(self.content.size.h);
+                    continue;
+                }
+                if first.line_index == 0 && first.byte_end > 0 {
+                    if probe.len() == 1 {
+                        let mut lines = probe;
+                        lines[0].x_indent += indent;
+                        self.emit_lines(&lines, x + l, tag);
+                        return;
+                    }
+                    let split = first.byte_end;
+                    let (first_part, rest) = split_inline(&content, split);
+                    let mut lines = self.shape_inline(&first_part, &block.style, avail - indent);
+                    if align_for(&block.style) == Some(cosmic_text::Align::Justified) {
+                        for line in &mut lines {
+                            justify_line(line, avail - indent);
+                        }
+                    }
+                    for line in &mut lines {
+                        line.x_indent += indent;
+                    }
+                    self.emit_lines(&lines, x + l, tag);
+                    content = rest;
+                    continue;
+                }
+                // Degenerate first line (leading <br>): fall through with
+                // the indent dropped.
             }
             let lines = self.shape_inline(&content, &block.style, avail);
             if lines.is_empty() {
@@ -1371,7 +1527,7 @@ impl Paginator<'_> {
 
         // --- Table width: shrink-to-fit unless an explicit width is set ---
         let available = (width - total_spacing).max(1.0);
-        let explicit = table_width_px(style, width).map(|w| (w - total_spacing).max(1.0));
+        let explicit = explicit_width_px(style, width).map(|w| (w - total_spacing).max(1.0));
         let sum_min: f32 = col_min.iter().sum();
         let sum_max: f32 = col_max.iter().sum();
         let target = match explicit {
@@ -1649,9 +1805,9 @@ impl Paginator<'_> {
     }
 }
 
-/// Explicit width of a table, resolved against the containing block, when
-/// specified.
-fn table_width_px(style: &ComputedValues, containing: f32) -> Option<f32> {
+/// Explicit CSS width of a block (a table, a floated aside), resolved
+/// against the containing block, when specified.
+fn explicit_width_px(style: &ComputedValues, containing: f32) -> Option<f32> {
     use style::values::generics::length::GenericSize;
     match &style.get_position().width {
         GenericSize::LengthPercentage(lp) => Some(resolve_lp(&lp.0, containing)),
@@ -1663,13 +1819,19 @@ fn table_width_px(style: &ComputedValues, containing: f32) -> Option<f32> {
 /// width — stretching (split-off first lines of justified paragraphs,
 /// which cosmic-text treats as buffer-last and never justifies) or
 /// tightening (a line that grew a visible hyphen past the measure).
-/// Decoration spans on the line are not re-stretched (rare; documented).
+/// Decoration spans move and stretch with the spaces they cover.
 fn justify_line(line: &mut ShapedLine, target: f32) {
     let extra = target - line.width;
     if extra.abs() <= 0.1 || line.spaces.is_empty() {
         return;
     }
     let add = extra / line.spaces.len() as f32;
+    // Pre-shift x of each space glyph, for adjusting decoration spans.
+    let space_xs: Vec<f32> = line
+        .spaces
+        .iter()
+        .map(|&(r, g)| line.runs[r].glyphs[g].x)
+        .collect();
     let mut spaces = line.spaces.iter().peekable();
     let mut shift = 0.0f32;
     for (run_idx, run) in line.runs.iter_mut().enumerate() {
@@ -1681,6 +1843,15 @@ fn justify_line(line: &mut ShapedLine, target: f32) {
                 spaces.next();
             }
         }
+    }
+    for dec in &mut line.decorations {
+        let before = space_xs.iter().filter(|x| **x < dec.x - 0.01).count();
+        let within = space_xs
+            .iter()
+            .filter(|x| **x >= dec.x - 0.01 && **x < dec.x + dec.width - 0.01)
+            .count();
+        dec.x += add * before as f32;
+        dec.width = (dec.width + add * within as f32).max(0.0);
     }
     line.width = target;
 }

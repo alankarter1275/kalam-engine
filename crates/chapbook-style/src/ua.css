@@ -120,6 +120,9 @@ mark {
   color: #000;
 }
 
+q::before { content: open-quote; }
+q::after  { content: close-quote; }
+
 sub {
   vertical-align: sub;
   font-size: 0.83em;

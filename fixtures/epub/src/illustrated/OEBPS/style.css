@@ -72,3 +72,13 @@ img {
   hyphens: auto;
   text-align: justify;
 }
+
+.pulled {
+  float: right;
+  width: 150px;
+  margin: 0 0 8px 10px;
+  padding: 4px 8px;
+  border-left: 2px solid #8b5a2b;
+  background-color: #f2ead9;
+  font-style: italic;
+}

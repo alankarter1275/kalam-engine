@@ -99,11 +99,14 @@ stays that way.
   through our existing `selectors::Element` impl with standard
   specificity/order rules. `hyphens` (also Gecko-only, inherited) rides in
   the same sidecar.
-  **Floats:** `float: left/right` on images places the image against a
-  content edge and shortens the line boxes of following inline content
+  **Floats:** `float: left/right` on images (intrinsic size) and on
+  non-replaced blocks with an explicit CSS width (laid out in a detached
+  sub-paginator, fragments translated into place) places the float against
+  a content edge and shortens the line boxes of following inline content
   beside it (the IFC is split at the float's bottom edge and re-shaped —
-  the same machinery as first-line indents); `clear` works on any block;
-  floats never cross a page boundary.
+  the same machinery as first-line indents, which also apply beside
+  floats); `clear` works on any block; floats never cross a page
+  boundary.
   **Hyphenation:** `hyphens: auto` inserts soft hyphens at embedded en-US
   Knuth-Liang dictionary points before shaping — cosmic-text's line breaker
   already treats U+00AD as a break opportunity and its shaper renders it
@@ -156,9 +159,10 @@ types use. MSRV 1.89 (stylo 0.20's floor), stable toolchain — no nightly.
 
 Fixed-layout EPUB (detected, rejected with a clear error), JavaScript
 (spec-permitted omission for reading systems), MathML, vertical writing
-modes, floated non-replaced blocks (floated *images* lay out for real;
-other floated boxes stay in flow), absolute positioning (treated as
-static), media overlays, DRM.
+modes, shrink-to-fit floated blocks (floated images and floated blocks
+with an explicit width lay out for real; the rest stay in flow), CSS
+counters in generated content, absolute positioning (treated as static),
+media overlays, DRM.
 
 ## Milestones
 
