@@ -44,7 +44,7 @@ survive relayout, font-size changes, and even replaced editions (see
 `docs/LOCATORS.md`) — and exchange them as EPUB CFIs (`chapbook cfi`). Embedded fonts (including obfuscated ones), images,
 and text decorations render, with light/sepia/dark themes (sepia recolors
 defaults; dark forces readability), and press-drag text selection
-(highlighting today; copy/annotations will build on it). Comics and PDFs work too:
+with copy-to-clipboard (`c`; annotations will build on it). Comics and PDFs work too:
 local CBZ archives, OPDS-PSE page streams, and PDFs (rasterized with the
 pure-Rust hayro engine, with a text layer so selection works there too)
 read in the same viewers with page-unit positions — their pages load and

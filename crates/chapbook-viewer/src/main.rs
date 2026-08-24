@@ -4,9 +4,9 @@
 //!
 //! Sources: an `.epub` or `.cbz` path, or an OPDS URL (page-streamed
 //! comic). Keys: Right/PageDown/Space next page · Left/PageUp previous ·
-//! n/p unit · +/- font size · t theme (light/sepia/dark) · q/Escape quit.
-//! Mouse or touch: press-drag over text selects (highlight only, for
-//! now); a tap clears. Touch tracks the first finger only.
+//! n/p unit · +/- font size · t theme (light/sepia/dark) · c copy
+//! selection · q/Escape quit. Mouse or touch: press-drag over text
+//! selects; a tap clears. Touch tracks the first finger only.
 //!
 //! Image-book units (comic pages, PDF rasterizations) load on the
 //! session's worker thread; the loader wakes this shell through the event
@@ -52,6 +52,9 @@ fn main() {
         cursor: (0.0, 0.0),
         selecting: false,
         active_touch: None,
+        clipboard: arboard::Clipboard::new()
+            .map_err(|e| eprintln!("chapbook-viewer: no clipboard: {e}"))
+            .ok(),
     };
     event_loop.run_app(&mut app).expect("event loop run");
     app.session.save_position();
@@ -70,9 +73,25 @@ struct App {
     /// events, not synthesized pointer events (GTK's gestures abstract
     /// that; here it's manual). First finger wins; others are ignored.
     active_touch: Option<u64>,
+    /// Kept for the process's life: on X11 the clipboard is served by this
+    /// handle's background thread, so dropping it drops what we copied.
+    /// `None` when the platform has no clipboard (headless).
+    clipboard: Option<arboard::Clipboard>,
 }
 
 impl App {
+    /// Copy the selection to the system clipboard. Silent when nothing is
+    /// selected or the selection covers no text (a comic page).
+    fn copy_selection(&mut self) {
+        let (Some(clipboard), Some(text)) = (self.clipboard.as_mut(), self.session.selected_text())
+        else {
+            return;
+        };
+        if let Err(e) = clipboard.set_text(text) {
+            eprintln!("chapbook-viewer: copy failed: {e}");
+        }
+    }
+
     fn redraw(&mut self) {
         let Some(window) = self.window.clone() else {
             return;
@@ -270,6 +289,10 @@ impl ApplicationHandler<()> for App {
                         "+" | "=" => self.session.adjust_font(2.0),
                         "-" => self.session.adjust_font(-2.0),
                         "t" => self.session.cycle_theme(),
+                        "c" => {
+                            self.copy_selection();
+                            return;
+                        }
                         _ => return,
                     },
                     _ => return,

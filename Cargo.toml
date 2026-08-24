@@ -87,6 +87,12 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # Viewer
 winit = "0.30"
 softbuffer = "0.4"
+# Clipboard for the winit shell (GTK has gdk's). Text only — the image-data
+# default feature would pull a second `image` build; wayland-data-control
+# covers Wayland alongside X11.
+arboard = { version = "3", default-features = false, features = [
+    "wayland-data-control",
+] }
 
 # Misc
 slotmap = "1"
