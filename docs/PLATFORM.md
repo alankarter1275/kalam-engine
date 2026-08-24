@@ -80,8 +80,35 @@ Panel colour is pipeline policy rather than per-shell improvisation:
 is a page metric: `PageMetrics::rotation` turns the output on its way to
 the buffer without touching layout, and `panel_to_page` is its inverse for
 input, so a rotated shell hands the session panel coordinates and the
-session untwists them. Packing grey levels into a device's buffer layout
-stays with the shell — only it knows the panel's word order.
+session untwists them. Both live in chapbook-paint over plain RGBA rows, so
+every backend applies the same policy — they belong to the target, not to
+the rasterizer. Packing grey levels into a device's buffer layout stays
+with the shell, which is the only party that knows the panel's word order.
+
+**A second backend exists, and it earned its keep.**
+`chapbook-render-vello` rasterizes the same display list on the GPU through
+vello and wgpu. The translation is a transcription: vello's glyph API takes
+pre-positioned glyph ids, so nothing is re-shaped on the way, and device
+scale is a scene transform rather than scaled coordinates. A parity test
+compares the backends by normalizing total ink away and finding the shift
+that best aligns each page's row and column profiles — displacement is what
+can actually go wrong across a seam, and that measure catches a 2px error
+while tolerating the antialiasing difference that centroid and per-cell
+coverage both mistake for movement.
+
+It found a real bug on its first honest comparison: every line of text was
+rendering up to 1.6px above the baseline layout computed, because swash
+applies cosmic-text's vertical sub-pixel bin in the opposite direction. One
+backend could not see it — the pages looked fine and the goldens encoded
+the error. That is the argument for a second implementation, stated better
+than any amount of design review could.
+
+Two smaller findings came with it: reading a face out of the session's font
+database copies its bytes, so every backend ends up caching blobs by
+`fontdb::ID` and the seam could hand out font data directly; and the ops
+list is exactly three variants (`FillRect`, `GlyphRun`, `Image`) rather
+than the six this document's sibling once claimed, because borders, rules,
+and decorations all lower to fills first.
 
 One increment left: damage beyond selections. A page turn that only moves a
 footer, or an image landing in a fixed rect, could both state their region

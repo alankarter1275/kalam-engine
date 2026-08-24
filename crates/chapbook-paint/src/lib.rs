@@ -9,6 +9,7 @@
 mod display;
 mod images;
 mod page;
+mod panel;
 
 pub use display::{build_display_list, DisplayList, DisplayOp, Frame, FrameIntent, Selection};
 pub use images::{ImageStore, StoredImage};
@@ -16,3 +17,4 @@ pub use page::{
     image_page, BoxDecoration, Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment,
     Page,
 };
+pub use panel::{quantize, rotate};

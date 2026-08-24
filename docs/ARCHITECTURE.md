@@ -137,14 +137,25 @@ stays that way.
 - **chapbook-paint** — owns the format-neutral page model (`Page`/`Fragment`,
   fragments tagged with an opaque producer-defined `u64`, never a DOM type),
   the `Frame` a backend consumes (ops plus a `FrameIntent` and optional
-  damage rect, so an e-ink panel can choose a refresh mode), and the dumb
-  display ops: `FillRect`, `Border`,
-  `GlyphRun { fontdb::ID, glyphs }` (no re-shaping at paint time), `Image`,
-  `DecorationLine`, `PushClip`/`PopClip`. Layout produces into it; image
+  damage rect, so an e-ink panel can choose a refresh mode), the panel
+  policy every backend shares (`quantize` for grey panels, `rotate` for
+  orientation — properties of the target, not of the rasterizer), and the
+  dumb display ops. There are exactly three:
+  `FillRect`, `GlyphRun { fontdb::ID, glyphs }` (no re-shaping at paint
+  time), and `Image`. Borders, box backgrounds, rules, and text
+  decorations all lower to `FillRect` before they get here, which is what
+  keeps a backend small. Layout produces into it; image
   formats will too.
 - **chapbook-render-tinyskia** — swash glyph raster cache, `image`-decoded
-  resources, scale applied here, plus `quantize` for panels that can't show
-  full color (grey levels, optional Floyd–Steinberg dithering).
+  resources, scale applied here. Glyph baselines snap to whole device
+  pixels (swash applies cosmic-text's vertical sub-pixel bin in the
+  opposite direction, so the true fraction lifts every line); horizontal
+  sub-pixel positioning is kept.
+- **chapbook-render-vello** — the GPU backend, over the same display list:
+  vello's glyph API takes pre-positioned glyph ids, so a `GlyphRun`
+  transcribes onto it, and device scale becomes a scene transform. Renders
+  offscreen through wgpu with readback. Its parity test against the CPU
+  backend is what keeps the seam a contract rather than a data structure.
 - **chapbook-opds** — blocking `ureq` + rustls (no async runtime). OPDS 1.2
   Atom as the canonical dialect, parsed at the XML level with namespace-aware
   `quick-xml` (NOT `atom_syndication`/`feed-rs`: both silently drop the

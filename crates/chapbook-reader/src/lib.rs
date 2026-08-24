@@ -1427,11 +1427,20 @@ impl Session {
         let images = self.images.get(&spine).unwrap_or(&self.empty_images);
         self.renderer
             .render(&dl, &mut self.fonts, images, scale, &mut pixmap);
-        chapbook_render_tinyskia::quantize(&mut pixmap, self.pixel_format);
+        // Panel policy is backend-neutral: the same conversion a GPU shell
+        // would apply to its own pixels.
+        let (w, h) = (pixmap.width(), pixmap.height());
+        chapbook_paint::quantize(pixmap.data_mut(), w, h, self.pixel_format);
         if metrics.rotation == Rotation::None {
             return Some(pixmap);
         }
-        chapbook_render_tinyskia::rotate(&pixmap, metrics.rotation)
+        let turned = chapbook_paint::rotate(pixmap.data(), w, h, metrics.rotation);
+        let (tw, th) = if metrics.rotation.swaps_axes() {
+            (h, w)
+        } else {
+            (w, h)
+        };
+        tiny_skia::Pixmap::from_vec(turned, tiny_skia::IntSize::from_wh(tw, th)?)
     }
 
     // ---- Persistence ----

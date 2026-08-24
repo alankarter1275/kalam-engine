@@ -22,7 +22,7 @@ use vello::peniko::{
 use vello::wgpu;
 use vello::{AaConfig, Glyph, RenderParams, Renderer, RendererOptions, Scene};
 
-use chapbook_core::{Rgba, Size};
+use chapbook_core::{PixelFormat, Rgba, Rotation, Size};
 use chapbook_paint::{DisplayList, DisplayOp, ImageStore};
 
 /// A rasterized page in straight (non-premultiplied) RGBA8.
@@ -34,6 +34,28 @@ pub struct RenderedPage {
 }
 
 impl RenderedPage {
+    /// Apply panel color policy — the same conversion the CPU backend
+    /// gets, because it belongs to the target rather than the rasterizer.
+    pub fn quantize(&mut self, format: PixelFormat) {
+        chapbook_paint::quantize(&mut self.rgba, self.width, self.height, format);
+    }
+
+    /// Turn the page for a panel mounted in another orientation. Quarter
+    /// turns swap the page's dimensions.
+    pub fn rotate(self, rotation: Rotation) -> RenderedPage {
+        let rgba = chapbook_paint::rotate(&self.rgba, self.width, self.height, rotation);
+        let (width, height) = if rotation.swaps_axes() {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        };
+        RenderedPage {
+            width,
+            height,
+            rgba,
+        }
+    }
+
     /// The pixel at `(x, y)`, or `None` outside the page.
     pub fn pixel(&self, x: u32, y: u32) -> Option<[u8; 4]> {
         if x >= self.width || y >= self.height {
