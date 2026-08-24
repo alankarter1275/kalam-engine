@@ -1,0 +1,20 @@
+[package]
+name = "chapbook-render-vello"
+description = "GPU rasterization backend for chapbook display lists, via vello + wgpu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+chapbook-paint = { workspace = true }
+cosmic-text = { workspace = true }
+vello = { workspace = true }
+pollster = { workspace = true }
+
+[dev-dependencies]
+chapbook-reader = { workspace = true }
+chapbook-render-tinyskia = { workspace = true }
+tiny-skia = { workspace = true }

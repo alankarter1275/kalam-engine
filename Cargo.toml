@@ -8,6 +8,7 @@ members = [
     "crates/chapbook-layout",
     "crates/chapbook-paint",
     "crates/chapbook-render-tinyskia",
+    "crates/chapbook-render-vello",
     "crates/chapbook-opds",
     "crates/chapbook-cbz",
     "crates/chapbook-pdf",
@@ -34,6 +35,7 @@ chapbook-style = { path = "crates/chapbook-style" }
 chapbook-layout = { path = "crates/chapbook-layout" }
 chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
+chapbook-render-vello = { path = "crates/chapbook-render-vello" }
 chapbook-opds = { path = "crates/chapbook-opds" }
 chapbook-cbz = { path = "crates/chapbook-cbz" }
 chapbook-pdf = { path = "crates/chapbook-pdf" }
@@ -62,6 +64,11 @@ atomic_refcell = "0.1"
 cosmic-text = "0.19"
 hyphenation = { version = "0.8", features = ["embed_en-us"] }
 tiny-skia = "0.12"
+# GPU backend. A second rasterizer over the same display list, to keep the
+# paint seam honest — vello maps glyph runs onto pre-shaped glyphs directly,
+# so nothing is re-shaped on the way to the GPU.
+vello = "0.10"
+pollster = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "rayon"] }
 
 # EPUB
