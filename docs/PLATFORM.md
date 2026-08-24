@@ -51,43 +51,41 @@ This isn't aspirational; the seams have been tested twice by accident.
 The gap list is therefore almost entirely **additive** — missing APIs and
 unproven targets, not decisions to undo. The exceptions are called out.
 
-## 1. The render seam (highest priority — and it has a clock)
+## 1. The render seam (closed)
 
-`Session::display_list()` now returns the paint-neutral ops, and
-`paint_resources()` hands back the font database its glyph runs name faces
-in plus the image store its image ops key into — enough for a shell to
-reproduce `render()` without tiny-skia, which a test asserts pixel-for-pixel.
-`render()` remains the convenience path. That unblocks GPU backends,
-platform canvases, and export harnesses.
+This was the gap with a clock on it, and it was paid at two in-tree shells
+rather than at five across an FFI boundary.
 
-Frames carry their own provenance too: `Session::frame()` returns the ops
-with a `FrameIntent` — repaint, selection, annotation, content arrived,
-page turn, unit change, reflow — and, for a selection change, the damaged
-region. The intents are ordered, so when several things happen before a
-frame is taken the strongest one describes it, and a backend that only
-understands "small" versus "everything" can compare rather than match.
-Damage is stated only where it is cheaper than repainting; `None` means the
-whole page, which is always correct and sometimes pessimistic. Extending it
-past selections (a page turn that only moves a footer, an image landing in
-a fixed rect) is the obvious next increment.
+`Session::frame()` returns the paint-neutral ops — the documented backend
+contract — and `paint_resources()` hands back the font database its glyph
+runs name faces in plus the image store its image ops key into, which is
+everything a shell needs to rasterize for itself: a GPU backend, a platform
+canvas, an e-ink panel, an exporter. A test reproduces `render()` through
+that public API and asserts the pixels match, which is what makes it a seam
+rather than an accessor. `render()` remains the convenience path.
+
+A frame also carries its own provenance. `FrameIntent` — repaint,
+selection, annotation, content arrived, page turn, unit change, reflow —
+tells a panel whether it is looking at a full flash or a fast partial
+refresh, and only the engine can know which. The intents are ordered by how
+much of the page they disturb, so several changes before a frame collapse
+to the strongest, and a backend that only distinguishes "small" from
+"everything" can compare rather than match every variant. Damage is stated
+where it beats repainting, which today means selection changes; `None`
+means the whole page, always correct and sometimes pessimistic.
 
 Panel colour is pipeline policy rather than per-shell improvisation:
 `PixelFormat::Grey { levels, dither }` quantizes luminance to a panel's
-2..=16 steps, optionally diffusing the error Floyd–Steinberg so gradients
-survive. `Session::render` applies it; a shell rasterizing a frame itself
-calls the same `quantize`. Packing those levels into a device's own buffer
-layout stays with the shell, which is the only party that knows the panel's
-word order.
+2..=16 steps, diffusing the error Floyd–Steinberg when asked. Orientation
+is a page metric: `PageMetrics::rotation` turns the output on its way to
+the buffer without touching layout, and `panel_to_page` is its inverse for
+input, so a rotated shell hands the session panel coordinates and the
+session untwists them. Packing grey levels into a device's buffer layout
+stays with the shell — only it knows the panel's word order.
 
-Still required:
-
-- **Rotation/orientation** as a first-class metric rather than a shell
-  concern.
-
-**Why now:** there are two shells and both are in-tree, so reshaping this
-costs an afternoon. At five shells — one of them across an FFI boundary in
-another language — it costs a migration. This is the one gap whose price is
-actively rising.
+One increment left: damage beyond selections. A page turn that only moves a
+footer, or an image landing in a fixed rect, could both state their region
+and don't.
 
 ## 2. The reading model above the page
 
@@ -207,15 +205,17 @@ The unglamorous half, and the real distance between "modular codebase" and
 
 ## Priorities
 
-1. **Render seam (§1)** — rising cost, unlocks every device target.
-2. **Navigation, search, and the rest of annotations (§2)** — table stakes;
+1. **Navigation, search, and the rest of annotations (§2)** — table stakes;
    the substrate exists and highlights proved it works; prevents divergent
    reinvention across shells.
-3. **FFI boundary (§3)** — gate on the largest device markets; forces the
+2. **FFI boundary (§3)** — gate on the largest device markets; forces the
    session API into SDK shape.
-4. **Sync clients (§5)** — belongs to the platform, not to each app.
-5. **Hygiene (§6)** — continuous, never urgent, decides whether any of this
+3. **Sync clients (§5)** — belongs to the platform, not to each app.
+4. **Hygiene (§6)** — continuous, never urgent, decides whether any of this
    is usable by anyone else.
+
+The render seam (§1) came first and is closed; what remains of it — damage
+for intents other than selection — is an increment, not a gate.
 
 ## Ceilings to decide deliberately
 

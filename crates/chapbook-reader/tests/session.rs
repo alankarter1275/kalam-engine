@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use chapbook_core::{BookKind, EdgeSizes, PageMetrics, Size};
+use chapbook_core::{BookKind, EdgeSizes, PageMetrics, Rotation, Size};
 use chapbook_reader::Session;
 
 fn fixture(rel: &str) -> String {
@@ -81,6 +81,7 @@ fn metrics() -> PageMetrics {
         size: Size::new(600.0, 800.0),
         margins: EdgeSizes::uniform(40.0),
         dpi_scale: 1.0,
+        rotation: Rotation::None,
     }
 }
 
@@ -479,5 +480,44 @@ fn a_grey_panel_gets_grey_pages() {
     assert_eq!(
         s.frame().unwrap().intent,
         chapbook_reader::chapbook_paint::FrameIntent::Repaint
+    );
+}
+
+#[test]
+fn a_turned_panel_gets_turned_pixels_and_untwisted_input() {
+    let mut s = open_isolated("epub-rotation", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    let upright = s.render().expect("page renders");
+    assert_eq!((upright.width(), upright.height()), (600, 800));
+
+    // A selection over the heading, in page space.
+    assert!(s.selection_begin(100.0, 70.0));
+    s.selection_drag(400.0, 70.0);
+    let expected = s.selected_range().expect("selection over the heading");
+    s.selection_clear();
+
+    // Same page, quarter-turned onto the panel. Layout is untouched, so
+    // only the buffer changes shape.
+    s.set_metrics(metrics().with_rotation(Rotation::Quarter));
+    let turned = s.render().expect("page renders");
+    assert_eq!((turned.width(), turned.height()), (800, 600));
+    assert_eq!(
+        s.page_count(),
+        {
+            let mut plain = open_isolated("epub-rotation-plain", &fixture("epub/illustrated.epub"));
+            plain.set_metrics(metrics());
+            plain.page_count()
+        },
+        "a turn does not reflow"
+    );
+
+    // Input arrives in panel coordinates: the page point (x, y) sits at
+    // (h - y, x) after a clockwise quarter turn.
+    assert!(s.selection_begin(800.0 - 70.0, 100.0));
+    s.selection_drag(800.0 - 70.0, 400.0);
+    assert_eq!(
+        s.selected_range(),
+        Some(expected),
+        "the same words, reached through the turned panel"
     );
 }

@@ -12,7 +12,7 @@ use tiny_skia::{Pixmap, PixmapPaint, PremultipliedColorU8};
 // tiny-skia dependency.
 pub use tiny_skia;
 
-use chapbook_core::{PixelFormat, Rect, Rgba};
+use chapbook_core::{PixelFormat, Rect, Rgba, Rotation};
 use chapbook_paint::{DisplayList, DisplayOp, ImageStore};
 
 pub struct Renderer {
@@ -262,6 +262,41 @@ pub fn quantize(pixmap: &mut Pixmap, format: PixelFormat) {
     }
 }
 
+/// Turn a rasterized page for a panel mounted in a different orientation,
+/// clockwise. Quarter turns swap the pixmap's dimensions;
+/// [`Rotation::None`] copies. `None` only if the turned size is degenerate.
+///
+/// The inverse for input is [`chapbook_core::PageMetrics::panel_to_page`],
+/// so a shell that turns its output here reads pointer coordinates back
+/// through that.
+pub fn rotate(pixmap: &Pixmap, rotation: Rotation) -> Option<Pixmap> {
+    if rotation == Rotation::None {
+        return Some(pixmap.clone());
+    }
+    let (w, h) = (pixmap.width() as usize, pixmap.height() as usize);
+    let (dw, dh) = if rotation.swaps_axes() {
+        (h, w)
+    } else {
+        (w, h)
+    };
+    let mut out = Pixmap::new(dw as u32, dh as u32)?;
+    let src = pixmap.data();
+    let dst = out.data_mut();
+    for y in 0..h {
+        for x in 0..w {
+            let (dx, dy) = match rotation {
+                Rotation::None => (x, y),
+                Rotation::Quarter => (h - 1 - y, x),
+                Rotation::Half => (w - 1 - x, h - 1 - y),
+                Rotation::ThreeQuarter => (y, w - 1 - x),
+            };
+            let (from, to) = ((y * w + x) * 4, (dy * dw + dx) * 4);
+            dst[to..to + 4].copy_from_slice(&src[from..from + 4]);
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,5 +402,60 @@ mod tests {
                 px[0]
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+
+    /// A 2x1 pixmap: red at (0,0), blue at (1,0).
+    fn pair() -> Pixmap {
+        let mut pixmap = Pixmap::new(2, 1).unwrap();
+        let data = pixmap.data_mut();
+        data[0..4].copy_from_slice(&[255, 0, 0, 255]);
+        data[4..8].copy_from_slice(&[0, 0, 255, 255]);
+        pixmap
+    }
+
+    fn at(pixmap: &Pixmap, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * pixmap.width() + x) * 4) as usize;
+        pixmap.data()[i..i + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn a_quarter_turn_swaps_the_axes() {
+        let turned = rotate(&pair(), Rotation::Quarter).unwrap();
+        assert_eq!((turned.width(), turned.height()), (1, 2));
+        // Clockwise: the left pixel goes to the top.
+        assert_eq!(at(&turned, 0, 0), [255, 0, 0, 255]);
+        assert_eq!(at(&turned, 0, 1), [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn a_half_turn_keeps_the_shape_and_reverses_it() {
+        let turned = rotate(&pair(), Rotation::Half).unwrap();
+        assert_eq!((turned.width(), turned.height()), (2, 1));
+        assert_eq!(at(&turned, 0, 0), [0, 0, 255, 255]);
+        assert_eq!(at(&turned, 1, 0), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn four_quarter_turns_come_back() {
+        let original = pair();
+        let mut turned = original.clone();
+        for _ in 0..4 {
+            turned = rotate(&turned, Rotation::Quarter).unwrap();
+        }
+        assert_eq!(turned.data(), original.data());
+    }
+
+    #[test]
+    fn none_is_a_copy() {
+        let original = pair();
+        assert_eq!(
+            rotate(&original, Rotation::None).unwrap().data(),
+            original.data()
+        );
     }
 }

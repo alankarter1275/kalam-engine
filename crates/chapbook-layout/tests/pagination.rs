@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use chapbook_core::{EdgeSizes, PageMetrics, ReadingSettings, Size};
+use chapbook_core::{EdgeSizes, PageMetrics, ReadingSettings, Rotation, Size};
 use chapbook_dom::Document;
 use chapbook_layout::ChapterLayout;
 use chapbook_paint::FragmentKind;
@@ -21,6 +21,7 @@ fn page_for_lines(lines: u32) -> PageMetrics {
         size: Size::new(600.0, lines as f32 * 27.0 + 80.0),
         margins: EdgeSizes::uniform(40.0),
         dpi_scale: 1.0,
+        rotation: Rotation::None,
     }
 }
 
@@ -830,6 +831,7 @@ fn hyphens_auto_breaks_words_with_visible_hyphen() {
         size: Size::new(240.0, 500.0),
         margins: EdgeSizes::uniform(40.0),
         dpi_scale: 1.0,
+        rotation: Rotation::None,
     };
     let (with, _) = layout_html(&html, "p { margin: 0; hyphens: auto; }", &narrow);
     let (without, _) = layout_html(&html, "p { margin: 0; }", &narrow);
@@ -869,6 +871,7 @@ fn authored_soft_hyphen_respected_without_hyphens_auto() {
         size: Size::new(150.0, 500.0),
         margins: EdgeSizes::uniform(40.0),
         dpi_scale: 1.0,
+        rotation: Rotation::None,
     };
     let (layout, _) = layout_html(html, "p { margin: 0; }", &narrow);
     let texts = line_texts_in_order(&layout);
@@ -887,6 +890,7 @@ fn hyphenated_justified_line_holds_the_measure() {
         size: Size::new(260.0, 600.0),
         margins: EdgeSizes::uniform(40.0),
         dpi_scale: 1.0,
+        rotation: Rotation::None,
     };
     let (layout, _) = layout_html(
         &html,

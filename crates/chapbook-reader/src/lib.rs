@@ -28,7 +28,7 @@ use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
     resolve_in_text, BookKind, ChapbookError, LayeredLocator, PageMetrics, PixelFormat, Point,
-    Publication, ReadingSettings, Rect, Result, SpineItem,
+    Publication, ReadingSettings, Rect, Result, Rotation, SpineItem,
 };
 use chapbook_layout::ChapterLayout;
 use chapbook_library::AnnotationKind;
@@ -433,6 +433,16 @@ impl Session {
         if self.metrics == Some(metrics) {
             return;
         }
+        // A turn alone changes the panel, not the layout: keep the cached
+        // pages and just repaint through the new orientation.
+        if self
+            .metrics
+            .is_some_and(|current| current.same_layout(&metrics))
+        {
+            self.metrics = Some(metrics);
+            self.mark(FrameIntent::Relayout);
+            return;
+        }
         let had = self.metrics.is_some();
         let locator = self.current_offset();
         self.metrics = Some(metrics);
@@ -529,8 +539,9 @@ impl Session {
 
     // ---- Selection ----
 
-    /// Begin a selection at a page-space point (CSS px). Returns whether
-    /// the point hit text.
+    /// Begin a selection at a point in panel coordinates (CSS px, and
+    /// identical to page space unless the metrics carry a rotation).
+    /// Returns whether the point hit text.
     pub fn selection_begin(&mut self, x: f32, y: f32) -> bool {
         self.selection = None;
         self.mark(FrameIntent::Selection);
@@ -615,6 +626,8 @@ impl Session {
     }
 
     fn offset_at(&mut self, x: f32, y: f32) -> Option<u32> {
+        // Input is in panel space; hit-testing happens in page space.
+        let (x, y) = self.metrics.map_or((x, y), |m| m.panel_to_page(x, y));
         let (spine, page) = (self.spine, self.page);
         let layout = self.layout_unit(spine)?;
         layout.pages.get(page)?.offset_at(Point::new(x, y))
@@ -930,8 +943,10 @@ impl Session {
     }
 
     /// Rasterize the current page at the current metrics with the bundled
-    /// CPU backend — the convenience path over [`Session::display_list`].
-    /// `None` under the same conditions.
+    /// CPU backend — the convenience path over [`Session::frame`]. The
+    /// result is in panel orientation and panel color: the metrics'
+    /// rotation and the session's pixel format are both applied here.
+    /// `None` under the same conditions as a frame.
     pub fn render(&mut self) -> Option<tiny_skia::Pixmap> {
         let metrics = self.metrics?;
         let dl = self.frame()?.list;
@@ -943,7 +958,10 @@ impl Session {
         self.renderer
             .render(&dl, &mut self.fonts, images, scale, &mut pixmap);
         chapbook_render_tinyskia::quantize(&mut pixmap, self.pixel_format);
-        Some(pixmap)
+        if metrics.rotation == Rotation::None {
+            return Some(pixmap);
+        }
+        chapbook_render_tinyskia::rotate(&pixmap, metrics.rotation)
     }
 
     // ---- Persistence ----

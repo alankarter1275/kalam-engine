@@ -22,7 +22,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use chapbook_core::{EdgeSizes, PageMetrics, Size};
+use chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
 use chapbook_reader::Session;
 
 fn main() {
@@ -105,6 +105,7 @@ impl App {
             size: Size::new(size.width as f32 / scale, size.height as f32 / scale),
             margins: EdgeSizes::uniform(40.0),
             dpi_scale: scale,
+            rotation: Rotation::None,
         });
         let Some(pixmap) = self.session.render() else {
             return;

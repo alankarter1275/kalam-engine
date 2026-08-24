@@ -20,7 +20,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use chapbook_core::{EdgeSizes, PageMetrics, Size};
+use chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
 use chapbook_reader::Session;
 
 fn main() -> glib::ExitCode {
@@ -72,6 +72,7 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                 size: Size::new(width as f32, height as f32),
                 margins: EdgeSizes::uniform(40.0),
                 dpi_scale: scale,
+                rotation: Rotation::None,
             });
             let Some(pixmap) = s.render() else { return };
             if let Some(window) = window.upgrade() {

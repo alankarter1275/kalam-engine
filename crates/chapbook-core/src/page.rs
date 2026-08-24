@@ -20,6 +20,27 @@ pub enum PixelFormat {
     Grey { levels: u8, dither: bool },
 }
 
+/// Quarter-turn rotation between the page as laid out and the panel it is
+/// painted into, clockwise. Devices mount panels in a fixed orientation, so
+/// reading in landscape on a portrait panel — or on a device held upside
+/// down — is a property of the output, not of the layout: the same page,
+/// turned on its way to the buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Rotation {
+    #[default]
+    None,
+    Quarter,
+    Half,
+    ThreeQuarter,
+}
+
+impl Rotation {
+    /// Whether this turn swaps width and height.
+    pub fn swaps_axes(self) -> bool {
+        matches!(self, Rotation::Quarter | Rotation::ThreeQuarter)
+    }
+}
+
 /// A reading color theme. `Light` is the identity theme: it changes
 /// nothing about how a book renders today. The others repaint the page
 /// ground and the *default* text/link colors — publisher-specified colors
@@ -121,12 +142,15 @@ impl Theme {
 /// only inside a rasterization backend.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageMetrics {
-    /// Full page size, including margins.
+    /// Full page size, including margins — in reading orientation, which
+    /// is what layout works in whatever the panel does.
     pub size: Size,
     /// Reader chrome margins around the content box.
     pub margins: EdgeSizes,
     /// Device pixel ratio, passed through to rasterizers; does not affect layout.
     pub dpi_scale: f32,
+    /// Turn applied on the way to the panel buffer; does not affect layout.
+    pub rotation: Rotation,
 }
 
 impl PageMetrics {
@@ -135,7 +159,45 @@ impl PageMetrics {
             size,
             margins,
             dpi_scale,
+            rotation: Rotation::None,
         }
+    }
+
+    pub fn with_rotation(self, rotation: Rotation) -> Self {
+        PageMetrics { rotation, ..self }
+    }
+
+    /// Size of the buffer a rendered page lands in — the page size, axes
+    /// swapped on a quarter turn. In CSS px; scale by `dpi_scale` for
+    /// device pixels.
+    pub fn panel_size(&self) -> Size {
+        if self.rotation.swaps_axes() {
+            Size::new(self.size.h, self.size.w)
+        } else {
+            self.size
+        }
+    }
+
+    /// Map a point from panel coordinates back into page space, so input
+    /// arrives in the space the page was laid out in. Identity when
+    /// unrotated.
+    pub fn panel_to_page(&self, x: f32, y: f32) -> (f32, f32) {
+        let (w, h) = (self.size.w, self.size.h);
+        match self.rotation {
+            Rotation::None => (x, y),
+            Rotation::Quarter => (y, h - x),
+            Rotation::Half => (w - x, h - y),
+            Rotation::ThreeQuarter => (w - y, x),
+        }
+    }
+
+    /// Whether two metrics describe the same layout, differing at most in
+    /// how the result is turned for the panel. A rotation alone doesn't
+    /// reflow anything.
+    pub fn same_layout(&self, other: &PageMetrics) -> bool {
+        self.size == other.size
+            && self.margins == other.margins
+            && self.dpi_scale == other.dpi_scale
     }
 
     /// Width available to content after margins.
@@ -156,6 +218,7 @@ impl Default for PageMetrics {
             size: Size::new(600.0, 800.0),
             margins: EdgeSizes::uniform(40.0),
             dpi_scale: 1.0,
+            rotation: Rotation::None,
         }
     }
 }

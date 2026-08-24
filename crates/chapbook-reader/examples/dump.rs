@@ -2,7 +2,7 @@
 //! drag-selection) to a PNG. A dev tool for eyeballing shell-free session
 //! behavior: `cargo run -p chapbook-reader --example dump -- <source> <out.png> [page] [x0 y0 x1 y1]`
 
-use chapbook_reader::chapbook_core::{EdgeSizes, PageMetrics, Size};
+use chapbook_reader::chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
 use chapbook_reader::Session;
 
 fn main() {
@@ -13,6 +13,7 @@ fn main() {
         size: Size::new(600.0, 800.0),
         margins: EdgeSizes::uniform(40.0),
         dpi_scale: 1.0,
+        rotation: Rotation::None,
     });
     render_loaded(&mut session);
     let mut rest: Vec<f32> = args[2..].iter().map(|a| a.parse().unwrap()).collect();

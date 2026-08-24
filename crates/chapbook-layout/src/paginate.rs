@@ -32,7 +32,7 @@ use cosmic_text::{Buffer, FontSystem, Metrics, Shaping, Wrap};
 use style::properties::ComputedValues;
 use style::values::computed::LengthPercentage;
 
-use chapbook_core::{PageMetrics, Point, Rect, Size};
+use chapbook_core::{PageMetrics, Point, Rect, Rotation, Size};
 use chapbook_paint::{
     BoxDecoration, Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page,
 };
@@ -668,6 +668,7 @@ impl<'f> Paginator<'f> {
             size: Size::new(margin_box_w, self.content.size.h),
             margins: chapbook_core::EdgeSizes::uniform(0.0),
             dpi_scale: self.page.dpi_scale,
+            rotation: Rotation::None,
         };
         let mut sub = Paginator::new(&mut *self.fonts, sub_metrics);
         sub.in_float = true;
