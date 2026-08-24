@@ -315,7 +315,7 @@ fn display_list_is_the_backend_contract() {
 
     let mut s = open_isolated("epub-displaylist", &fixture("epub/illustrated.epub"));
     s.set_metrics(metrics());
-    let dl = s.display_list().expect("page has a display list");
+    let dl = s.frame().expect("page has a frame").list;
 
     assert_eq!((dl.size.w, dl.size.h), (600.0, 800.0), "page-space size");
     // The page ground is op 0 so a theme is a color choice, not a
@@ -351,7 +351,7 @@ fn image_units_key_their_ops_into_the_store() {
     let mut s = open_isolated("cbz-displaylist", &fixture("cbz/minimal.cbz"));
     s.set_metrics(metrics());
     render_loaded(&mut s);
-    let dl = s.display_list().expect("comic page has a display list");
+    let dl = s.frame().expect("comic page has a frame").list;
     let resource = dl
         .ops
         .iter()
@@ -364,4 +364,93 @@ fn image_units_key_their_ops_into_the_store() {
         s.image_store().get(resource).is_some(),
         "the op's key resolves in the store the session hands out"
     );
+}
+
+#[test]
+fn frames_report_what_changed() {
+    use chapbook_reader::chapbook_paint::FrameIntent;
+
+    let mut s = open_isolated("epub-intent", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+
+    // Setting metrics is a reflow, and taking the frame consumes it.
+    let frame = s.frame().expect("frame");
+    assert_eq!(frame.intent, FrameIntent::Relayout);
+    assert_eq!(frame.damage, None, "a reflow disturbs the whole page");
+    assert_eq!(s.frame().unwrap().intent, FrameIntent::Repaint);
+
+    s.next_page();
+    assert_eq!(s.frame().unwrap().intent, FrameIntent::PageTurn);
+    // illustrated.epub is one spine item, so this is a no-op and nothing
+    // is reported — the mark follows the move, not the call.
+    s.next_unit();
+    assert_eq!(s.frame().unwrap().intent, FrameIntent::Repaint);
+    s.cycle_theme();
+    assert_eq!(s.frame().unwrap().intent, FrameIntent::Relayout);
+
+    // A book with somewhere to go reports the unit change.
+    let mut m = open_isolated("epub-intent-units", &fixture("epub/minimal.epub"));
+    m.set_metrics(metrics());
+    m.frame().expect("frame");
+    m.next_unit();
+    assert_eq!(m.frame().unwrap().intent, FrameIntent::UnitChange);
+
+    // The strongest change since the last frame is the one reported.
+    s.selection_begin(100.0, 70.0);
+    s.next_page();
+    assert_eq!(
+        s.frame().unwrap().intent,
+        FrameIntent::PageTurn,
+        "a page turn outranks the selection it cleared"
+    );
+}
+
+#[test]
+fn a_selection_change_damages_only_the_lines_it_touches() {
+    use chapbook_reader::chapbook_paint::FrameIntent;
+
+    let mut s = open_isolated("epub-damage", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    s.frame().expect("frame");
+
+    assert!(s.selection_begin(100.0, 70.0), "press must hit the heading");
+    s.selection_drag(400.0, 70.0);
+    let frame = s.frame().expect("frame");
+    assert_eq!(frame.intent, FrameIntent::Selection);
+    let damage = frame.damage.expect("a selection states its damage");
+    assert!(
+        damage.size.h < 600.0 && damage.size.w <= 600.0,
+        "a one-line selection is not the whole page: {damage:?}"
+    );
+
+    // Clearing damages what the selection used to cover, so the backend
+    // knows to repaint those lines back to plain text.
+    s.selection_clear();
+    let cleared = s.frame().expect("frame");
+    assert_eq!(cleared.intent, FrameIntent::Selection);
+    let cleared = cleared.damage.expect("clearing states its damage too");
+    assert!(
+        (cleared.size.w - damage.size.w).abs() < 1.0
+            && (cleared.size.h - damage.size.h).abs() < 1.0,
+        "the same lines: {cleared:?} vs {damage:?}"
+    );
+}
+
+#[test]
+fn a_landed_page_load_is_its_own_intent() {
+    use chapbook_reader::chapbook_paint::FrameIntent;
+
+    let mut s = open_isolated("cbz-intent", &fixture("cbz/minimal.cbz"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+    // Drive one more unit's load and catch the frame it produces.
+    s.next_unit();
+    s.frame();
+    for _ in 0..200 {
+        if s.poll_loaded() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert_eq!(s.frame().unwrap().intent, FrameIntent::ContentArrived);
 }

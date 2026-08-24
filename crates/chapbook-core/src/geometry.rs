@@ -76,6 +76,20 @@ impl Rect {
         )
     }
 
+    /// The smallest rect containing both.
+    pub fn union(&self, other: &Rect) -> Rect {
+        let (x, y) = (
+            self.min_x().min(other.min_x()),
+            self.min_y().min(other.min_y()),
+        );
+        Rect::new(
+            x,
+            y,
+            self.max_x().max(other.max_x()) - x,
+            self.max_y().max(other.max_y()) - y,
+        )
+    }
+
     /// True if `other` lies entirely within `self`, with a small epsilon to
     /// absorb accumulated f32 layout error.
     pub fn contains_rect(&self, other: &Rect) -> bool {

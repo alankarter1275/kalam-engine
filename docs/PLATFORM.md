@@ -58,17 +58,21 @@ unproven targets, not decisions to undo. The exceptions are called out.
 in plus the image store its image ops key into — enough for a shell to
 reproduce `render()` without tiny-skia, which a test asserts pixel-for-pixel.
 `render()` remains the convenience path. That unblocks GPU backends,
-platform canvases, and export harnesses; the rest of the seam is still
-missing.
+platform canvases, and export harnesses.
 
-Required:
+Frames carry their own provenance too: `Session::frame()` returns the ops
+with a `FrameIntent` — repaint, selection, annotation, content arrived,
+page turn, unit change, reflow — and, for a selection change, the damaged
+region. The intents are ordered, so when several things happen before a
+frame is taken the strongest one describes it, and a backend that only
+understands "small" versus "everything" can compare rather than match.
+Damage is stated only where it is cheaper than repainting; `None` means the
+whole page, which is always correct and sometimes pessimistic. Extending it
+past selections (a page turn that only moves a footer, an image landing in
+a fixed rect) is the obvious next increment.
 
-- **Damage tracking.** Return what changed, not just pixels. E-ink needs it
-  to pick a refresh mode; every other backend benefits from it.
-- **Refresh intent.** The session knows whether a frame is a page turn, a
-  selection drag, a settings change, or a lazily-arrived image. Only the
-  engine can know this, and it is exactly the signal that selects
-  full-flash vs fast partial refresh. Emit it with the frame.
+Still required:
+
 - **Pixel format policy.** Panels are 16-level grey or 1-bit; greyscale
   conversion and dithering belong in the pipeline, not in each shell.
 - **Rotation/orientation** as a first-class metric rather than a shell

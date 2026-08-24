@@ -135,8 +135,10 @@ stays that way.
   `style_to_attrs.rs` documents the supported `ComputedValues → Attrs` subset
   and its fallbacks.
 - **chapbook-paint** — owns the format-neutral page model (`Page`/`Fragment`,
-  fragments tagged with an opaque producer-defined `u64`, never a DOM type)
-  and the dumb display ops: `FillRect`, `Border`,
+  fragments tagged with an opaque producer-defined `u64`, never a DOM type),
+  the `Frame` a backend consumes (ops plus a `FrameIntent` and optional
+  damage rect, so an e-ink panel can choose a refresh mode), and the dumb
+  display ops: `FillRect`, `Border`,
   `GlyphRun { fontdb::ID, glyphs }` (no re-shaping at paint time), `Image`,
   `DecorationLine`, `PushClip`/`PopClip`. Layout produces into it; image
   formats will too.
@@ -160,11 +162,16 @@ stays that way.
   layout+image caches (text units run the full pipeline; comic units
   fabricate a one-page layout around an image fragment), navigation,
   font/theme settings, selection (hit-testing via per-glyph locator offsets
-  on `chapbook-paint` fragments; highlight painted under the text), and
-  layered-locator persistence. Comics persist page-unit progression.
+  on `chapbook-paint` fragments; copied as text, or stored as a highlight
+  that re-anchors through the locator chain), and layered-locator
+  persistence. Comics persist page-unit progression. Output is a `Frame`
+  (`Session::frame`) plus the fonts and images its ops resolve against
+  (`paint_resources`); `Session::render` is the bundled CPU rasterizer over
+  that, not a separate path.
 - **chapbook-viewer** / **chapbook-viewer-gtk** — winit+softbuffer and GTK4
   shells over `chapbook-reader::Session`; each translates input events and
-  blits the session's rasterized page, nothing more.
+  blits the session's rasterized page, nothing more. A shell that
+  rasterizes for itself takes the frame instead.
 - **tools/chapbook-cli** — `meta|toc|text|styles|layout|render|opds|lib`;
   each subcommand ships with its milestone and generates the snapshot inputs
   for that milestone's golden tests.

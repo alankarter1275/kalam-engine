@@ -28,11 +28,11 @@ use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
     resolve_in_text, BookKind, ChapbookError, LayeredLocator, PageMetrics, Point, Publication,
-    ReadingSettings, Result, SpineItem,
+    ReadingSettings, Rect, Result, SpineItem,
 };
 use chapbook_layout::ChapterLayout;
 use chapbook_library::AnnotationKind;
-use chapbook_paint::{ImageStore, Selection};
+use chapbook_paint::{Frame, FrameIntent, ImageStore, Selection};
 
 // Everything a shell needs to consume what the session produces, so it
 // depends on chapbook-reader alone and can't skew versions with it: the
@@ -163,6 +163,11 @@ pub struct Session {
     /// Handed out for units with no images of their own, so
     /// [`Session::image_store`] can return a reference either way.
     empty_images: ImageStore,
+    /// What has changed since the last frame was taken.
+    pending: FrameIntent,
+    /// The selection as of the last frame — the other half of a selection
+    /// change, needed to damage what it used to cover.
+    painted_selection: Option<(u32, u32)>,
 }
 
 impl Session {
@@ -321,6 +326,8 @@ impl Session {
             resolved_highlights: HashMap::new(),
             same_edition,
             empty_images: ImageStore::default(),
+            pending: FrameIntent::default(),
+            painted_selection: None,
         })
     }
 
@@ -375,6 +382,9 @@ impl Session {
             if self.placeholders.remove(&spine) {
                 self.layouts.remove(&spine);
             }
+        }
+        if any {
+            self.mark(FrameIntent::ContentArrived);
         }
         any
     }
@@ -436,6 +446,7 @@ impl Session {
                 self.page = layout.page_of(locator);
             }
         }
+        self.mark(FrameIntent::Relayout);
     }
 
     // ---- Navigation ----
@@ -444,9 +455,11 @@ impl Session {
         let count = self.page_count();
         if self.page + 1 < count {
             self.page += 1;
+            self.mark(FrameIntent::PageTurn);
         } else if self.spine + 1 < self.spine_len() {
             self.spine += 1;
             self.page = 0;
+            self.mark(FrameIntent::UnitChange);
         }
         self.selection = None;
     }
@@ -454,6 +467,7 @@ impl Session {
     pub fn prev_page(&mut self) {
         if self.page > 0 {
             self.page -= 1;
+            self.mark(FrameIntent::PageTurn);
         } else if self.spine > 0 {
             self.spine -= 1;
             let spine = self.spine;
@@ -461,6 +475,7 @@ impl Session {
                 .layout_unit(spine)
                 .map_or(0, |l| l.pages.len())
                 .saturating_sub(1);
+            self.mark(FrameIntent::UnitChange);
         }
         self.selection = None;
     }
@@ -470,6 +485,7 @@ impl Session {
             self.spine += 1;
             self.page = 0;
             self.selection = None;
+            self.mark(FrameIntent::UnitChange);
         }
     }
 
@@ -478,6 +494,7 @@ impl Session {
             self.spine -= 1;
             self.page = 0;
             self.selection = None;
+            self.mark(FrameIntent::UnitChange);
         }
     }
 
@@ -504,6 +521,7 @@ impl Session {
         if let Some(layout) = self.layout_unit(spine) {
             self.page = layout.page_of(locator);
         }
+        self.mark(FrameIntent::Relayout);
     }
 
     // ---- Selection ----
@@ -512,6 +530,7 @@ impl Session {
     /// the point hit text.
     pub fn selection_begin(&mut self, x: f32, y: f32) -> bool {
         self.selection = None;
+        self.mark(FrameIntent::Selection);
         let Some(offset) = self.offset_at(x, y) else {
             return false;
         };
@@ -526,11 +545,13 @@ impl Session {
         };
         if let Some(offset) = self.offset_at(x, y) {
             self.selection = Some((anchor, offset));
+            self.mark(FrameIntent::Selection);
         }
     }
 
     pub fn selection_clear(&mut self) {
         self.selection = None;
+        self.mark(FrameIntent::Selection);
     }
 
     /// The selected locator range `[start, end)`, when non-empty.
@@ -629,6 +650,7 @@ impl Session {
             end: end_loc,
             text: Some(text.clone()),
         });
+        self.mark(FrameIntent::Annotation);
         // Show it immediately: the cache is authoritative once populated.
         self.resolved_highlights
             .entry(spine)
@@ -677,6 +699,7 @@ impl Session {
         for resolved in self.resolved_highlights.values_mut() {
             resolved.retain(|h| h.id != id);
         }
+        self.mark(FrameIntent::Annotation);
     }
 
     fn resolve_highlights(&self, spine: usize, text: &str) -> Vec<Highlight> {
@@ -776,18 +799,58 @@ impl Session {
 
     // ---- Rendering ----
 
-    /// The current page as paint-neutral display ops — the backend
-    /// contract from `docs/ARCHITECTURE.md`, for shells that rasterize
-    /// themselves: a GPU backend, a platform canvas, an e-ink panel, an
-    /// exporter. [`Session::render`] is this plus the bundled CPU
-    /// rasterizer.
+    /// Record what changed. The strongest intent since the last frame is
+    /// the one that describes it, so this never downgrades.
+    fn mark(&mut self, intent: FrameIntent) {
+        self.pending = self.pending.max(intent);
+    }
+
+    /// The current page as paint-neutral display ops, plus what changed
+    /// since the last frame — the backend contract from
+    /// `docs/ARCHITECTURE.md`, for shells that rasterize themselves: a GPU
+    /// backend, a platform canvas, an e-ink panel, an exporter.
+    /// [`Session::render`] is this plus the bundled CPU rasterizer.
     ///
     /// `Image` ops carry keys into the unit's [`Session::image_store`],
-    /// not pixels, so a shell needs both.
+    /// not pixels, and glyph runs name faces in its font database, so a
+    /// shell needs [`Session::paint_resources`] too.
+    ///
+    /// Taking a frame consumes the change record: the next one reports
+    /// [`FrameIntent::Repaint`] until something else moves.
     ///
     /// `None` until metrics are set, and while the unit has no page — an
     /// image book still loading, or a unit that failed to load.
-    pub fn display_list(&mut self) -> Option<chapbook_paint::DisplayList> {
+    pub fn frame(&mut self) -> Option<Frame> {
+        let list = self.page_display_list()?;
+        let intent = std::mem::take(&mut self.pending);
+        let damage = self.damage_for(intent);
+        self.painted_selection = self.selected_range();
+        Some(Frame {
+            list,
+            intent,
+            damage,
+        })
+    }
+
+    /// The region a frame disturbs, when it is cheaper to state than to
+    /// repaint. Only a selection change is worth the arithmetic today —
+    /// it is the one that moves a few lines while the rest of the page
+    /// sits still; everything else returns `None` for a full repaint.
+    fn damage_for(&self, intent: FrameIntent) -> Option<Rect> {
+        if intent != FrameIntent::Selection {
+            return None;
+        }
+        let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
+        // Both ends of the change: what the selection covered, and what it
+        // covers now.
+        [self.painted_selection, self.selected_range()]
+            .into_iter()
+            .flatten()
+            .flat_map(|(start, end)| page.rects_for_range(start, end))
+            .reduce(|damage, rect| damage.union(&rect))
+    }
+
+    fn page_display_list(&mut self) -> Option<chapbook_paint::DisplayList> {
         self.metrics?;
         // Resolve a restored offset once the unit has laid out.
         if let Some(offset) = self.pending_offset {
@@ -853,7 +916,7 @@ impl Session {
     /// `None` under the same conditions.
     pub fn render(&mut self) -> Option<tiny_skia::Pixmap> {
         let metrics = self.metrics?;
-        let dl = self.display_list()?;
+        let dl = self.frame()?.list;
         let spine = self.spine;
         let scale = metrics.dpi_scale;
         let mut pixmap =

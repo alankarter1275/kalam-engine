@@ -35,6 +35,44 @@ pub enum DisplayOp {
     },
 }
 
+/// What changed since the previous frame — the signal an e-ink shell needs
+/// to choose between a full flash and a fast partial refresh, and any
+/// backend needs to decide how much work to redo. Only the engine can know
+/// this, so it travels with the frame.
+///
+/// Ordered by how much of the page the change disturbs: when several things
+/// happen before a frame is taken, the strongest one describes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum FrameIntent {
+    /// Nothing changed; the same content, painted again.
+    #[default]
+    Repaint,
+    /// The selection moved — typically a few lines.
+    Selection,
+    /// A stored highlight appeared or went away.
+    Annotation,
+    /// A background load landed: a comic page, a PDF rasterization.
+    ContentArrived,
+    /// A page turn within the same unit.
+    PageTurn,
+    /// A different spine unit.
+    UnitChange,
+    /// Everything reflowed: font size, theme, page metrics.
+    Relayout,
+}
+
+/// A page's display ops plus what a backend needs to decide how to put them
+/// on screen.
+#[derive(Debug, Clone)]
+pub struct Frame {
+    pub list: DisplayList,
+    pub intent: FrameIntent,
+    /// The region the change disturbs, when the producer can state it more
+    /// cheaply than the backend can repaint. `None` means "assume the whole
+    /// page" — always correct, just not always minimal.
+    pub damage: Option<Rect>,
+}
+
 /// A range to highlight: locator range plus fill color, painted per line
 /// under the text. Stored highlights and the transient selection are the
 /// same op — only the color differs.
