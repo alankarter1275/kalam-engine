@@ -75,9 +75,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // than just the first full paint.
     for _ in 0..3 {
         std::thread::sleep(Duration::from_secs(2));
-        let before = session.page();
+        // Position is (unit, page), not page: `next_page` crosses into the
+        // next spine item by resetting the page to 0, so comparing the page
+        // alone reads a successful unit change as "did not move". Most
+        // books open on a single-page cover, which made this stop after one
+        // turn — exactly the turns it exists to demonstrate.
+        let before = (session.spine(), session.page());
         session.next_page();
-        if session.page() == before {
+        if (session.spine(), session.page()) == before {
             break;
         }
         show(&mut session, &mut driver)?;
