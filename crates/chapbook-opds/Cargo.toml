@@ -14,6 +14,7 @@ quick-xml = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 url = { workspace = true }
+sha1 = { workspace = true } # cache-dir key for streamed comics
 thiserror = { workspace = true }
 
 [dev-dependencies]

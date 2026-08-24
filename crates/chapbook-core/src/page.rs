@@ -44,6 +44,15 @@ impl Theme {
         }
     }
 
+    /// Selection-highlight fill (semi-transparent; paints under the text).
+    pub fn selection(self) -> Rgba {
+        match self {
+            Theme::Light => Rgba::new(66, 133, 244, 90),
+            Theme::Sepia => Rgba::new(139, 90, 43, 70),
+            Theme::Dark => Rgba::new(100, 140, 220, 110),
+        }
+    }
+
     /// Whether media queries should see `prefers-color-scheme: dark`.
     pub fn is_dark(self) -> bool {
         matches!(self, Theme::Dark)

@@ -6,8 +6,34 @@ use std::path::Path;
 use chapbook_core::{PageMetrics, Publication, ReadingSettings, Result, TocEntry};
 use chapbook_epub::Book;
 
+/// Open a local book by extension: `.cbz` -> comic archive, else EPUB.
+fn open_publication(path: &Path) -> Result<Box<dyn chapbook_core::Publication>> {
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cbz"))
+    {
+        Ok(Box::new(chapbook_cbz::ComicBook::open(path)?))
+    } else {
+        Ok(Box::new(Book::open(path)?))
+    }
+}
+
 pub fn meta(epub: &Path) -> Result<String> {
-    let book = Book::open(epub)?;
+    // EPUBs report their fixed-layout status; the trait surface doesn't
+    // carry it (comics are inherently fixed pages).
+    let layout_note = if epub
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cbz"))
+    {
+        "pages (comic)"
+    } else if Book::open(epub)?.is_fixed_layout() {
+        "fixed (unsupported)"
+    } else {
+        "reflowable"
+    };
+    let book = open_publication(epub)?;
     let md = book.metadata();
     let mut out = String::new();
     push_field(&mut out, "title", md.title.as_deref());
@@ -17,15 +43,7 @@ pub fn meta(epub: &Path) -> Result<String> {
     push_field(&mut out, "language", md.language.as_deref());
     push_field(&mut out, "identifier", md.identifier.as_deref());
     push_field(&mut out, "version", Some(&md.format_version));
-    push_field(
-        &mut out,
-        "layout",
-        Some(if book.is_fixed_layout() {
-            "fixed (unsupported)"
-        } else {
-            "reflowable"
-        }),
-    );
+    push_field(&mut out, "layout", Some(layout_note));
     out.push_str(&format!("spine:      {} items\n", book.spine().len()));
     Ok(out)
 }
@@ -158,6 +176,13 @@ pub fn render(
     out: &Path,
     theme: chapbook_core::Theme,
 ) -> Result<String> {
+    if epub
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cbz"))
+    {
+        return render_comic(epub, spine, out, theme);
+    }
     let book = Book::open(epub)?;
     let href = book.spine_item(spine)?.href.clone();
     let settings = ReadingSettings {
@@ -180,7 +205,7 @@ pub fn render(
         ))
     })?;
 
-    let dl = chapbook_paint::build_display_list(page_data, theme.background());
+    let dl = chapbook_paint::build_display_list(page_data, theme.background(), None);
     let scale = metrics.dpi_scale;
     let mut pixmap = chapbook_render_tinyskia::tiny_skia::Pixmap::new(
         (dl.size.w * scale) as u32,
@@ -456,4 +481,47 @@ pub fn cfi(
             "pass either --spine N --offset M (encode) or --cfi CFI (decode)".into(),
         )),
     }
+}
+
+/// Render one comic page: decode the image, scale-to-fit page model, no
+/// dom/stylo/shaping anywhere in the path.
+fn render_comic(
+    path: &Path,
+    spine: usize,
+    out: &Path,
+    theme: chapbook_core::Theme,
+) -> Result<String> {
+    use chapbook_core::Publication;
+    let book = chapbook_cbz::ComicBook::open(path)?;
+    let bytes = book.unit_bytes(spine)?;
+    let decoded = image::load_from_memory(&bytes)
+        .map_err(|e| chapbook_core::ChapbookError::BookMalformed(format!("page image: {e}")))?
+        .to_rgba8();
+    let (w, h) = decoded.dimensions();
+    let mut images = chapbook_paint::ImageStore::default();
+    images.insert(1, w, h, decoded.into_raw());
+
+    let metrics = PageMetrics::default();
+    let page = chapbook_paint::image_page(&metrics, w, h, 1);
+    let dl = chapbook_paint::build_display_list(&page, theme.background(), None);
+    let scale = metrics.dpi_scale;
+    let mut pixmap = chapbook_render_tinyskia::tiny_skia::Pixmap::new(
+        (dl.size.w * scale) as u32,
+        (dl.size.h * scale) as u32,
+    )
+    .ok_or_else(|| chapbook_core::ChapbookError::Layout("empty page size".into()))?;
+    let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
+    let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
+    let mut renderer = chapbook_render_tinyskia::Renderer::new();
+    renderer.render(&dl, &mut fonts, &images, scale, &mut pixmap);
+    pixmap
+        .save_png(out)
+        .map_err(|e| chapbook_core::ChapbookError::Io(std::io::Error::other(e)))?;
+    Ok(format!(
+        "rendered comic page {spine}/{} ({}x{}) to {}\n",
+        book.spine().len(),
+        pixmap.width(),
+        pixmap.height(),
+        out.display()
+    ))
 }

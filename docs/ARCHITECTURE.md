@@ -24,21 +24,23 @@ Chapbook's focus is the reflowable-EPUB pipeline above, but the seams are
 placed so an image-per-page format (CBZ) can join later without a redesign:
 
 - **Book model in core.** `BookMetadata`/`SpineItem`/`TocEntry`/`Resource`
-  and the `Publication` trait live in `chapbook-core`. The library, viewer,
-  and CLI program against that surface — and import it from core, never via
-  an EPUB re-export, so `grep chapbook_epub` stays an honest coupling map.
-  `chapbook-epub` is one producer; a future `chapbook-cbz` (each archive
-  image = one spine item, media type guessed from extension — no manifest)
-  is another — rbook itself plans CBZ support and may do the container work.
-  Remote page-streaming books (OPDS-PSE-style, one HTTP fetch per page) also
-  fit: `Publication::unit_bytes` is contractually "blocking fetch + cache" —
-  it may take seconds and fail with `ChapbookError::Network`, and UI code
-  must call it off the UI thread.
+  and the `Publication` trait live in `chapbook-core`. The library, reader
+  session, and CLI program against that surface — and import it from core,
+  never via an EPUB re-export, so `grep chapbook_epub` stays an honest
+  coupling map. Three producers exist: `chapbook-epub` (rbook), `chapbook-cbz`
+  (each archive image = one spine item, natural-sorted, media type guessed
+  from extension — no manifest), and `chapbook_opds::StreamedComic` (OPDS-PSE
+  page streaming, one HTTP fetch per page through a 0-based `{pageNumber}`
+  template, disk-cached). The streamed producer is what the
+  `Publication::unit_bytes` blocking contract was written for: it may take
+  seconds and fail with `ChapbookError::Network`, and UI code must call it
+  off the UI thread.
 - **Page model in paint.** `chapbook-paint` owns `Page`/`Fragment`/
   `DisplayList`; `chapbook-layout` *produces* into it. A comic page becomes a
-  single image-fragment `Page` directly — no DOM, no stylo, no cosmic-text
-  shaping — and the render backends and viewer never know the difference.
-  Fragments reference their source via an opaque `u64` tag, never a DOM type.
+  single image-fragment `Page` (`chapbook_paint::image_page`) — no DOM, no
+  stylo, no cosmic-text shaping — and the render backends and viewers never
+  know the difference. Fragments reference their source via an opaque `u64`
+  tag, never a DOM type.
 - **Per-format progression units.** Locators count a format-defined unit:
   chars of locator text for reflowable EPUB; pages for image formats
   (`char_offset = 0`, empty quote layer — the resolve chain already degrades
@@ -146,8 +148,16 @@ stays that way.
 - **chapbook-library** — rusqlite (bundled, WAL): books/authors, positions,
   annotations, opds_sources. Positions are `Locator`s and survive relayout
   via the char_map.
-- **chapbook-viewer** — winit + softbuffer reference app; exercises the
-  pipeline, nothing more.
+- **chapbook-reader** — the shared reading session, extracted so viewer
+  shells stay thin: source dispatch (`.epub`/`.cbz`/OPDS URL), per-unit
+  layout+image caches (text units run the full pipeline; comic units
+  fabricate a one-page layout around an image fragment), navigation,
+  font/theme settings, selection (hit-testing via per-glyph locator offsets
+  on `chapbook-paint` fragments; highlight painted under the text), and
+  layered-locator persistence. Comics persist page-unit progression.
+- **chapbook-viewer** / **chapbook-viewer-gtk** — winit+softbuffer and GTK4
+  shells over `chapbook-reader::Session`; each translates input events and
+  blits the session's rasterized page, nothing more.
 - **tools/chapbook-cli** — `meta|toc|text|styles|layout|render|opds|lib`;
   each subcommand ships with its milestone and generates the snapshot inputs
   for that milestone's golden tests.

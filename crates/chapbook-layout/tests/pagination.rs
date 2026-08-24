@@ -1315,3 +1315,102 @@ fn dark_theme_flips_prefers_color_scheme() {
     assert!(texts(&light).contains("day only") && !texts(&light).contains("night only"));
     assert!(texts(&dark).contains("night only") && !texts(&dark).contains("day only"));
 }
+
+// ---- Selection geometry ----
+
+#[test]
+fn hit_test_and_range_rects_agree() {
+    let html = "<html><body><p>alpha beta gamma delta epsilon zeta eta theta \
+                iota kappa lambda mu</p></body></html>";
+    let (layout, _) = layout_html(html, "p { margin: 0; }", &page_for_lines(10));
+    let page = &layout.pages[0];
+    let lines: Vec<&chapbook_paint::Fragment> = page
+        .fragments
+        .iter()
+        .filter(|f| matches!(f.kind, FragmentKind::Line(_)))
+        .collect();
+    assert!(!lines.is_empty());
+    let r = lines[0].rect;
+
+    // A point mid-line hit-tests to an offset within the paragraph.
+    let mid = chapbook_core::Point::new(r.origin.x + r.size.w / 2.0, r.origin.y + r.size.h / 2.0);
+    let offset = page.offset_at(mid).expect("hit");
+    // Points left/right of the line clamp to its ends.
+    let left = page
+        .offset_at(chapbook_core::Point::new(r.origin.x - 20.0, mid.y))
+        .unwrap();
+    let right = page
+        .offset_at(chapbook_core::Point::new(
+            r.origin.x + r.size.w + 20.0,
+            mid.y,
+        ))
+        .unwrap();
+    assert!(
+        left < offset && offset < right,
+        "{left} < {offset} < {right}"
+    );
+    // A point in the page margin above all text hits nothing.
+    assert_eq!(page.offset_at(chapbook_core::Point::new(5.0, 5.0)), None);
+
+    // Highlight rects for [left, right) cover the hit point.
+    let rects = page.rects_for_range(left, right);
+    assert!(!rects.is_empty());
+    assert!(
+        rects.iter().any(|hr| mid.x >= hr.origin.x
+            && mid.x <= hr.origin.x + hr.size.w
+            && mid.y >= hr.origin.y
+            && mid.y <= hr.origin.y + hr.size.h),
+        "selection rects must cover the selected point: {rects:?}"
+    );
+    // And an empty range yields nothing.
+    assert!(page.rects_for_range(offset, offset).is_empty());
+}
+
+#[test]
+fn selection_paints_under_text_in_display_list() {
+    let html = "<html><body><p>select some of this text please</p></body></html>";
+    let (layout, _) = layout_html(html, "p { margin: 0; }", &page_for_lines(10));
+    let page = &layout.pages[0];
+    let sel_color = chapbook_core::Rgba::new(80, 120, 200, 120);
+    let dl = chapbook_paint::build_display_list(
+        page,
+        chapbook_core::Rgba::WHITE,
+        Some(chapbook_paint::Selection {
+            start: 2,
+            end: 12,
+            color: sel_color,
+        }),
+    );
+    let sel_idx = dl
+        .ops
+        .iter()
+        .position(
+            |op| matches!(op, chapbook_paint::DisplayOp::FillRect { color, .. } if *color == sel_color),
+        )
+        .expect("selection rect present");
+    let glyph_idx = dl
+        .ops
+        .iter()
+        .position(|op| matches!(op, chapbook_paint::DisplayOp::GlyphRun { .. }))
+        .expect("glyphs present");
+    assert!(sel_idx < glyph_idx, "selection paints under the text");
+}
+
+#[test]
+fn multi_line_selection_covers_each_line() {
+    let html = format!("<html><body>{}</body></html>", para_of_lines(3, "sel"));
+    let (layout, _) = layout_html(&html, "p { margin: 0; }", &page_for_lines(10));
+    let page = &layout.pages[0];
+    // Select from within line 1 to within line 3.
+    let all: Vec<u32> = page
+        .fragments
+        .iter()
+        .filter_map(|f| match &f.kind {
+            FragmentKind::Line(l) => Some(l.locator_start),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(all.len(), 3);
+    let rects = page.rects_for_range(all[0] + 2, all[2] + 2);
+    assert_eq!(rects.len(), 3, "one rect per touched line: {rects:?}");
+}

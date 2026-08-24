@@ -1,34 +1,22 @@
 [package]
-name = "chapbook-cli"
-description = "Development CLI exercising each stage of the chapbook pipeline"
+name = "chapbook-reader"
+description = "Shared reading-session state for chapbook viewer shells"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
-[lib]
-name = "chapbook_cli"
-path = "src/lib.rs"
-
-[[bin]]
-name = "chapbook"
-path = "src/main.rs"
-
 [dependencies]
 chapbook-core = { workspace = true }
 chapbook-epub = { workspace = true }
 chapbook-cbz = { workspace = true }
-image = { workspace = true }
+chapbook-opds = { workspace = true }
 chapbook-dom = { workspace = true }
 chapbook-style = { workspace = true }
 chapbook-layout = { workspace = true }
 chapbook-paint = { workspace = true }
-chapbook-render-tinyskia = { workspace = true }
-chapbook-opds = { workspace = true }
 chapbook-library = { workspace = true }
-clap = { workspace = true }
+chapbook-render-tinyskia = { workspace = true }
 cosmic-text = { workspace = true }
-
-[dev-dependencies]
-insta = { workspace = true }
+image = { workspace = true }

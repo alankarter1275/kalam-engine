@@ -10,8 +10,9 @@ mod display;
 mod images;
 mod page;
 
-pub use display::{build_display_list, DisplayList, DisplayOp};
+pub use display::{build_display_list, DisplayList, DisplayOp, Selection};
 pub use images::{ImageStore, StoredImage};
 pub use page::{
-    BoxDecoration, Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment, Page,
+    image_page, BoxDecoration, Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment,
+    Page,
 };

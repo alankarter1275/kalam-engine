@@ -1012,6 +1012,7 @@ impl<'f> Paginator<'f> {
                     x: glyph.x + glyph.x_offset,
                     y: glyph.y - glyph.y_offset,
                     advance: glyph.w,
+                    locator: locator_at(run.line_i, glyph.start),
                 };
                 let is_space = run.text.get(glyph.start..glyph.end) == Some(" ");
                 match glyph_runs.last_mut() {
@@ -1170,11 +1171,17 @@ impl<'f> Paginator<'f> {
             .last()
             .and_then(|r| r.glyphs.last())
             .map_or(0.0, |g| g.y);
+        let locator = line
+            .runs
+            .last()
+            .and_then(|r| r.glyphs.last())
+            .map_or(0, |g| g.locator);
         line.runs.last_mut().unwrap().glyphs.push(Glyph {
             id: glyph_id,
             x: x_end,
             y,
             advance,
+            locator,
         });
         line.width = line.width.max(x_end + advance);
         line.text.push('-');

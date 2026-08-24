@@ -9,8 +9,11 @@ members = [
     "crates/chapbook-paint",
     "crates/chapbook-render-tinyskia",
     "crates/chapbook-opds",
+    "crates/chapbook-cbz",
     "crates/chapbook-library",
+    "crates/chapbook-reader",
     "crates/chapbook-viewer",
+    "crates/chapbook-viewer-gtk",
     "tools/chapbook-cli",
 ]
 
@@ -31,7 +34,9 @@ chapbook-layout = { path = "crates/chapbook-layout" }
 chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
 chapbook-opds = { path = "crates/chapbook-opds" }
+chapbook-cbz = { path = "crates/chapbook-cbz" }
 chapbook-library = { path = "crates/chapbook-library" }
+chapbook-reader = { path = "crates/chapbook-reader" }
 
 # Stylo lockstep set — these release together and break together; pin exact
 # versions and upgrade all of them in one deliberate pass (use Blitz's diff
@@ -59,6 +64,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 # EPUB
 rbook = "0.7"
+# CBZ (deflate + stored cover the comic archives in the wild)
+zip = { version = "8", default-features = false, features = ["deflate"] }
 sha1 = "0.10" # IDPF font de-obfuscation key derivation
 
 # OPDS. NOTE: not atom_syndication/feed-rs — both silently drop the

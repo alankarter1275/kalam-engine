@@ -41,6 +41,7 @@ mod client;
 mod href;
 mod model;
 mod opds2;
+mod pse;
 
 pub use atom::parse_atom;
 pub use client::{opensearch_template, pse_page_url, OpdsClient};
@@ -50,6 +51,7 @@ pub use model::{
     Series, Totals, AUTH_BASIC,
 };
 pub use opds2::{parse_opds2, parse_opds2_publication};
+pub use pse::StreamedComic;
 
 /// Client/parse errors. `AuthRequired` carries the server's Authentication
 /// Document when it sent one — enough to render a native login dialog.

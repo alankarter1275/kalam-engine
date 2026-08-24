@@ -35,10 +35,24 @@ pub enum DisplayOp {
     },
 }
 
+/// A selection to highlight: locator range plus fill color, painted per
+/// line under the text.
+#[derive(Debug, Clone, Copy)]
+pub struct Selection {
+    pub start: u32,
+    pub end: u32,
+    pub color: Rgba,
+}
+
 /// Flatten a laid-out page into draw ops. `background` becomes the first op
 /// (a full-page fill), so themes (night mode) are a color choice here, not a
-/// renderer concern.
-pub fn build_display_list(page: &Page, background: Rgba) -> DisplayList {
+/// renderer concern. A `selection` paints its highlight rect immediately
+/// before each line it touches — over earlier backgrounds, under the text.
+pub fn build_display_list(
+    page: &Page,
+    background: Rgba,
+    selection: Option<Selection>,
+) -> DisplayList {
     let mut ops = vec![DisplayOp::FillRect {
         rect: Rect::new(0.0, 0.0, page.size.w, page.size.h),
         color: background,
@@ -47,6 +61,31 @@ pub fn build_display_list(page: &Page, background: Rgba) -> DisplayList {
     for fragment in &page.fragments {
         match &fragment.kind {
             FragmentKind::Line(line) => {
+                if let Some(sel) = selection {
+                    if sel.end > sel.start {
+                        let mut min_x = f32::INFINITY;
+                        let mut max_x = f32::NEG_INFINITY;
+                        for run in &line.runs {
+                            for glyph in &run.glyphs {
+                                if glyph.locator >= sel.start && glyph.locator < sel.end {
+                                    min_x = min_x.min(glyph.x);
+                                    max_x = max_x.max(glyph.x + glyph.advance);
+                                }
+                            }
+                        }
+                        if max_x > min_x {
+                            ops.push(DisplayOp::FillRect {
+                                rect: Rect::new(
+                                    fragment.rect.origin.x + min_x,
+                                    fragment.rect.origin.y,
+                                    max_x - min_x,
+                                    fragment.rect.size.h,
+                                ),
+                                color: sel.color,
+                            });
+                        }
+                    }
+                }
                 let origin = Point::new(
                     fragment.rect.origin.x,
                     fragment.rect.origin.y + line.baseline,

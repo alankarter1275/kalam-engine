@@ -17,8 +17,9 @@ use crate::Result;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BookKind {
     Epub,
-    /// Comic book archive (planned; no implementation yet).
-    Cbz,
+    /// Image-per-page comic: a local CBZ archive or a remote OPDS-PSE
+    /// stream — one image per spine item either way.
+    Comic,
 }
 
 /// Owned metadata extracted from a publication at open time.
