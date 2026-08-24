@@ -172,6 +172,22 @@ struct UnitCharContext {
     total: u64,
 }
 
+/// Where changes have landed since the last frame was taken.
+///
+/// Kept apart from the pending [`FrameIntent`] on purpose. Intent is
+/// ordered by how disturbing a change is and collapses to the strongest
+/// one; damage is a union and collapses to "everywhere" the moment any
+/// change cannot say where it went. Folding the two together made damage
+/// hostage to that ordering, so a highlight discarded the region a live
+/// selection had already named.
+#[derive(Debug, Clone, Copy, Default)]
+struct PendingDamage {
+    /// Some change since the last frame could not name its region.
+    unstated: bool,
+    /// Union of the regions that could, in page coordinates.
+    region: Option<Rect>,
+}
+
 /// One open book and everything needed to read it.
 pub struct Session {
     book: OpenBook,
@@ -212,6 +228,7 @@ pub struct Session {
     empty_images: ImageStore,
     /// What has changed since the last frame was taken.
     pending: FrameIntent,
+    pending_damage: PendingDamage,
     /// The selection as of the last frame — the other half of a selection
     /// change, needed to damage what it used to cover.
     painted_selection: Option<(u32, u32)>,
@@ -391,6 +408,7 @@ impl Session {
             same_edition,
             empty_images: ImageStore::default(),
             pending: FrameIntent::default(),
+            pending_damage: PendingDamage::default(),
             painted_selection: None,
             pixel_format: PixelFormat::default(),
             links: HashMap::new(),
@@ -1035,7 +1053,7 @@ impl Session {
             text: text.clone(),
             color: None,
         });
-        self.mark(FrameIntent::Annotation);
+        self.mark_range(FrameIntent::Annotation, start, end);
         // Show it immediately: the cache is authoritative once populated.
         self.resolved_highlights
             .entry(spine)
@@ -1132,7 +1150,10 @@ impl Session {
                 highlight.color = color.clone();
             }
         }
-        self.mark(FrameIntent::Annotation);
+        match self.highlight_range(id) {
+            Some((start, end)) => self.mark_range(FrameIntent::Annotation, start, end),
+            None => self.mark(FrameIntent::Annotation),
+        }
     }
 
     /// Jump to a stored annotation. `false` if its unit can't be read.
@@ -1161,11 +1182,16 @@ impl Session {
                 return;
             }
         }
+        // Its extent has to be read before it is dropped from the cache.
+        let range = self.highlight_range(id);
         self.stored.retain(|a| a.id != id);
         for resolved in self.resolved_highlights.values_mut() {
             resolved.retain(|h| h.id != id);
         }
-        self.mark(FrameIntent::Annotation);
+        match range {
+            Some((start, end)) => self.mark_range(FrameIntent::Annotation, start, end),
+            None => self.mark(FrameIntent::Annotation),
+        }
     }
 
     fn resolve_highlights(&self, spine: usize, text: &str) -> Vec<Highlight> {
@@ -1267,10 +1293,58 @@ impl Session {
 
     // ---- Rendering ----
 
+    /// The extent of a resolved highlight on the current page.
+    fn highlight_range(&self, id: i64) -> Option<(u32, u32)> {
+        self.resolved_highlights
+            .get(&self.spine)?
+            .iter()
+            .find(|h| h.id == id)
+            .map(|h| (h.start, h.end))
+    }
+
     /// Record what changed. The strongest intent since the last frame is
     /// the one that describes it, so this never downgrades.
+    ///
+    /// A change recorded here does not say where it landed, so the frame
+    /// falls back to a full repaint. Use [`Session::mark_range`] when the
+    /// change is confined to a span of text.
     fn mark(&mut self, intent: FrameIntent) {
         self.pending = self.pending.max(intent);
+        // A selection is the one exception: it states its region at frame
+        // time instead, from the difference between what is painted and
+        // what is selected now.
+        if intent != FrameIntent::Selection {
+            self.pending_damage.unstated = true;
+        }
+    }
+
+    /// Record a change confined to a locator range on the current page.
+    ///
+    /// Damage accumulates independently of the intent ordering. A
+    /// highlight landing while a selection is live must not lose its
+    /// region just because `Annotation` outranks `Selection` — both name
+    /// where they changed, so the frame reports the union of the two.
+    fn mark_range(&mut self, intent: FrameIntent, start: u32, end: u32) {
+        self.pending = self.pending.max(intent);
+        if self.pending_damage.unstated {
+            return;
+        }
+        let Some(region) = self.range_damage(start, end) else {
+            return;
+        };
+        self.pending_damage.region = Some(match self.pending_damage.region {
+            Some(existing) => existing.union(&region),
+            None => region,
+        });
+    }
+
+    /// The area a locator range covers on the current page, or `None` when
+    /// it lies on another page and so disturbs nothing here.
+    fn range_damage(&self, start: u32, end: u32) -> Option<Rect> {
+        let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
+        page.rects_for_range(start, end)
+            .into_iter()
+            .reduce(|damage, rect| damage.union(&rect))
     }
 
     /// The current page as paint-neutral display ops, plus what changed
@@ -1291,7 +1365,8 @@ impl Session {
     pub fn frame(&mut self) -> Option<Frame> {
         let list = self.page_display_list()?;
         let intent = std::mem::take(&mut self.pending);
-        let damage = self.damage_for(intent);
+        let damage = self.damage_for();
+        self.pending_damage = PendingDamage::default();
         self.painted_selection = self.selected_range();
         Some(Frame {
             list,
@@ -1301,21 +1376,34 @@ impl Session {
     }
 
     /// The region a frame disturbs, when it is cheaper to state than to
-    /// repaint. Only a selection change is worth the arithmetic today —
-    /// it is the one that moves a few lines while the rest of the page
-    /// sits still; everything else returns `None` for a full repaint.
-    fn damage_for(&self, intent: FrameIntent) -> Option<Rect> {
-        if intent != FrameIntent::Selection {
+    /// repaint — `None` meaning "assume the whole page", which is always
+    /// correct and sometimes wasteful.
+    ///
+    /// This deliberately does not consult the intent. Intent answers "how
+    /// disturbing is this change", damage answers "where is it", and
+    /// tying the second to the ordering of the first meant a highlight
+    /// repainted the entire page because `Annotation` outranked the
+    /// `Selection` that had already named its lines.
+    fn damage_for(&self) -> Option<Rect> {
+        if self.pending_damage.unstated {
             return None;
         }
-        let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
-        // Both ends of the change: what the selection covered, and what it
-        // covers now.
-        [self.painted_selection, self.selected_range()]
-            .into_iter()
-            .flatten()
-            .flat_map(|(start, end)| page.rects_for_range(start, end))
-            .reduce(|damage, rect| damage.union(&rect))
+        let mut damage = self.pending_damage.region;
+        // A moved selection disturbs both where it was and where it is.
+        let current = self.selected_range();
+        if current != self.painted_selection {
+            let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
+            let moved = [self.painted_selection, current]
+                .into_iter()
+                .flatten()
+                .flat_map(|(start, end)| page.rects_for_range(start, end))
+                .reduce(|damage, rect| damage.union(&rect));
+            damage = match (damage, moved) {
+                (Some(a), Some(b)) => Some(a.union(&b)),
+                (a, b) => a.or(b),
+            };
+        }
+        damage
     }
 
     fn page_display_list(&mut self) -> Option<chapbook_paint::DisplayList> {

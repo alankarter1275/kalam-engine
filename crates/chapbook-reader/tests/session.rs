@@ -451,6 +451,64 @@ fn a_selection_change_damages_only_the_lines_it_touches() {
 }
 
 #[test]
+fn a_highlight_damages_only_its_own_lines() {
+    use chapbook_reader::chapbook_paint::FrameIntent;
+
+    let mut s = open_isolated("epub-damage-highlight", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    s.frame().expect("frame");
+
+    assert!(s.selection_begin(100.0, 70.0), "press must hit the heading");
+    s.selection_drag(400.0, 70.0);
+    let selection = s
+        .frame()
+        .expect("frame")
+        .damage
+        .expect("a selection states its damage");
+
+    // Adding a highlight outranks the selection on the intent ordering.
+    // Damage must not be lost to that: the marked lines are the only ones
+    // that changed, and on a panel the difference is a partial refresh
+    // versus a full-page flash.
+    s.add_highlight().expect("highlight the selection");
+    let frame = s.frame().expect("frame");
+    assert_eq!(frame.intent, FrameIntent::Annotation);
+    let damage = frame
+        .damage
+        .expect("an annotation states its damage, even though it outranks Selection");
+    assert!(
+        damage.size.h < 600.0,
+        "a one-line highlight is not the whole page: {damage:?}"
+    );
+    assert!(
+        damage.size.h >= selection.size.h - 1.0,
+        "the highlight covers at least the lines the selection did: \
+         {damage:?} vs {selection:?}"
+    );
+}
+
+#[test]
+fn a_change_that_cannot_name_its_region_repaints_everything() {
+    use chapbook_reader::chapbook_paint::FrameIntent;
+
+    let mut s = open_isolated("epub-damage-unstated", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    s.frame().expect("frame");
+
+    // A live selection knows its lines; a reflow does not, and the
+    // pessimistic answer has to win rather than the stated one.
+    assert!(s.selection_begin(100.0, 70.0), "press must hit the heading");
+    s.selection_drag(400.0, 70.0);
+    s.set_metrics(metrics().with_rotation(Rotation::Half));
+    let frame = s.frame().expect("frame");
+    assert_eq!(frame.intent, FrameIntent::Relayout);
+    assert_eq!(
+        frame.damage, None,
+        "an unstated change must not inherit the selection's region"
+    );
+}
+
+#[test]
 fn a_landed_page_load_is_its_own_intent() {
     use chapbook_reader::chapbook_paint::FrameIntent;
 
