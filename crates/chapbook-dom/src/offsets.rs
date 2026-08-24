@@ -80,7 +80,7 @@ fn walk_map(
     }
 }
 
-fn excluded(doc: &Document, id: NodeId) -> bool {
+pub(crate) fn excluded(doc: &Document, id: NodeId) -> bool {
     match &doc.node(id).data {
         NodeData::Element(el) => matches!(
             *el.local_name(),

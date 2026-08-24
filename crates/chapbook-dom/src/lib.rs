@@ -11,6 +11,7 @@
 //! HTML-isms that strict XML parsing rejects. A `strict-xml` feature (M2+)
 //! runs xml5ever over the same tree builder.
 
+mod cfi;
 mod offsets;
 mod parse;
 mod stylo_data;
@@ -18,6 +19,7 @@ mod stylo_impls;
 mod text;
 mod tree;
 
+pub use cfi::{cfi_for_offset, offset_for_cfi};
 pub use offsets::{locator_offset_of, locator_offsets, locator_text, node_tag};
 pub use parse::parse_xhtml;
 pub use stylo_impls::DomNode;

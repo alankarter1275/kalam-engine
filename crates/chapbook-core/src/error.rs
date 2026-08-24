@@ -27,6 +27,9 @@ pub enum ChapbookError {
     #[error("layout error: {0}")]
     Layout(String),
 
+    #[error("invalid CFI: {0}")]
+    Cfi(String),
+
     /// Transport-level failure fetching remote content (a page stream, an
     /// acquisition download). Distinct from [`Self::Opds`], which is for
     /// protocol/feed-shape errors.

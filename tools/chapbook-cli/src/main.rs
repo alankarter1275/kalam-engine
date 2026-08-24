@@ -53,6 +53,19 @@ enum Command {
         #[arg(long, default_value = "light", value_parser = parse_theme)]
         theme: chapbook_core::Theme,
     },
+    /// Convert between reading positions and EPUB CFIs
+    Cfi {
+        epub: PathBuf,
+        /// Encode: spine index of the position (with --offset)
+        #[arg(long, requires = "offset", conflicts_with = "cfi")]
+        spine: Option<usize>,
+        /// Encode: locator-text char offset of the position
+        #[arg(long)]
+        offset: Option<u32>,
+        /// Decode: a CFI string, e.g. "epubcfi(/6/8!/4/10/1:10)"
+        #[arg(long)]
+        cfi: Option<String>,
+    },
     /// Browse, search, and download from OPDS catalogs (M6)
     Opds {
         #[command(subcommand)]
@@ -115,6 +128,12 @@ fn main() -> ExitCode {
             out,
             theme,
         } => print(commands::render(&epub, spine, page, &out, theme)),
+        Command::Cfi {
+            epub,
+            spine,
+            offset,
+            cfi,
+        } => print(commands::cfi(&epub, spine, offset, cfi.as_deref())),
         Command::Opds { command } => match command {
             OpdsCommand::Ls { url } => print(commands::opds_ls(&url)),
             OpdsCommand::Search { url, query } => print(commands::opds_search(&url, &query)),

@@ -407,3 +407,53 @@ pub fn lib_ls() -> Result<String> {
     }
     Ok(out)
 }
+
+/// Convert between reading positions and EPUB CFIs. Encode with
+/// `--spine N --offset M`; decode with `--cfi "epubcfi(...)"`. Resolution
+/// needs only the parsed document — no styling.
+pub fn cfi(
+    epub: &Path,
+    spine: Option<usize>,
+    offset: Option<u32>,
+    cfi_str: Option<&str>,
+) -> Result<String> {
+    let book = Book::open(epub)?;
+    let chapter_doc = |spine: usize| -> Result<chapbook_dom::Document> {
+        let href = book.spine_item(spine)?.href.clone();
+        let bytes = book.unit_bytes(spine)?;
+        let doc = chapbook_dom::parse_xhtml(&bytes, &href)?;
+        Ok(doc)
+    };
+    match (spine, offset, cfi_str) {
+        (Some(spine), Some(offset), None) => {
+            let doc = chapter_doc(spine)?;
+            let cfi = chapbook_dom::cfi_for_offset(&doc, spine, offset)
+                .ok_or_else(|| chapbook_core::ChapbookError::Cfi("chapter has no text".into()))?;
+            Ok(format!("{cfi}\n"))
+        }
+        (None, None, Some(cfi_str)) => {
+            let cfi = chapbook_core::Cfi::parse(cfi_str)?;
+            let spine = cfi.spine_index().ok_or_else(|| {
+                chapbook_core::ChapbookError::Cfi(
+                    "package part does not address a spine item".into(),
+                )
+            })?;
+            let doc = chapter_doc(spine)?;
+            let offset = chapbook_dom::offset_for_cfi(&doc, &cfi).ok_or_else(|| {
+                chapbook_core::ChapbookError::Cfi("CFI does not resolve in this chapter".into())
+            })?;
+            let text = chapbook_dom::locator_text(&doc);
+            let chars: Vec<char> = text.chars().collect();
+            let start = (offset as usize).saturating_sub(30);
+            let end = (offset as usize + 30).min(chars.len());
+            let excerpt: String = chars[start..end].iter().collect();
+            Ok(format!(
+                "spine {spine} offset {offset}\n…{}…\n",
+                excerpt.replace(['\n', '\r'], " ")
+            ))
+        }
+        _ => Err(chapbook_core::ChapbookError::Cfi(
+            "pass either --spine N --offset M (encode) or --cfi CFI (decode)".into(),
+        )),
+    }
+}

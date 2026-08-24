@@ -6,12 +6,14 @@
 //! or any renderer.
 
 mod book;
+mod cfi;
 mod error;
 mod geometry;
 mod locator;
 mod page;
 
 pub use book::{BookKind, BookMetadata, Publication, Resource, SpineItem, TocEntry};
+pub use cfi::{Cfi, CfiStep};
 pub use error::ChapbookError;
 pub use geometry::{EdgeSizes, Point, Rect, Rgba, Size};
 pub use locator::{
