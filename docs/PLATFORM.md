@@ -272,19 +272,36 @@ an ordinary combination, and `PixelFormat` says so rather than leaving it
 to be inferred. The `2..=16` cap that contradicted it is gone — floored at
 two, which is arithmetic, with no ceiling, which was policy.
 
-Two things the matrix says the abstraction still gets wrong.
+The remaining two turned out to be the same question, and the seam could
+already answer it — nothing said so.
 
-**Who quantizes is per-target.** The EPDC does it in hardware and better;
-a Waveshare panel needs the host to do it *and* to pack to 1 bit; a
-desktop needs none of it. One session-wide decision cannot serve three
-answers — see the quantization item above.
+**Who reduces is the panel's call, not the session's.** An EPDC quantizes
+and dithers in hardware; a bus-attached panel needs the host to do it and
+to pack to one bit; a desktop needs none of it. `PanelInfo::format` is now
+stated as a *request* rather than a description of the hardware, and it is
+the only thing a caller consults. `Rgba` therefore does not mean "colour
+screen" — it means **do not reduce, I will**, which is the right answer
+for a controller with hardware dithering, for a greyscale framebuffer
+whose `blit` takes luminance anyway, and for the awkward case below.
 
-**Android argues for panel-owned staging.** Its natural shape is lock a
-surface, write, unlock — a `blit` into storage the panel controls, which
-the reworded contract now permits but does not require. Handing a borrowed
-slice across an FFI boundary every frame works but fights the platform,
-and it is the same conclusion the SPI case reaches from the other side.
-Worth settling before §3 fixes the FFI shape.
+**Depth belongs to the update, not the session.** Two levels for a fast
+waveform, four for a shallow one, sixteen for a full one. No single
+`PixelFormat` expresses that, and pre-reducing to any one of them is wrong
+in both directions. The resolution needs no new API: such a panel asks for
+`Rgba`, keeps what `blit` staged, and reduces in `submit`, which is the
+first point where the `UpdateClass` is known — legitimate because `blit`
+is defined as *taking* the pixels rather than copying them into a mapping,
+so panel-owned storage is a valid destination. That is also exactly the
+shape Android wants (lock, write, unlock) and the only shape SPI allows,
+so the three converge. A test panel does it, resolving one staged ramp to
+2, 4 and 16 levels by class, so the arrangement is demonstrated rather
+than asserted.
+
+What stays open is narrower than it looked: whether a panel should be able
+to hand *out* its staging buffer so a shell renders straight into it and
+skips a copy. That is a throughput change, it belongs with the RGBA
+end-to-end item above, and it wants a real backend and a measurement
+rather than a guess.
 
 ## 2. The reading model above the page
 

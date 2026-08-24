@@ -212,7 +212,26 @@ pub struct PanelInfo {
     /// Panel dimensions in device pixels, as the controller addresses them.
     pub width: u32,
     pub height: u32,
-    /// What the panel can show, for `chapbook_paint::quantize`.
+    /// What the panel wants *produced for it* — a request, not a
+    /// description of the hardware, and the authority on the question. A
+    /// caller runs `chapbook_paint::quantize` with this and nothing else.
+    ///
+    /// [`PixelFormat::Rgba`] therefore does not mean "colour screen". It
+    /// means **do not reduce; I will**, and it is the right answer for
+    /// more panels than it first looks:
+    ///
+    /// - A controller that quantizes and dithers in hardware. Reducing
+    ///   first spends a pass over a multi-megabyte buffer to pre-flatten
+    ///   what the controller would flatten anyway, and differently.
+    /// - A greyscale framebuffer, whose `blit` reduces to luminance on the
+    ///   way in, so quantizing above it only discards precision.
+    /// - A panel whose depth depends on the update rather than the
+    ///   session — see [`Panel`].
+    ///
+    /// Ask for [`PixelFormat::Grey`] when the reduction genuinely has to
+    /// happen above the panel and one answer serves every update, which is
+    /// the case for a panel with a single fixed depth and no hardware to
+    /// do it.
     pub format: PixelFormat,
 }
 
@@ -238,6 +257,24 @@ pub struct UpdateToken(pub u32);
 /// reading that memory, and writing under it tears or leaves the panel
 /// showing a mixture of both frames. [`PanelRect::intersects`] is the
 /// test; waiting on the outstanding token is the fix.
+///
+/// # Reducing per update
+///
+/// The depth a panel can show is often a property of the *update*, not of
+/// the session: a two-level fast waveform, four levels for a shallow one,
+/// sixteen for a full one. A single [`PanelInfo::format`] cannot express
+/// that, and pre-reducing to any one of them is wrong in both directions —
+/// flatten to sixteen and the fast update re-flattens it anyway, flatten
+/// to two and the next page turn is ruined.
+///
+/// Such a panel asks for [`PixelFormat::Rgba`], keeps what `blit` staged,
+/// and reduces in `submit`, which is the first point where the
+/// [`UpdateClass`] is known. Nothing here needs to change for that to
+/// work: `blit` is defined as taking the pixels, not as copying them into
+/// a mapping, so storage the panel owns is a legitimate destination — and
+/// for a panel reached over a bus or through a platform surface it is the
+/// only one. `tests::a_panel_may_defer_reduction_until_it_knows_the_class`
+/// is that arrangement, working.
 pub trait Panel {
     /// Geometry and capabilities. Cheap; callers may ask per frame.
     fn info(&self) -> PanelInfo;
@@ -835,6 +872,125 @@ mod tests {
         let first = panel.submit(rect, UpdateClass::Quality).unwrap();
         let second = panel.submit(rect, UpdateClass::Quality).unwrap();
         assert_ne!(first, second);
+    }
+
+    // ---- Reducing per update ----
+
+    /// A panel whose depth belongs to the waveform rather than the
+    /// session. It asks for full colour, keeps what `blit` staged, and
+    /// reduces in `submit` — the first place the [`UpdateClass`] is known.
+    #[derive(Debug)]
+    struct DeferredPanel {
+        info: PanelInfo,
+        staged: Vec<u8>,
+        next_token: u32,
+        /// One entry per update: the class, and how many distinct grey
+        /// levels the panel actually put on the glass for it.
+        reduced: Vec<(UpdateClass, usize)>,
+    }
+
+    impl DeferredPanel {
+        fn new(width: u32, height: u32) -> Self {
+            DeferredPanel {
+                info: PanelInfo {
+                    width,
+                    height,
+                    // "Do not reduce; I will."
+                    format: PixelFormat::Rgba,
+                },
+                staged: vec![0; (width * height * 4) as usize],
+                next_token: 1,
+                reduced: Vec::new(),
+            }
+        }
+
+        /// What this device's waveform for `class` can actually resolve.
+        fn levels_for(class: UpdateClass) -> u32 {
+            match class {
+                UpdateClass::None => 0,
+                UpdateClass::Monochrome => 2,
+                UpdateClass::Fast => 4,
+                UpdateClass::Quality | UpdateClass::Flash => 16,
+            }
+        }
+    }
+
+    impl Panel for DeferredPanel {
+        fn info(&self) -> PanelInfo {
+            self.info
+        }
+
+        fn blit(&mut self, rgba: &[u8], rect: PanelRect) -> Result<()> {
+            // Nothing to reduce to yet, so keep the pixels as they came.
+            let w = self.info.width as usize;
+            for y in rect.y as usize..rect.max_y() as usize {
+                let row = y * w * 4;
+                let span = row + rect.x as usize * 4..row + rect.max_x() as usize * 4;
+                self.staged[span.clone()].copy_from_slice(&rgba[span]);
+            }
+            Ok(())
+        }
+
+        fn submit(&mut self, rect: PanelRect, class: UpdateClass) -> Result<UpdateToken> {
+            let levels = DeferredPanel::levels_for(class);
+            let w = self.info.width as usize;
+            let mut seen = Vec::new();
+            if levels >= 2 {
+                let step = 255.0 / (levels - 1) as f32;
+                for y in rect.y as usize..rect.max_y() as usize {
+                    for x in rect.x as usize..rect.max_x() as usize {
+                        let lum = f32::from(self.staged[(y * w + x) * 4]);
+                        let level = (lum / step).round().clamp(0.0, (levels - 1) as f32) * step;
+                        seen.push(level as u8);
+                    }
+                }
+            }
+            seen.sort_unstable();
+            seen.dedup();
+            self.reduced.push((class, seen.len()));
+            let token = UpdateToken(self.next_token);
+            self.next_token += 1;
+            Ok(token)
+        }
+
+        fn wait(&mut self, _token: UpdateToken) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_panel_may_defer_reduction_until_it_knows_the_class() {
+        let (w, h) = (256u32, 4u32);
+        let mut driver = PanelDriver::with_policy(DeferredPanel::new(w, h), RefreshPolicy::never());
+
+        // A full ramp, so a reduction has something to lose.
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let at = ((y * w + x) * 4) as usize;
+                let v = x as u8;
+                rgba[at..at + 4].copy_from_slice(&[v, v, v, 255]);
+            }
+        }
+
+        let all = Some(PanelRect::full(w, h));
+        driver.present(&rgba, all, UpdateClass::Monochrome).unwrap();
+        driver.present(&rgba, all, UpdateClass::Fast).unwrap();
+        driver.present(&rgba, all, UpdateClass::Quality).unwrap();
+
+        // The same staged pixels resolved three different depths, each
+        // matching its waveform. Reducing above the panel could only have
+        // picked one, and would have been wrong for the other two.
+        assert_eq!(
+            driver.panel().reduced,
+            vec![
+                (UpdateClass::Monochrome, 2),
+                (UpdateClass::Fast, 4),
+                (UpdateClass::Quality, 16),
+            ]
+        );
+        // And nothing above the panel quantized at all.
+        assert_eq!(driver.info().format, PixelFormat::Rgba);
     }
 
     // ---- PanelDriver ----
