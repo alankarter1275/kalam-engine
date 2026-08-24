@@ -11,6 +11,7 @@ authors.workspace = true
 chapbook-core = { workspace = true }
 chapbook-epub = { workspace = true }
 chapbook-cbz = { workspace = true }
+chapbook-pdf = { workspace = true }
 chapbook-opds = { workspace = true }
 chapbook-dom = { workspace = true }
 chapbook-style = { workspace = true }

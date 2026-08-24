@@ -20,6 +20,8 @@ pub enum BookKind {
     /// Image-per-page comic: a local CBZ archive or a remote OPDS-PSE
     /// stream — one image per spine item either way.
     Comic,
+    /// PDF: pre-paginated pages rasterized to one image per spine item.
+    Pdf,
 }
 
 /// Owned metadata extracted from a publication at open time.

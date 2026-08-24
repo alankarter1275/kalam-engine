@@ -27,11 +27,13 @@ placed so an image-per-page format (CBZ) can join later without a redesign:
   and the `Publication` trait live in `chapbook-core`. The library, reader
   session, and CLI program against that surface — and import it from core,
   never via an EPUB re-export, so `grep chapbook_epub` stays an honest
-  coupling map. Three producers exist: `chapbook-epub` (rbook), `chapbook-cbz`
+  coupling map. Four producers exist: `chapbook-epub` (rbook), `chapbook-cbz`
   (each archive image = one spine item, natural-sorted, media type guessed
-  from extension — no manifest), and `chapbook_opds::StreamedComic` (OPDS-PSE
+  from extension — no manifest), `chapbook_opds::StreamedComic` (OPDS-PSE
   page streaming, one HTTP fetch per page through a 0-based `{pageNumber}`
-  template, disk-cached). The streamed producer is what the
+  template, disk-cached), and `chapbook-pdf` (pages rasterized to PNG at 2×
+  via hayro — pure Rust, CPU-only; encrypted PDFs rejected; MSRV floor is
+  hayro's 1.92). The streamed producer is what the
   `Publication::unit_bytes` blocking contract was written for: it may take
   seconds and fail with `ChapbookError::Network`, and UI code must call it
   off the UI thread.
@@ -169,7 +171,7 @@ The stylo lockstep set (`stylo`, `stylo_traits`, `stylo_atoms`,
 `=` in the workspace and upgraded all-at-once as a deliberate task, using
 Blitz's corresponding upgrade diff as the migration guide. html5ever/
 markup5ever/xml5ever must match the markup5ever minor that stylo's selector
-types use. MSRV 1.89 (stylo 0.20's floor), stable toolchain — no nightly.
+types use. MSRV 1.92 (hayro's floor; stylo 0.20 needs 1.89), stable toolchain — no nightly.
 
 ## Explicitly out of scope
 

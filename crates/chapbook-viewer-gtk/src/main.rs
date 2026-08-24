@@ -24,7 +24,7 @@ use chapbook_reader::Session;
 
 fn main() -> glib::ExitCode {
     let Some(source) = std::env::args().nth(1) else {
-        eprintln!("usage: chapbook-viewer-gtk <book.epub|comic.cbz|opds-url>");
+        eprintln!("usage: chapbook-viewer-gtk <book.epub|comic.cbz|doc.pdf|opds-url>");
         return glib::ExitCode::from(2);
     };
     let session = match Session::open(&source) {
@@ -80,7 +80,7 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                     s.title(),
                     match s.kind() {
                         chapbook_core::BookKind::Epub => "ch",
-                        chapbook_core::BookKind::Comic => "pg",
+                        chapbook_core::BookKind::Comic | chapbook_core::BookKind::Pdf => "pg",
                     },
                     s.spine() + 1,
                     s.spine_len(),

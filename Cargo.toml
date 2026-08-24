@@ -10,6 +10,7 @@ members = [
     "crates/chapbook-render-tinyskia",
     "crates/chapbook-opds",
     "crates/chapbook-cbz",
+    "crates/chapbook-pdf",
     "crates/chapbook-library",
     "crates/chapbook-reader",
     "crates/chapbook-viewer",
@@ -20,7 +21,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.92" # floor: hayro (stylo needs 1.89)
 license = "MIT OR Apache-2.0"
 authors = ["Jeffrey T. Peckham <abic@ophymx.com>"]
 
@@ -35,6 +36,7 @@ chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
 chapbook-opds = { path = "crates/chapbook-opds" }
 chapbook-cbz = { path = "crates/chapbook-cbz" }
+chapbook-pdf = { path = "crates/chapbook-pdf" }
 chapbook-library = { path = "crates/chapbook-library" }
 chapbook-reader = { path = "crates/chapbook-reader" }
 
@@ -66,6 +68,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 rbook = "0.7"
 # CBZ (deflate + stored cover the comic archives in the wild)
 zip = { version = "8", default-features = false, features = ["deflate"] }
+# PDF rasterization (pure Rust, CPU-only)
+hayro = "0.7"
 sha1 = "0.10" # IDPF font de-obfuscation key derivation
 
 # OPDS. NOTE: not atom_syndication/feed-rs — both silently drop the

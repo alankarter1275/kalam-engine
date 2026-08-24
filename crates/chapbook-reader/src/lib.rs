@@ -101,14 +101,14 @@ impl Session {
             (OpenBook::Comic(Box::new(comic)), None, resume, None)
         } else {
             let path = Path::new(source);
-            let book = if path
+            let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("cbz"))
-            {
-                OpenBook::Comic(Box::new(chapbook_cbz::ComicBook::open(path)?))
-            } else {
-                OpenBook::Epub(Box::new(chapbook_epub::Book::open(path)?))
+                .map(|e| e.to_ascii_lowercase());
+            let book = match ext.as_deref() {
+                Some("cbz") => OpenBook::Comic(Box::new(chapbook_cbz::ComicBook::open(path)?)),
+                Some("pdf") => OpenBook::Comic(Box::new(chapbook_pdf::PdfBook::open(path)?)),
+                _ => OpenBook::Epub(Box::new(chapbook_epub::Book::open(path)?)),
             };
 
             let mut same_edition = true;
@@ -420,7 +420,7 @@ impl Session {
                 )
             }
             // Image books: the progression unit is pages.
-            BookKind::Comic => LayeredLocator::capture(
+            BookKind::Comic | BookKind::Pdf => LayeredLocator::capture(
                 &href,
                 self.spine,
                 "",
@@ -444,7 +444,8 @@ impl Session {
         if !self.layouts.contains_key(&spine) {
             let built = match self.book.publication().kind() {
                 BookKind::Epub => self.layout_text_unit(spine, &metrics),
-                BookKind::Comic => self.layout_comic_unit(spine, &metrics),
+                // PDF pages arrive as rasterized images: same path as comics.
+                BookKind::Comic | BookKind::Pdf => self.layout_comic_unit(spine, &metrics),
             };
             let (layout, images) = built?;
             self.layouts.insert(spine, layout);

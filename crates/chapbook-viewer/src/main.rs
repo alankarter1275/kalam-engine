@@ -25,7 +25,7 @@ use chapbook_reader::Session;
 
 fn main() {
     let Some(source) = std::env::args().nth(1) else {
-        eprintln!("usage: chapbook-viewer <book.epub|comic.cbz|opds-url>");
+        eprintln!("usage: chapbook-viewer <book.epub|comic.cbz|doc.pdf|opds-url>");
         std::process::exit(2);
     };
     let session = match Session::open(&source) {
@@ -88,7 +88,7 @@ impl App {
             self.session.title(),
             match self.session.kind() {
                 chapbook_core::BookKind::Epub => "ch",
-                chapbook_core::BookKind::Comic => "pg",
+                chapbook_core::BookKind::Comic | chapbook_core::BookKind::Pdf => "pg",
             },
             self.session.spine() + 1,
             self.session.spine_len(),

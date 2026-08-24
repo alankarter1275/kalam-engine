@@ -28,6 +28,7 @@ not an afterthought bolted onto a scrolling browser.
 | `chapbook-render-tinyskia` | CPU rasterization backend |
 | `chapbook-opds` | OPDS 1.2/2.0 catalog client + OPDS-PSE streamed comics |
 | `chapbook-cbz` | CBZ comic-book archive reading |
+| `chapbook-pdf` | PDF reading, rasterized via hayro (pure Rust) |
 | `chapbook-library` | Local bookshelf: metadata, positions, annotations (SQLite) |
 | `chapbook-reader` | Shared reading session (open/layout/navigate/select/persist) |
 | `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) |
@@ -43,10 +44,10 @@ survive relayout, font-size changes, and even replaced editions (see
 `docs/LOCATORS.md`) — and exchange them as EPUB CFIs (`chapbook cfi`). Embedded fonts (including obfuscated ones), images,
 and text decorations render, with light/sepia/dark themes (sepia recolors
 defaults; dark forces readability), and press-drag text selection
-(highlighting today; copy/annotations will build on it). Comics work too:
-local CBZ archives and OPDS-PSE page streams read in the same viewers with
-page-unit positions. `chapbook --help` for the dev CLI;
-`cargo run -p chapbook-viewer -- <book.epub|comic.cbz|opds-url>` (winit) or
+(highlighting today; copy/annotations will build on it). Comics and PDFs work too:
+local CBZ archives, OPDS-PSE page streams, and PDFs (rasterized with the
+pure-Rust hayro engine) read in the same viewers with page-unit positions. `chapbook --help` for the dev CLI;
+`cargo run -p chapbook-viewer -- <book.epub|comic.cbz|doc.pdf|opds-url>` (winit) or
 `-p chapbook-viewer-gtk` (GTK4) to read.
 
 See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:

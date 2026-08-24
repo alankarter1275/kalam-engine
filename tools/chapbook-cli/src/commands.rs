@@ -6,28 +6,32 @@ use std::path::Path;
 use chapbook_core::{PageMetrics, Publication, ReadingSettings, Result, TocEntry};
 use chapbook_epub::Book;
 
-/// Open a local book by extension: `.cbz` -> comic archive, else EPUB.
+/// Open a local book by extension: `.cbz`/`.pdf` -> image-per-page
+/// producers, else EPUB.
 fn open_publication(path: &Path) -> Result<Box<dyn chapbook_core::Publication>> {
-    if path
+    match path
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("cbz"))
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
     {
-        Ok(Box::new(chapbook_cbz::ComicBook::open(path)?))
-    } else {
-        Ok(Box::new(Book::open(path)?))
+        Some("cbz") => Ok(Box::new(chapbook_cbz::ComicBook::open(path)?)),
+        Some("pdf") => Ok(Box::new(chapbook_pdf::PdfBook::open(path)?)),
+        _ => Ok(Box::new(Book::open(path)?)),
     }
+}
+
+fn is_image_book(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cbz") || e.eq_ignore_ascii_case("pdf"))
 }
 
 pub fn meta(epub: &Path) -> Result<String> {
     // EPUBs report their fixed-layout status; the trait surface doesn't
     // carry it (comics are inherently fixed pages).
-    let layout_note = if epub
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("cbz"))
-    {
-        "pages (comic)"
+    let layout_note = if is_image_book(epub) {
+        "pages (image book)"
     } else if Book::open(epub)?.is_fixed_layout() {
         "fixed (unsupported)"
     } else {
@@ -176,12 +180,8 @@ pub fn render(
     out: &Path,
     theme: chapbook_core::Theme,
 ) -> Result<String> {
-    if epub
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("cbz"))
-    {
-        return render_comic(epub, spine, out, theme);
+    if is_image_book(epub) {
+        return render_image_book(epub, spine, out, theme);
     }
     let book = Book::open(epub)?;
     let href = book.spine_item(spine)?.href.clone();
@@ -483,16 +483,15 @@ pub fn cfi(
     }
 }
 
-/// Render one comic page: decode the image, scale-to-fit page model, no
-/// dom/stylo/shaping anywhere in the path.
-fn render_comic(
+/// Render one image-book page (CBZ or PDF): decode the image,
+/// scale-to-fit page model, no dom/stylo/shaping anywhere in the path.
+fn render_image_book(
     path: &Path,
     spine: usize,
     out: &Path,
     theme: chapbook_core::Theme,
 ) -> Result<String> {
-    use chapbook_core::Publication;
-    let book = chapbook_cbz::ComicBook::open(path)?;
+    let book = open_publication(path)?;
     let bytes = book.unit_bytes(spine)?;
     let decoded = image::load_from_memory(&bytes)
         .map_err(|e| chapbook_core::ChapbookError::BookMalformed(format!("page image: {e}")))?
@@ -518,7 +517,7 @@ fn render_comic(
         .save_png(out)
         .map_err(|e| chapbook_core::ChapbookError::Io(std::io::Error::other(e)))?;
     Ok(format!(
-        "rendered comic page {spine}/{} ({}x{}) to {}\n",
+        "rendered page {spine}/{} ({}x{}) to {}\n",
         book.spine().len(),
         pixmap.width(),
         pixmap.height(),

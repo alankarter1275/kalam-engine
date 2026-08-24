@@ -111,3 +111,21 @@ fn cbz_position_persists_across_sessions() {
     s.render();
     assert_eq!(s.spine(), 2, "comic position restores by page progression");
 }
+
+#[test]
+fn pdf_session_reads_like_an_image_book() {
+    isolate_library();
+    let mut s = Session::open(&fixture("pdf/minimal.pdf")).unwrap();
+    assert_eq!(s.kind(), BookKind::Pdf);
+    assert_eq!(s.spine_len(), 2);
+    s.set_metrics(metrics());
+    // Red first page, blue second, no text selection.
+    let px = s.render().unwrap().pixel(300, 400).unwrap();
+    assert!(px.red() > 150 && px.blue() < 100, "red PDF page: {px:?}");
+    assert!(!s.selection_begin(300.0, 400.0));
+    s.next_page();
+    assert_eq!(s.spine(), 1);
+    let px = s.render().unwrap().pixel(300, 400).unwrap();
+    assert!(px.blue() > 120 && px.red() < 100, "blue PDF page: {px:?}");
+    s.save_position();
+}
