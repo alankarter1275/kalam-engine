@@ -71,12 +71,28 @@ tiny-skia = "0.12"
 # so nothing is re-shaped on the way to the GPU.
 vello = "0.10"
 pollster = "0.4"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "rayon"] }
+# Decode only, and only the formats EPUB 3 and comic archives actually
+# carry. `rayon` is deliberately absent: image gates only its opt-in
+# parallel ImageBuffer iterators and the avif/exr *encoders* on it, none of
+# which we use, so it bought a thread pool and nothing else.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+] }
 
-# EPUB
-rbook = "0.7"
-# CBZ (deflate + stored cover the comic archives in the wild)
-zip = { version = "8", default-features = false, features = ["deflate"] }
+# EPUB. We only ever read: `write` is rbook's EPUB *authoring* half.
+rbook = { version = "0.7", default-features = false, features = [
+    "threadsafe",
+    "prelude",
+] }
+# CBZ (deflate + stored cover the comic archives in the wild). Note
+# `deflate-flate2-zlib-rs` and not the `deflate` umbrella: that one also
+# turns on zopfli, a compressor, which a reader has no use for.
+zip = { version = "8", default-features = false, features = [
+    "deflate-flate2-zlib-rs",
+] }
 # PDF rasterization (pure Rust, CPU-only)
 hayro = "0.7"
 sha1 = "0.10" # IDPF font de-obfuscation key derivation
