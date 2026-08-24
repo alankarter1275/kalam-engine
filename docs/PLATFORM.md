@@ -433,8 +433,26 @@ The unglamorous half, and the real distance between "modular codebase" and
 - **API stability policy** across fourteen crates: which are public surface
   (`core`, `reader`, `library`, `opds`, `paint`) versus internal
   (`dom`, `style`, `layout`)? Only the former need semver discipline.
-- **Feature flags.** A minimal device build should exclude PDF, GTK, and
-  OPDS. Only `chapbook-dom` has features today (`strict-xml`).
+- **Feature flags.** Mostly done. `chapbook-reader` now gates `cbz`, `pdf`
+  and `opds`, all on by default; a device build turns off what its hardware
+  will never open. Measured on the `chapbook-panel-fbdev` `show` example,
+  which is the device-shaped binary: **20.4 MB with all three, 12.5 MB with
+  none — 39% smaller**, and 237 third-party crates down to 196. What leaves
+  is the whole TLS stack (rustls, ring, webpki) and the whole PDF stack
+  (hayro with its JBIG2, JPEG2000, CCITT and PostScript decoders). CBZ
+  costs nothing on its own — its `zip` is already in the graph for EPUB.
+  GTK was never the problem: it is a separate crate you simply do not
+  depend on. Every shell in this workspace asks for all three, so CI checks
+  the narrow configurations directly (`reader-features`) — otherwise they
+  rot unnoticed.
+
+  Knobs deliberately left alone, each wanting a device to justify it:
+  cosmic-text's `fontconfig` default (fontdb falls back to scanning the
+  usual font dirs without it, which is what a device has anyway);
+  `rusqlite`'s `bundled`, which compiles SQLite from C and so needs a cross
+  C toolchain; `hayro`'s `embed-fonts`/`embed-cmaps`, which are correctness
+  for PDF; and wgpu's backend set behind `chapbook-render-vello`, which no
+  device build links at all.
 - **Docs for shell authors** — the missing genre. `ARCHITECTURE.md` explains
   the pipeline; nothing explains how to write a shell.
 - **A shell conformance harness** — given a `Session`, assert a shell drives

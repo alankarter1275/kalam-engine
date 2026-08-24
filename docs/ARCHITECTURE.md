@@ -202,7 +202,12 @@ stays that way.
   persistence. Comics persist page-unit progression. Output is a `Frame`
   (`Session::frame`) plus the fonts and images its ops resolve against
   (`paint_resources`); `Session::render` is the bundled CPU rasterizer over
-  that, not a separate path.
+  that, not a separate path. The formats beyond EPUB are separately
+  compilable — `cbz`, `pdf` and `opds` features, all on by default — so a
+  device build drops the ones its hardware will never open; the public API
+  is the same in every configuration, and an excluded format fails with
+  `ChapbookError::FormatNotBuilt` rather than being mistaken for something
+  else.
 - **chapbook-viewer** / **chapbook-viewer-gtk** — winit+softbuffer and GTK4
   shells over `chapbook-reader::Session`; each translates input events and
   blits the session's rasterized page, nothing more. `chapbook-viewer
