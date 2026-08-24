@@ -41,6 +41,32 @@ jobs:
       - run: cargo check -p chapbook-core -p chapbook-panel-fbdev --target armv7-unknown-linux-gnueabihf
       - run: cargo check -p chapbook-core -p chapbook-panel-fbdev --target aarch64-unknown-linux-gnu
 
+  reader-features:
+    # chapbook-reader's formats are separately compilable, and a device
+    # build turns off what its hardware will never open. Nothing in the
+    # workspace builds those narrow configurations — every shell here asks
+    # for all three — so without this job an EPUB-only build would rot
+    # silently between releases. `check` catches it, since what breaks is
+    # a `cfg` that stops compiling, and `-D warnings` catches the other
+    # half: code that goes dead when a format leaves.
+    name: check (chapbook-reader feature matrix)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - ""
+          - "cbz"
+          - "pdf"
+          - "opds"
+          - "cbz,pdf"
+          - "cbz,opds"
+          - "pdf,opds"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
+
   msrv:
     name: build (MSRV 1.92)
     runs-on: ubuntu-latest

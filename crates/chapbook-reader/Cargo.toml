@@ -7,12 +7,40 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+# Everything on, so a shell that just depends on chapbook-reader reads
+# every format chapbook supports. A device build turns off what its
+# hardware will never open: each of these is a whole format stack, not a
+# code path. Dropping all three takes the dependency graph from 239
+# third-party crates to 196, and takes the entire TLS stack (rustls, ring,
+# webpki) and the entire PDF stack (hayro plus its JBIG2, JPEG2000, CCITT
+# and PostScript decoders) out of the build.
+default = ["cbz", "pdf", "opds"]
+# Local CBZ comic archives.
+cbz = ["dep:chapbook-cbz", "_comic", "_image-book"]
+# PDF, rasterized by hayro, with its extracted text layer.
+pdf = ["dep:chapbook-pdf", "_image-book"]
+# OPDS catalogs and OPDS-PSE streamed comics. This is the only feature
+# that brings in networking.
+opds = ["dep:chapbook-opds", "_comic", "_image-book"]
+
+# Internal, set by the features above; do not enable directly. They name
+# the two capabilities the session gains, so the `cfg`s below say what they
+# mean instead of re-deriving it from a list of formats that will grow.
+#
+# `_comic`: some format produces an image-per-page publication as a trait
+# object. `_image-book`: some format pages units in off the loader thread,
+# which EPUB never does — its chapters are local zip reads plus a cascade
+# that has to run on the session thread anyway.
+_comic = []
+_image-book = []
+
 [dependencies]
 chapbook-core = { workspace = true }
 chapbook-epub = { workspace = true }
-chapbook-cbz = { workspace = true }
-chapbook-pdf = { workspace = true }
-chapbook-opds = { workspace = true }
+chapbook-cbz = { workspace = true, optional = true }
+chapbook-pdf = { workspace = true, optional = true }
+chapbook-opds = { workspace = true, optional = true }
 chapbook-dom = { workspace = true }
 chapbook-style = { workspace = true }
 chapbook-layout = { workspace = true }

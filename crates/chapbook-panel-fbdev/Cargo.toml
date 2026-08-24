@@ -12,4 +12,4 @@ chapbook-core = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
-chapbook-reader = { workspace = true }
+chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds"] }

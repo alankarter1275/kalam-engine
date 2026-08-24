@@ -42,7 +42,10 @@ chapbook-opds = { path = "crates/chapbook-opds" }
 chapbook-cbz = { path = "crates/chapbook-cbz" }
 chapbook-pdf = { path = "crates/chapbook-pdf" }
 chapbook-library = { path = "crates/chapbook-library" }
-chapbook-reader = { path = "crates/chapbook-reader" }
+# No defaults here: each shell names the formats it means to open, so a
+# device build's surface is visible in its own manifest rather than
+# inherited. External consumers get the full default set as usual.
+chapbook-reader = { path = "crates/chapbook-reader", default-features = false }
 
 # Stylo lockstep set — these release together and break together; pin exact
 # versions and upgrade all of them in one deliberate pass (use Blitz's diff

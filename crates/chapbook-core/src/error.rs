@@ -15,6 +15,16 @@ pub enum ChapbookError {
     #[error("fixed-layout EPUBs are not supported (this is a reflowable-text reading system)")]
     FixedLayoutUnsupported,
 
+    /// The format is one chapbook implements, but this build left it out.
+    ///
+    /// Distinct from a malformed or unrecognised book: the file is fine and
+    /// a differently-configured build would open it. Device builds drop
+    /// whole format stacks (see chapbook-reader's `cbz`/`pdf`/`opds`
+    /// features), and a reader that silently fell through to the EPUB path
+    /// would report a parse failure for a perfectly good PDF.
+    #[error("{0} support is not compiled into this build")]
+    FormatNotBuilt(&'static str),
+
     #[error("spine index {0} out of range")]
     SpineOutOfRange(usize),
 

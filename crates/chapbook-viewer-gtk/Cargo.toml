@@ -9,6 +9,6 @@ authors.workspace = true
 
 [dependencies]
 chapbook-core = { workspace = true }
-chapbook-reader = { workspace = true }
+chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds"] }
 chapbook-render-tinyskia = { workspace = true }
 gtk4 = { version = "0.11", features = ["v4_10"] }
