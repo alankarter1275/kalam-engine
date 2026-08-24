@@ -5,8 +5,8 @@
 //! Sources: an `.epub` or `.cbz` path, or an OPDS URL (page-streamed
 //! comic). Keys: Right/PageDown/Space next page · Left/PageUp previous ·
 //! n/p unit · +/- font size · t theme (light/sepia/dark) · c copy
-//! selection · q/Escape quit. Mouse or touch: press-drag over text
-//! selects; a tap clears. Touch tracks the first finger only.
+//! selection · h highlight it · q/Escape quit. Mouse or touch: press-drag
+//! over text selects; a tap clears. Touch tracks the first finger only.
 //!
 //! Image-book units (comic pages, PDF rasterizations) load on the
 //! session's worker thread; the loader wakes this shell through the event
@@ -292,6 +292,12 @@ impl ApplicationHandler<()> for App {
                         "c" => {
                             self.copy_selection();
                             return;
+                        }
+                        "h" => {
+                            // The stored highlight replaces the selection
+                            // that made it.
+                            self.session.add_highlight();
+                            self.session.selection_clear();
                         }
                         _ => return,
                     },

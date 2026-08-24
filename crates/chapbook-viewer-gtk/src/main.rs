@@ -5,7 +5,8 @@
 //! Sources: an `.epub` or `.cbz` path, or an OPDS URL (page-streamed
 //! comic). Keys match the winit shell: Right/PageDown/space next page ·
 //! Left/PageUp previous · n/p unit · +/- font size · t theme · c copy
-//! selection · q/Escape quit. Mouse press-drag over text selects.
+//! selection · h highlight it · q/Escape quit. Mouse press-drag over text
+//! selects.
 //!
 //! Rendering: the session rasterizes with tiny-skia at device pixels; the
 //! draw func converts premultiplied RGBA → cairo ARGB32 and paints it at
@@ -126,6 +127,12 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                 Some("plus") | Some("equal") => s.adjust_font(2.0),
                 Some("minus") => s.adjust_font(-2.0),
                 Some("t") => s.cycle_theme(),
+                Some("h") => {
+                    // The stored highlight replaces the selection that
+                    // made it.
+                    s.add_highlight();
+                    s.selection_clear();
+                }
                 Some("Escape") if s.selected_range().is_some() => s.selection_clear(),
                 Some("c") => {
                     // gdk owns the clipboard for us; nothing to redraw.

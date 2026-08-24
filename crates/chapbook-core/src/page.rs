@@ -53,6 +53,17 @@ impl Theme {
         }
     }
 
+    /// Stored-highlight fill. Warm where the transient selection is cool,
+    /// so a highlight reads as a mark on the page rather than as the thing
+    /// the pointer is doing right now.
+    pub fn highlight(self) -> Rgba {
+        match self {
+            Theme::Light => Rgba::new(255, 214, 0, 90),
+            Theme::Sepia => Rgba::new(214, 158, 46, 85),
+            Theme::Dark => Rgba::new(200, 160, 40, 85),
+        }
+    }
+
     /// Whether media queries should see `prefers-color-scheme: dark`.
     pub fn is_dark(self) -> bool {
         matches!(self, Theme::Dark)

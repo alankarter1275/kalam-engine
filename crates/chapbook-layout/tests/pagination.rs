@@ -1375,11 +1375,11 @@ fn selection_paints_under_text_in_display_list() {
     let dl = chapbook_paint::build_display_list(
         page,
         chapbook_core::Rgba::WHITE,
-        Some(chapbook_paint::Selection {
+        &[chapbook_paint::Selection {
             start: 2,
             end: 12,
             color: sel_color,
-        }),
+        }],
     );
     let sel_idx = dl
         .ops

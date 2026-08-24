@@ -35,8 +35,9 @@ pub enum DisplayOp {
     },
 }
 
-/// A selection to highlight: locator range plus fill color, painted per
-/// line under the text.
+/// A range to highlight: locator range plus fill color, painted per line
+/// under the text. Stored highlights and the transient selection are the
+/// same op — only the color differs.
 #[derive(Debug, Clone, Copy)]
 pub struct Selection {
     pub start: u32,
@@ -46,13 +47,10 @@ pub struct Selection {
 
 /// Flatten a laid-out page into draw ops. `background` becomes the first op
 /// (a full-page fill), so themes (night mode) are a color choice here, not a
-/// renderer concern. A `selection` paints its highlight rect immediately
-/// before each line it touches — over earlier backgrounds, under the text.
-pub fn build_display_list(
-    page: &Page,
-    background: Rgba,
-    selection: Option<Selection>,
-) -> DisplayList {
+/// renderer concern. Each of `selections` paints its highlight rect
+/// immediately before each line it touches — over earlier backgrounds,
+/// under the text — in slice order, so a later one covers an earlier one.
+pub fn build_display_list(page: &Page, background: Rgba, selections: &[Selection]) -> DisplayList {
     let mut ops = vec![DisplayOp::FillRect {
         rect: Rect::new(0.0, 0.0, page.size.w, page.size.h),
         color: background,
@@ -63,13 +61,13 @@ pub fn build_display_list(
             // Hidden text paints only its selection highlight — the pixels
             // are in the raster underneath.
             FragmentKind::HiddenText(line) => {
-                if let Some(sel) = selection {
-                    push_selection_rect(&mut ops, fragment, line, sel);
+                for sel in selections {
+                    push_selection_rect(&mut ops, fragment, line, *sel);
                 }
             }
             FragmentKind::Line(line) => {
-                if let Some(sel) = selection {
-                    push_selection_rect(&mut ops, fragment, line, sel);
+                for sel in selections {
+                    push_selection_rect(&mut ops, fragment, line, *sel);
                 }
                 let origin = Point::new(
                     fragment.rect.origin.x,

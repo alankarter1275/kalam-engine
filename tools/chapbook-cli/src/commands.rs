@@ -205,7 +205,7 @@ pub fn render(
         ))
     })?;
 
-    let dl = chapbook_paint::build_display_list(page_data, theme.background(), None);
+    let dl = chapbook_paint::build_display_list(page_data, theme.background(), &[]);
     let scale = metrics.dpi_scale;
     let mut pixmap = chapbook_render_tinyskia::tiny_skia::Pixmap::new(
         (dl.size.w * scale) as u32,
@@ -502,7 +502,7 @@ fn render_image_book(
 
     let metrics = PageMetrics::default();
     let page = chapbook_paint::image_page(&metrics, w, h, 1);
-    let dl = chapbook_paint::build_display_list(&page, theme.background(), None);
+    let dl = chapbook_paint::build_display_list(&page, theme.background(), &[]);
     let scale = metrics.dpi_scale;
     let mut pixmap = chapbook_render_tinyskia::tiny_skia::Pixmap::new(
         (dl.size.w * scale) as u32,

@@ -636,10 +636,16 @@ impl Session {
     /// book's unit resolves only once its page has loaded.
     pub fn highlights(&mut self, spine: usize) -> &[Highlight] {
         if !self.resolved_highlights.contains_key(&spine) {
-            let Some(text) = self.unit_text(spine) else {
-                return &[];
+            // Extracting a unit's text is not free; skip it entirely when
+            // nothing is stored against this unit.
+            let resolved = if self.stored_highlights.iter().any(|h| h.target == spine) {
+                let Some(text) = self.unit_text(spine) else {
+                    return &[];
+                };
+                self.resolve_highlights(spine, &text)
+            } else {
+                Vec::new()
             };
-            let resolved = self.resolve_highlights(spine, &text);
             self.resolved_highlights.insert(spine, resolved);
         }
         self.resolved_highlights
@@ -770,13 +776,26 @@ impl Session {
                 self.pending_offset = None;
             }
         }
-        let selection = self.selected_range().map(|(start, end)| Selection {
-            start,
-            end,
-            color: self.settings.theme.selection(),
-        });
-        let background = self.settings.theme.background();
         let (spine, page_idx) = (self.spine, self.page);
+        // Stored highlights first, the live selection on top of them.
+        let highlight_color = self.settings.theme.highlight();
+        let mut selections: Vec<Selection> = self
+            .highlights(spine)
+            .iter()
+            .map(|h| Selection {
+                start: h.start,
+                end: h.end,
+                color: highlight_color,
+            })
+            .collect();
+        if let Some((start, end)) = self.selected_range() {
+            selections.push(Selection {
+                start,
+                end,
+                color: self.settings.theme.selection(),
+            });
+        }
+        let background = self.settings.theme.background();
         let page_count = self.layout_unit(spine).map_or(0, |l| l.pages.len());
         if page_count == 0 {
             return None;
@@ -785,7 +804,7 @@ impl Session {
         let page_idx = page_idx.min(page_count - 1);
         let layout = self.layouts.get(&spine)?;
         let page = layout.pages.get(page_idx)?;
-        let dl = chapbook_paint::build_display_list(page, background, selection);
+        let dl = chapbook_paint::build_display_list(page, background, &selections);
 
         let scale = metrics.dpi_scale;
         let mut pixmap =

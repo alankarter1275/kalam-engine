@@ -249,8 +249,17 @@ fn epub_highlight_persists_across_sessions() {
     );
     assert_eq!(stored[0].text.as_deref(), Some(text.as_str()));
 
+    let painted = s.render().expect("page renders");
+    // Locator space doesn't move under relayout, so the highlight is
+    // unchanged at a different font size.
+    s.adjust_font(4.0);
+    assert_eq!(s.highlights(0), &stored[..]);
+    s.adjust_font(-4.0);
+
     s.remove_highlight(stored[0].id);
     assert!(s.highlights(0).is_empty(), "delete clears the cache too");
+    let plain = s.render().expect("page renders");
+    assert_ne!(painted.data(), plain.data(), "the highlight was painted");
 
     let mut s = reopen_isolated("epub-highlight", &source);
     s.set_metrics(metrics());
