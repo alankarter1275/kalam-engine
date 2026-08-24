@@ -29,11 +29,14 @@ placed so an image-per-page format (CBZ) can join later without a redesign:
   never via an EPUB re-export, so `grep chapbook_epub` stays an honest
   coupling map. Four producers exist: `chapbook-epub` (rbook), `chapbook-cbz`
   (each archive image = one spine item, natural-sorted, media type guessed
-  from extension — no manifest), `chapbook_opds::StreamedComic` (OPDS-PSE
+  from extension — no manifest, but a `ComicInfo.xml` sidecar, when the
+  archive carries one, supplies metadata and `Page/@Bookmark` toc entries),
+  `chapbook_opds::StreamedComic` (OPDS-PSE
   page streaming, one HTTP fetch per page through a 0-based `{pageNumber}`
   template, disk-cached), and `chapbook-pdf` (pages rasterized at 2×
   via hayro — pure Rust, CPU-only; encrypted PDFs rejected; MSRV floor is
-  hayro's 1.92 — plus a text layer: a recording `Device` captures per-glyph
+  hayro's 1.92 — with the catalog's `/Outlines` walked into a nested toc,
+  plus a text layer: a recording `Device` captures per-glyph
   Unicode and geometry during interpretation, reading order reconstructed
   by baseline clustering, surfacing as `HiddenText` fragments so selection
   works on PDF pages exactly as on reflowed text). The streamed producer is what the
