@@ -89,9 +89,10 @@ and don't.
 
 ## 2. The reading model above the page
 
-The session can turn pages, change fonts, select, copy, and highlight. An
-ereader app needs more, and most of what's left is not expressible through
-the API, so every shell would reinvent it differently.
+The session could turn pages and change fonts; everything else here was a
+gap a shell would have had to reinvent. Most of it has since landed —
+what's left is called out per item, and the one structural piece is the
+session's own shape, which §3 forces anyway.
 
 **Navigation (landed).** `goto`, `goto_anchor`, `goto_toc`, `link_at`,
 `follow_link`, and a capped back-stack: jumps remember where they came from,
@@ -103,14 +104,15 @@ fragment tree — paint carries no DOM types — which also means a link hit
 test survives relayout for free, and that a tap in the margin beside a link
 is not a tap on the link.
 
-**Annotations (half-collected).** The write path is joined:
-`Session::add_highlight` captures both selection endpoints as layered
-locators, `highlights(spine)` re-anchors them per unit, and stored ranges
-paint under the text in a color of their own. What remains is the rest of
-the model — hit-testing a tap against an existing highlight, so a reader can
-select, recolor, or delete one by touching it rather than by id; notes and
-bookmarks (the schema has `AnnotationKind::Note` and `Bookmark`, and only
-`Highlight` has a caller); a whole-book annotation list; and export.
+**Annotations (landed, minus export).** Highlights, notes, and bookmarks all
+have callers; `highlight_at` finds the mark under a tap so a reader can
+recolor or delete one by touching it rather than by id; `annotations()`
+lists every mark in the book without resolving any of them, since the
+stored record already carries its quote and progression; `goto_annotation`
+jumps to one. Bookmarks are points and paint nothing. Colors are stored as
+written and fall back to the theme when absent or unparseable. What's left
+is interchange — serializing the W3C EPUB Annotations 1.0 / Readium profile
+(§5), not more model.
 
 **Search (in-book landed).** `search_unit` is the building block — a shell
 wanting the whole book without blocking drives it unit by unit on a worker —
@@ -219,17 +221,17 @@ The unglamorous half, and the real distance between "modular codebase" and
 
 ## Priorities
 
-1. **Navigation, search, and the rest of annotations (§2)** — table stakes;
-   the substrate exists and highlights proved it works; prevents divergent
-   reinvention across shells.
-2. **FFI boundary (§3)** — gate on the largest device markets; forces the
-   session API into SDK shape.
-3. **Sync clients (§5)** — belongs to the platform, not to each app.
-4. **Hygiene (§6)** — continuous, never urgent, decides whether any of this
+1. **FFI boundary (§3)** — gate on the largest device markets; forces the
+   session API into SDK shape, which is also what §2's remaining piece
+   (typed sources and injectable I/O instead of `open(&str)`) needs.
+2. **Sync clients (§5)** — belongs to the platform, not to each app, and
+   annotation interchange rides along.
+3. **Hygiene (§6)** — continuous, never urgent, decides whether any of this
    is usable by anyone else.
 
-The render seam (§1) came first and is closed; what remains of it — damage
-for intents other than selection — is an increment, not a gate.
+The render seam (§1) came first and is closed; §2 followed and is closed
+apart from session lifecycle and font-family selection. What remains of §1
+— damage for intents other than selection — is an increment, not a gate.
 
 ## Ceilings to decide deliberately
 

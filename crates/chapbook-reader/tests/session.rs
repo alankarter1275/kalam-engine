@@ -270,7 +270,7 @@ fn epub_highlight_persists_across_sessions() {
     assert_eq!(s.highlights(0), &stored[..]);
     s.adjust_font(-4.0);
 
-    s.remove_highlight(stored[0].id);
+    s.remove_annotation(stored[0].id);
     assert!(s.highlights(0).is_empty(), "delete clears the cache too");
     let plain = s.render().expect("page renders");
     assert_ne!(painted.data(), plain.data(), "the highlight was painted");
@@ -784,4 +784,86 @@ fn a_settings_change_relayouts_and_keeps_the_place() {
         "the page reflowed"
     );
     assert_eq!(s.spine(), 0, "and the reader stayed put");
+}
+
+#[test]
+fn taps_find_highlights_recolor_them_and_list_every_mark() {
+    use chapbook_library::AnnotationKind;
+
+    let source = fixture("epub/illustrated.epub");
+    let (id, point) = {
+        let mut s = open_isolated("epub-annotations", &source);
+        s.set_metrics(metrics());
+        s.render().expect("page renders");
+
+        assert!(s.selection_begin(100.0, 70.0), "press must hit the heading");
+        s.selection_drag(400.0, 70.0);
+        let id = s.add_highlight().expect("highlight is stored");
+        s.selection_clear();
+
+        // A tap inside the marked words finds it; the margin beside them
+        // does not.
+        assert_eq!(s.highlight_at(110.0, 70.0), Some(id));
+        assert_eq!(s.highlight_at(2.0, 70.0), None);
+        (id, (110.0, 70.0))
+    };
+
+    let mut s = reopen_isolated("epub-annotations", &source);
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+    assert_eq!(
+        s.highlight_at(point.0, point.1),
+        Some(id),
+        "found after a reload"
+    );
+
+    // Recoloring paints differently and survives the session.
+    let themed = s.render().expect("page renders").data().to_vec();
+    s.set_highlight_color(id, Some("#ff0000"));
+    assert_ne!(
+        s.render().expect("page renders").data(),
+        &themed[..],
+        "the stored color reached the page"
+    );
+    drop(s);
+
+    let mut s = reopen_isolated("epub-annotations", &source);
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+    assert_eq!(
+        s.highlights(0)[0].color.as_deref(),
+        Some("#ff0000"),
+        "the color persisted"
+    );
+
+    // Notes and bookmarks are marks too, and all three list together.
+    assert!(s.selection_begin(100.0, 70.0));
+    s.selection_drag(300.0, 70.0);
+    let note = s.add_note("worth revisiting").expect("note is stored");
+    s.selection_clear();
+    let bookmark = s.add_bookmark().expect("bookmark is stored");
+
+    let all = s.annotations();
+    assert_eq!(all.len(), 3, "{all:?}");
+    assert_eq!(
+        all.iter()
+            .filter(|a| a.kind == AnnotationKind::Bookmark)
+            .count(),
+        1
+    );
+    let note_summary = all.iter().find(|a| a.id == note).expect("note listed");
+    assert_eq!(note_summary.kind, AnnotationKind::Note);
+    assert_eq!(note_summary.text.as_deref(), Some("worth revisiting"));
+    assert!(all.windows(2).all(|w| w[0].progression <= w[1].progression));
+
+    // A bookmark is a point: it paints nothing, while the ranged marks do.
+    assert_eq!(s.highlights(0).len(), 2, "the bookmark isn't painted");
+
+    // Every mark can be jumped to and taken away again.
+    assert!(s.goto_annotation(bookmark));
+    s.render().expect("page renders");
+    assert_eq!(s.spine(), 0);
+    s.remove_annotation(note);
+    assert_eq!(s.annotations().len(), 2);
+    assert_eq!(s.highlights(0).len(), 1);
 }

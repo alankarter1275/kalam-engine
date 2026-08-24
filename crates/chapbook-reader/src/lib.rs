@@ -28,7 +28,7 @@ use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
     resolve_in_text, BookKind, ChapbookError, LayeredLocator, Locator, PageMetrics, PixelFormat,
-    Point, Publication, ReadingSettings, Rect, Result, Rotation, SpineItem, TocEntry,
+    Point, Publication, ReadingSettings, Rect, Result, Rgba, Rotation, SpineItem, TocEntry,
 };
 use chapbook_layout::ChapterLayout;
 use chapbook_library::AnnotationKind;
@@ -39,6 +39,8 @@ use chapbook_paint::{Frame, FrameIntent, ImageStore, Selection};
 // display-list vocabulary, the font database its glyph runs name faces
 // in, and the bundled CPU backend.
 pub use chapbook_core;
+// Annotation kinds and library records surface in this crate's own API.
+pub use chapbook_library;
 pub use chapbook_paint;
 pub use chapbook_render_tinyskia;
 pub use chapbook_render_tinyskia::tiny_skia;
@@ -121,12 +123,31 @@ pub struct Highlight {
     pub end: u32,
     /// The text as captured, for a highlight list.
     pub text: Option<String>,
+    /// Stored color as written (`#rrggbb`); `None` follows the theme.
+    pub color: Option<String>,
 }
 
-/// A highlight as the library stores it, plus where it lands in this
+/// One stored annotation as recorded — enough to list every mark in a book
+/// without resolving any of them against unit text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnnotationSummary {
+    pub id: i64,
+    pub kind: AnnotationKind,
+    /// Unit the annotation resolves against in this book.
+    pub spine_index: usize,
+    /// Whole-book progression of its start, for ordering and for showing
+    /// where in the book it sits.
+    pub progression: f64,
+    /// The quoted text for a highlight, the body for a note.
+    pub text: Option<String>,
+    pub color: Option<String>,
+}
+
+/// An annotation as the library stores it, plus where it lands in this
 /// book's spine. Resolution into offsets waits for the unit's text.
-struct StoredHighlight {
+struct StoredAnnotation {
     id: i64,
+    kind: AnnotationKind,
     /// Spine item the endpoints resolve against: by href where the book
     /// still has that item, else the stored index.
     target: usize,
@@ -134,8 +155,10 @@ struct StoredHighlight {
     /// same edition, are the exact offsets trustworthy.
     href_matched: bool,
     start: LayeredLocator,
-    end: LayeredLocator,
+    /// Ranged kinds (highlights, notes) have an end; a bookmark is a point.
+    end: Option<LayeredLocator>,
     text: Option<String>,
+    color: Option<String>,
 }
 
 /// Book-wide char counts around the current unit — what
@@ -177,8 +200,8 @@ pub struct Session {
     selection: Option<(u32, u32)>,
     library: Option<chapbook_library::Library>,
     book_id: Option<chapbook_library::BookId>,
-    /// Highlights as stored, awaiting resolution against unit text.
-    stored_highlights: Vec<StoredHighlight>,
+    /// Annotations as stored, awaiting resolution against unit text.
+    stored: Vec<StoredAnnotation>,
     /// Resolved per unit, cached: the locator space of a unit doesn't move
     /// under relayout, so this survives font-size and theme changes.
     resolved_highlights: HashMap<usize, Vec<Highlight>>,
@@ -287,31 +310,31 @@ impl Session {
 
         // Highlights load with the book; endpoints resolve lazily, per
         // unit, once that unit's locator text is available.
-        let stored_highlights = match (&library, book_id) {
+        let stored = match (&library, book_id) {
             (Some(lib), Some(id)) => lib
                 .annotations(id)
-                .map_err(|e| eprintln!("chapbook: failed to read highlights: {e}"))
+                .map_err(|e| eprintln!("chapbook: failed to read annotations: {e}"))
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|a| a.kind == AnnotationKind::Highlight)
-                .filter_map(|a| {
-                    let end = a.end?;
+                .map(|a| {
                     let by_href = book
                         .publication()
                         .spine()
                         .iter()
                         .position(|s: &SpineItem| s.href == a.start.spine_href);
                     let len = book.publication().spine().len();
-                    Some(StoredHighlight {
+                    StoredAnnotation {
                         id: a.id,
+                        kind: a.kind,
                         target: by_href
                             .unwrap_or(a.start.spine_index)
                             .min(len.saturating_sub(1)),
                         href_matched: by_href.is_some(),
                         start: a.start,
-                        end,
+                        end: a.end,
                         text: a.text,
-                    })
+                        color: a.color,
+                    }
                 })
                 .collect(),
             _ => Vec::new(),
@@ -363,7 +386,7 @@ impl Session {
             selection: None,
             library,
             book_id,
-            stored_highlights,
+            stored,
             resolved_highlights: HashMap::new(),
             same_edition,
             empty_images: ImageStore::default(),
@@ -950,31 +973,67 @@ impl Session {
     /// streams have no local record), or on a comic — no text layer, so
     /// nothing to anchor to.
     pub fn add_highlight(&mut self) -> Option<i64> {
-        let (start, end) = self.selected_range()?;
-        let text = self.selected_text()?;
-        let (start_loc, end_loc) = self.capture_endpoints(start, end)?;
+        self.add_ranged(AnnotationKind::Highlight, None)
+    }
+
+    /// Attach a note to the current selection. The quoted text is kept as
+    /// the annotation's text, the note body as its own record — a note is a
+    /// highlight that says something.
+    pub fn add_note(&mut self, body: &str) -> Option<i64> {
+        self.add_ranged(AnnotationKind::Note, Some(body))
+    }
+
+    /// Bookmark the current page. A point, not a range, so it needs no
+    /// selection — but it does need a text unit to anchor in.
+    pub fn add_bookmark(&mut self) -> Option<i64> {
+        let offset = self.current_offset();
+        let (start, _) = self.capture_endpoints(offset, offset)?;
         let book_id = self.book_id?;
         let id = self
             .library
             .as_mut()?
-            .add_annotation(
-                book_id,
-                AnnotationKind::Highlight,
-                &start_loc,
-                Some(&end_loc),
-                Some(&text),
-                None,
-            )
-            .map_err(|e| eprintln!("chapbook: failed to save highlight: {e}"))
+            .add_annotation(book_id, AnnotationKind::Bookmark, &start, None, None, None)
+            .map_err(|e| eprintln!("chapbook: failed to save bookmark: {e}"))
             .ok()?;
         let spine = self.spine;
-        self.stored_highlights.push(StoredHighlight {
+        self.stored.push(StoredAnnotation {
             id,
+            kind: AnnotationKind::Bookmark,
+            target: spine,
+            href_matched: true,
+            start,
+            end: None,
+            text: None,
+            color: None,
+        });
+        self.mark(FrameIntent::Annotation);
+        Some(id)
+    }
+
+    fn add_ranged(&mut self, kind: AnnotationKind, body: Option<&str>) -> Option<i64> {
+        let (start, end) = self.selected_range()?;
+        let quote = self.selected_text()?;
+        let (start_loc, end_loc) = self.capture_endpoints(start, end)?;
+        let book_id = self.book_id?;
+        // A note keeps its body; a highlight keeps the words it marks.
+        let text = body.unwrap_or(quote.as_str());
+        let id = self
+            .library
+            .as_mut()?
+            .add_annotation(book_id, kind, &start_loc, Some(&end_loc), Some(text), None)
+            .map_err(|e| eprintln!("chapbook: failed to save annotation: {e}"))
+            .ok()?;
+        let spine = self.spine;
+        let text = Some(text.to_string());
+        self.stored.push(StoredAnnotation {
+            id,
+            kind,
             target: spine,
             href_matched: true,
             start: start_loc,
-            end: end_loc,
-            text: Some(text.clone()),
+            end: Some(end_loc),
+            text: text.clone(),
+            color: None,
         });
         self.mark(FrameIntent::Annotation);
         // Show it immediately: the cache is authoritative once populated.
@@ -986,19 +1045,44 @@ impl Session {
                 spine,
                 start,
                 end,
-                text: Some(text),
+                text,
+                color: None,
             });
         Some(id)
     }
 
-    /// Stored highlights landing in `spine`, resolved into its locator
-    /// space and cached. Empty while that text is unavailable — an image
-    /// book's unit resolves only once its page has loaded.
+    /// Every mark in the book, as stored — no unit text is read, so this
+    /// is cheap enough for a list. Ordered by position in the book.
+    pub fn annotations(&self) -> Vec<AnnotationSummary> {
+        let mut all: Vec<AnnotationSummary> = self
+            .stored
+            .iter()
+            .map(|a| AnnotationSummary {
+                id: a.id,
+                kind: a.kind,
+                spine_index: a.target,
+                progression: a.start.book_progression,
+                text: a.text.clone(),
+                color: a.color.clone(),
+            })
+            .collect();
+        all.sort_by(|a, b| {
+            a.progression
+                .total_cmp(&b.progression)
+                .then(a.id.cmp(&b.id))
+        });
+        all
+    }
+
+    /// Marks that paint in `spine`, resolved into its locator space and
+    /// cached. Empty while that text is unavailable — an image book's unit
+    /// resolves only once its page has loaded. Bookmarks are points and
+    /// paint nothing, so they aren't here.
     pub fn highlights(&mut self, spine: usize) -> &[Highlight] {
         if !self.resolved_highlights.contains_key(&spine) {
             // Extracting a unit's text is not free; skip it entirely when
             // nothing is stored against this unit.
-            let resolved = if self.stored_highlights.iter().any(|h| h.target == spine) {
+            let resolved = if self.stored.iter().any(|a| a.target == spine) {
                 let Some(text) = self.unit_text(spine) else {
                     return &[];
                 };
@@ -1013,15 +1097,71 @@ impl Session {
             .map_or(&[][..], Vec::as_slice)
     }
 
-    /// Delete a highlight (a soft delete in the library, kept for sync).
-    pub fn remove_highlight(&mut self, id: i64) {
+    /// The stored highlight under a point in panel coordinates — what a
+    /// tap needs to select, recolor, or delete one by touching it. Only
+    /// inside the marked text, like a link.
+    pub fn highlight_at(&mut self, x: f32, y: f32) -> Option<i64> {
+        let (px, py) = self.metrics.map_or((x, y), |m| m.panel_to_page(x, y));
+        let (spine, page) = (self.spine, self.page);
+        let offset = self
+            .layout_unit(spine)?
+            .pages
+            .get(page)?
+            .offset_at_exact(Point::new(px, py))?;
+        self.highlights(spine)
+            .iter()
+            .find(|h| offset >= h.start && offset < h.end)
+            .map(|h| h.id)
+    }
+
+    /// Recolor a highlight. `None` hands it back to the theme color.
+    /// Colors are `#rgb`, `#rrggbb`, or `#rrggbbaa`.
+    pub fn set_highlight_color(&mut self, id: i64, color: Option<&str>) {
         if let Some(library) = self.library.as_mut() {
-            if let Err(e) = library.delete_annotation(id) {
-                eprintln!("chapbook: failed to delete highlight: {e}");
+            if let Err(e) = library.set_annotation_color(id, color) {
+                eprintln!("chapbook: failed to recolor annotation: {e}");
                 return;
             }
         }
-        self.stored_highlights.retain(|h| h.id != id);
+        let color = color.map(str::to_string);
+        for stored in self.stored.iter_mut().filter(|a| a.id == id) {
+            stored.color = color.clone();
+        }
+        for resolved in self.resolved_highlights.values_mut() {
+            for highlight in resolved.iter_mut().filter(|h| h.id == id) {
+                highlight.color = color.clone();
+            }
+        }
+        self.mark(FrameIntent::Annotation);
+    }
+
+    /// Jump to a stored annotation. `false` if its unit can't be read.
+    pub fn goto_annotation(&mut self, id: i64) -> bool {
+        let Some((target, start)) = self
+            .stored
+            .iter()
+            .find(|a| a.id == id)
+            .map(|a| (a.target, a.start.clone()))
+        else {
+            return false;
+        };
+        let Some(text) = self.unit_text(target) else {
+            return false;
+        };
+        let trusted = self.same_edition && self.stored.iter().any(|a| a.id == id && a.href_matched);
+        let offset = resolve_in_text(&text, &start, trusted).offset();
+        self.goto(Locator::new(target, offset))
+    }
+
+    /// Delete an annotation (a soft delete in the library, kept for sync).
+    pub fn remove_annotation(&mut self, id: i64) {
+        if let Some(library) = self.library.as_mut() {
+            if let Err(e) = library.delete_annotation(id) {
+                eprintln!("chapbook: failed to delete annotation: {e}");
+                return;
+            }
+        }
+        self.stored.retain(|a| a.id != id);
         for resolved in self.resolved_highlights.values_mut() {
             resolved.retain(|h| h.id != id);
         }
@@ -1029,21 +1169,23 @@ impl Session {
     }
 
     fn resolve_highlights(&self, spine: usize, text: &str) -> Vec<Highlight> {
-        self.stored_highlights
+        self.stored
             .iter()
-            .filter(|h| h.target == spine)
-            .filter_map(|h| {
-                let trusted = self.same_edition && h.href_matched;
-                let start = resolve_in_text(text, &h.start, trusted).offset();
-                let end = resolve_in_text(text, &h.end, trusted).offset();
+            .filter(|a| a.target == spine && a.kind != AnnotationKind::Bookmark)
+            .filter_map(|a| {
+                let end_loc = a.end.as_ref()?;
+                let trusted = self.same_edition && a.href_matched;
+                let start = resolve_in_text(text, &a.start, trusted).offset();
+                let end = resolve_in_text(text, end_loc, trusted).offset();
                 // A range that collapsed under re-anchoring has nothing
                 // left to paint.
                 (end > start).then(|| Highlight {
-                    id: h.id,
+                    id: a.id,
                     spine,
                     start,
                     end,
-                    text: h.text.clone(),
+                    text: a.text.clone(),
+                    color: a.color.clone(),
                 })
             })
             .collect()
@@ -1206,7 +1348,14 @@ impl Session {
             .map(|h| Selection {
                 start: h.start,
                 end: h.end,
-                color: highlight_color,
+                // A stored color keeps the theme's transparency unless it
+                // states its own; an unparseable one falls back rather
+                // than vanishing.
+                color: h
+                    .color
+                    .as_deref()
+                    .and_then(|hex| Rgba::from_hex(hex, highlight_color.a))
+                    .unwrap_or(highlight_color),
             })
             .collect();
         if let Some((start, end)) = self.selected_range() {

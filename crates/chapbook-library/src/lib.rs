@@ -507,6 +507,19 @@ impl Library {
     }
 
     /// Soft-delete an annotation (kept for future sync; never hard-deleted).
+    /// Recolor an annotation. `None` hands it back to the reader's theme
+    /// color.
+    pub fn set_annotation_color(&mut self, annotation_id: i64, color: Option<&str>) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE annotations SET color = ?2, updated_at = strftime('%s','now')
+                 WHERE id = ?1",
+                params![annotation_id, color],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     pub fn delete_annotation(&mut self, annotation_id: i64) -> Result<()> {
         self.conn
             .execute(

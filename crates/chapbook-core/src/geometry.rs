@@ -154,11 +154,62 @@ impl Rgba {
         Rgba { r, g, b, a }
     }
 
+    /// Parse `#rgb`, `#rrggbb`, or `#rrggbbaa` (the leading `#` optional).
+    /// Forms without an alpha channel take `alpha`, so a stored highlight
+    /// color can be written as plain `#ffcc00` and still paint under text.
+    pub fn from_hex(s: &str, alpha: u8) -> Option<Rgba> {
+        let hex = s.trim().trim_start_matches('#');
+        let nibble = |i: usize| u8::from_str_radix(&hex[i..i + 1], 16).ok();
+        let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+        match hex.len() {
+            3 => Some(Rgba::new(
+                nibble(0)? * 17,
+                nibble(1)? * 17,
+                nibble(2)? * 17,
+                alpha,
+            )),
+            6 => Some(Rgba::new(byte(0)?, byte(2)?, byte(4)?, alpha)),
+            8 => Some(Rgba::new(byte(0)?, byte(2)?, byte(4)?, byte(6)?)),
+            _ => None,
+        }
+    }
+
     pub fn is_opaque(&self) -> bool {
         self.a == 255
     }
 
     pub fn is_transparent(&self) -> bool {
         self.a == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_colors_parse_in_every_length() {
+        assert_eq!(Rgba::from_hex("#fc0", 90), Some(Rgba::new(255, 204, 0, 90)));
+        assert_eq!(
+            Rgba::from_hex("#ffcc00", 90),
+            Some(Rgba::new(255, 204, 0, 90))
+        );
+        // An explicit alpha wins over the fallback.
+        assert_eq!(
+            Rgba::from_hex("ffcc0040", 90),
+            Some(Rgba::new(255, 204, 0, 64))
+        );
+        assert_eq!(Rgba::from_hex("not a color", 90), None);
+        assert_eq!(Rgba::from_hex("#ggg", 90), None);
+        assert_eq!(Rgba::from_hex("", 90), None);
+    }
+
+    #[test]
+    fn a_union_covers_both_rects() {
+        let a = Rect::new(10.0, 10.0, 20.0, 5.0);
+        let b = Rect::new(0.0, 30.0, 5.0, 5.0);
+        let u = a.union(&b);
+        assert_eq!((u.min_x(), u.min_y()), (0.0, 10.0));
+        assert_eq!((u.max_x(), u.max_y()), (30.0, 35.0));
     }
 }
