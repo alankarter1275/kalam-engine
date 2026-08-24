@@ -180,9 +180,10 @@ Increments left, in the order they will hurt:
   that it is right.
 
   Its packing is checked against pixel formats a kernel chose, not ones we
-  typed: QEMU with `vga=` boots vesafb at RGB565, at 24bpp, and at 8bpp
-  palette, and `--example selftest` writes known colours and reads them
-  back. That found a real defect — an 8bpp palette framebuffer reports all
+  typed: `scripts/fbdev-vm.sh` boots vesafb under QEMU at RGB565, at
+  24bpp, and at 8bpp palette, and `--example selftest` writes known
+  colours and reads them back. That harness is x86_64 only — the ARM
+  targets are compiled, never run. That found a real defect — an 8bpp palette framebuffer reports all
   three channels at offset 0 with length 8, which is not a layout at all,
   and packing to it collapsed every colour onto one value. Classification
   now comes from `fb_fix_screeninfo.visual` rather than from the shape of

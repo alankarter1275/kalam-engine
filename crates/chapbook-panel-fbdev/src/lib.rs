@@ -27,17 +27,18 @@
 //! ones: a host kernel, an initramfs holding `busybox` and the examples,
 //! and `vga=` to pick a mode.
 //!
+//! `scripts/fbdev-vm.sh [vga-mode]` does the whole thing: builds the
+//! examples, assembles the initramfs, boots, reports, powers off.
+//!
 //! ```text
-//! qemu-system-x86_64 -kernel /boot/vmlinuz-$(uname -r) -initrd initramfs.gz \
-//!   -append "console=ttyS0 vga=0x314 nomodeset panic=1" \
-//!   -vga std -m 512 -nographic -no-reboot
+//! scripts/fbdev-vm.sh 0x314
 //! ```
 //!
 //! `vga=0x314` is 800x600 RGB565, `0x317` is 1024x768 RGB565, `0x315`
 //! lands on 24bpp — which is worth running, since three-byte pixels are
 //! the awkward case for byte order — and `0x303` is an 8bpp palette, which
-//! this backend refuses. The init script must mount devtmpfs itself;
-//! stock kernels do not all set `CONFIG_DEVTMPFS_MOUNT`.
+//! this backend refuses. Nothing in it needs root, and it never touches
+//! the host's own framebuffer.
 //!
 //! That is how the palette rejection and the RGB565 packing were checked
 //! against a kernel rather than against an assumption.
