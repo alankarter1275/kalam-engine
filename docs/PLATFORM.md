@@ -182,13 +182,19 @@ Increments left, in the order they will hurt:
   Its packing is checked against pixel formats a kernel chose, not ones we
   typed: `scripts/fbdev-vm.sh` boots vesafb under QEMU at RGB565, at
   24bpp, and at 8bpp palette, and `--example selftest` writes known
-  colours and reads them back. That harness is x86_64 only — the ARM
-  targets are compiled, never run. That found a real defect — an 8bpp palette framebuffer reports all
-  three channels at offset 0 with length 8, which is not a layout at all,
-  and packing to it collapsed every colour onto one value. Classification
-  now comes from `fb_fix_screeninfo.visual` rather than from the shape of
-  the bitfields, and palette and monochrome visuals are refused with a
-  reason instead of drawn wrong.
+  colours and reads them back. That found a real defect: an 8bpp palette
+  framebuffer reports all three channels at offset 0 with length 8, which
+  is not a layout at all, and packing to it collapsed every colour onto
+  one value. Classification now comes from `fb_fix_screeninfo.visual`
+  rather than from the shape of the bitfields, and palette and monochrome
+  visuals are refused with a reason instead of drawn wrong. The harness is
+  x86_64 only — the ARM targets are compiled, never run.
+
+  It has a hole, and it is the one that matters most: vesafb offers
+  *palette* at 8bpp, not greyscale, so `Encoding::Grey` — the path a real
+  Kobo or Kindle is most likely to take, since KOReader forces 8bpp grey
+  on devices that do not default to it — is still covered only by unit
+  tests against constants we typed.
 - **Damage beyond selections and highlights.** A page turn that only moves
   a footer, or an image landing in a fixed rect, could both state their
   region and don't.
@@ -207,6 +213,75 @@ Increments left, in the order they will hurt:
   text does not, but one flag covers the whole page, so it cannot be both.
   The display list knows which ops are images; that information is being
   discarded. Mostly harmless at 16 levels, decisive at 2.
+- **Quantizing above the panel is redundant on the hardware that matters,
+  and the level count is attached to the wrong thing.** An EPDC quantizes
+  and dithers itself — passthrough, Floyd–Steinberg, Atkinson, ordered,
+  quant-only, with `quant_bit` setting the depth — so a CPU pass over a
+  multi-megabyte buffer buys nothing on exactly the device where it costs
+  most. Worse, the correct depth is a property of the *update*, not the
+  session: A2 is two levels, GC4 four, GC16 sixteen. Quantize the buffer
+  to sixteen and an A2 update re-quantizes it anyway; quantize to two and
+  the next page turn is ruined. On an EPDC the right move is to hand over
+  8-bit grey undithered and let the controller decide per update, which
+  means `PixelFormat` wants to become a request a panel can decline rather
+  than a decision made above it. That inverts part of the current design,
+  so it is written down rather than acted on.
+- **Sub-byte pixels are foreclosed.** `FbdevPanel::open` rejects any depth
+  that is not a whole number of bytes, so a 1bpp framebuffer is turned
+  away before anything else runs — and 1-bit packed is the *normal* case
+  for a bare SPI panel, as well as what `PixelFormat::Grey { levels: 2 }`
+  exists to serve.
+
+### The targets the seam has to survive
+
+Not a roadmap — a set of shapes to check designs against, because each one
+pulls in a different direction and any two of them agreeing proves nothing.
+
+| Target | Surface | Pixels | Update model |
+|---|---|---|---|
+| Kobo Clara, Kindle (i.MX, Carta) | fbdev + `mxcfb` ioctls | 8bpp grey preferred; RGB565 the common default | EPDC waveforms, hardware dither, `quant_bit` per update |
+| Kobo colour (Kaleido, MTK) | fbdev + MTK ioctls | 32bpp forced — the driver has no 8bpp | waveforms; colour via a filter array over a mono panel |
+| Desktop | swapchain (winit/GTK, tiny-skia or vello) | RGBA | none; present every frame |
+| Android | JNI to a `Surface`; Onyx adds `EpdController` | ARGB_8888 | none, or Onyx's own DU/GC/A2/REGAL |
+| Pi + Waveshare SPI | SPI transfer plus a BUSY pin | 1bpp packed; some panels 2 or 4 levels | whole-panel or window refresh commands |
+
+The encouraging result is that `Panel` survives all five. A file
+descriptor and an mmap, a JNI call, and an SPI transaction are the same
+three operations — stage the pixels, ask for a change, find out when it
+landed — and `blit`/`submit`/`wait` is that, with the token making the
+asynchrony explicit rather than assumed.
+
+Five things the matrix says the abstraction still gets wrong or leaves
+unstated.
+
+**`blit` presumes a mapping.** Its wording is "into the panel's own
+memory", which is true for fbdev and for a locked Android `Surface` but
+not for SPI, where `blit` stages into a buffer and `submit` transmits it.
+The shape is right; the doc needs to stop implying memory.
+
+**A panel must be allowed to enlarge the damage rect.** SPI panels refresh
+byte-aligned windows or nothing smaller than the whole screen, and EPDCs
+carry their own alignment rules. So the contract is that a `PanelRect` is
+a *minimum*: a panel may widen it, never narrow it. Nothing says so today,
+which invites a backend to silently under-refresh.
+
+**E-ink does not imply greyscale.** Kaleido is a colour filter array over a
+mono panel — you send RGB, the array resolves it, and the driver forces
+32bpp. `PixelFormat::Rgba` with a full set of waveforms is a real
+combination. `PixelFormat` and `UpdateClass` being orthogonal already
+handles it; the `2..=16` clamp and the "e-ink means grey" phrasing
+throughout this document do not.
+
+**Who quantizes is per-target.** The EPDC does it in hardware and better;
+a Waveshare panel needs the host to do it *and* to pack to 1 bit; a
+desktop needs none of it. One session-wide decision cannot serve three
+answers — see the quantization item above.
+
+**Android argues for panel-owned staging.** Its natural shape is lock a
+surface, write, unlock, which is exactly `blit` into memory the panel
+owns. Handing a borrowed slice across an FFI boundary every frame works
+but fights the platform, and it is the same conclusion the SPI case
+reaches from the other side. Worth settling before §3 fixes the FFI shape.
 
 ## 2. The reading model above the page
 
