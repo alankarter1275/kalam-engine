@@ -20,7 +20,7 @@ pub use locator::{
     book_progression, find_quote_nearest, resolve_in_text, LayeredLocator, Locator, Quote,
     ResolvedOffset, LOCATOR_VERSION, QUOTE_CONTEXT_CHARS,
 };
-pub use page::{PageMetrics, ReadingSettings, Theme};
+pub use page::{PageMetrics, PixelFormat, ReadingSettings, Theme};
 
 /// Convenience result type used across chapbook crates.
 pub type Result<T> = std::result::Result<T, ChapbookError>;

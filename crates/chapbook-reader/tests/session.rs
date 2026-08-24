@@ -454,3 +454,30 @@ fn a_landed_page_load_is_its_own_intent() {
     }
     assert_eq!(s.frame().unwrap().intent, FrameIntent::ContentArrived);
 }
+
+#[test]
+fn a_grey_panel_gets_grey_pages() {
+    use chapbook_core::PixelFormat;
+
+    let mut s = open_isolated("epub-grey", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    let color = s.render().expect("page renders");
+
+    s.set_pixel_format(PixelFormat::Grey {
+        levels: 2,
+        dither: true,
+    });
+    let grey = s.render().expect("page renders");
+    assert_ne!(color.data(), grey.data(), "the panel format reached render");
+    for px in grey.data().chunks_exact(4) {
+        assert!(px[0] == 0 || px[0] == 255, "not 1-bit: {}", px[0]);
+        assert_eq!((px[1], px[2]), (px[0], px[0]), "grey");
+    }
+
+    // Ops are unchanged by the conversion, so the frame record isn't
+    // disturbed and a partial refresh stays valid.
+    assert_eq!(
+        s.frame().unwrap().intent,
+        chapbook_reader::chapbook_paint::FrameIntent::Repaint
+    );
+}

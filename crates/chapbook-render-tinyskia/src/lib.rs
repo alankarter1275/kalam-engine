@@ -12,7 +12,7 @@ use tiny_skia::{Pixmap, PixmapPaint, PremultipliedColorU8};
 // tiny-skia dependency.
 pub use tiny_skia;
 
-use chapbook_core::{Rect, Rgba};
+use chapbook_core::{PixelFormat, Rect, Rgba};
 use chapbook_paint::{DisplayList, DisplayOp, ImageStore};
 
 pub struct Renderer {
@@ -207,4 +207,165 @@ fn draw_image(pixmap: &mut Pixmap, images: &ImageStore, resource: u64, dest: &Re
     };
     // draw_pixmap positions via the transform; the x/y args stay zero.
     pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, transform, None);
+}
+
+/// Convert a rasterized page for a panel that cannot show full color.
+///
+/// Luminance is Rec. 709 over the sRGB values, quantized to the format's
+/// levels; with `dither` on, the quantization error is diffused
+/// Floyd–Steinberg so a 16-level panel still shows a gradient instead of
+/// banding. Alpha is untouched, and [`PixelFormat::Rgba`] is a no-op.
+///
+/// Pages paint over an opaque background, so premultiplied and straight
+/// values coincide here; this operates on the stored premultiplied bytes
+/// directly.
+pub fn quantize(pixmap: &mut Pixmap, format: PixelFormat) {
+    let PixelFormat::Grey { levels, dither } = format else {
+        return;
+    };
+    let levels = f32::from(levels.clamp(2, 16));
+    let (w, h) = (pixmap.width() as usize, pixmap.height() as usize);
+    let data = pixmap.data_mut();
+
+    // One row of forward error plus the next, so diffusion needs no full
+    // second buffer.
+    let mut error = vec![0.0f32; w + 2];
+    let mut next = vec![0.0f32; w + 2];
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            let (r, g, b) = (
+                f32::from(data[i]),
+                f32::from(data[i + 1]),
+                f32::from(data[i + 2]),
+            );
+            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b + error[x + 1];
+            let step = 255.0 / (levels - 1.0);
+            let quantized = (lum / step).round().clamp(0.0, levels - 1.0) * step;
+            let value = quantized as u8;
+            data[i] = value;
+            data[i + 1] = value;
+            data[i + 2] = value;
+            if !dither {
+                continue;
+            }
+            // Floyd–Steinberg: 7/16 right, 3/16 down-left, 5/16 down,
+            // 1/16 down-right.
+            let residual = lum - quantized;
+            error[x + 2] += residual * 7.0 / 16.0;
+            next[x] += residual * 3.0 / 16.0;
+            next[x + 1] += residual * 5.0 / 16.0;
+            next[x + 2] += residual / 16.0;
+        }
+        std::mem::swap(&mut error, &mut next);
+        next.iter_mut().for_each(|e| *e = 0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pixmap filled with one opaque grey level.
+    fn flat(value: u8, w: u32, h: u32) -> Pixmap {
+        let mut pixmap = Pixmap::new(w, h).unwrap();
+        for px in pixmap.data_mut().chunks_exact_mut(4) {
+            px.copy_from_slice(&[value, value, value, 255]);
+        }
+        pixmap
+    }
+
+    fn mean(pixmap: &Pixmap) -> f32 {
+        let data = pixmap.data();
+        let total: f32 = data.chunks_exact(4).map(|px| f32::from(px[0])).sum();
+        total / (data.len() / 4) as f32
+    }
+
+    #[test]
+    fn rgba_is_untouched() {
+        let mut pixmap = flat(120, 4, 4);
+        let before = pixmap.data().to_vec();
+        quantize(&mut pixmap, PixelFormat::Rgba);
+        assert_eq!(pixmap.data(), &before[..]);
+    }
+
+    #[test]
+    fn one_bit_leaves_only_black_and_white() {
+        let mut pixmap = Pixmap::new(32, 32).unwrap();
+        // A horizontal ramp, so every level is represented.
+        for (i, px) in pixmap.data_mut().chunks_exact_mut(4).enumerate() {
+            let v = ((i % 32) * 8) as u8;
+            px.copy_from_slice(&[v, v, v, 255]);
+        }
+        quantize(
+            &mut pixmap,
+            PixelFormat::Grey {
+                levels: 2,
+                dither: true,
+            },
+        );
+        for px in pixmap.data().chunks_exact(4) {
+            assert!(px[0] == 0 || px[0] == 255, "not 1-bit: {}", px[0]);
+            assert_eq!((px[0], px[1], px[2]), (px[0], px[0], px[0]), "grey");
+            assert_eq!(px[3], 255, "alpha survives");
+        }
+    }
+
+    #[test]
+    fn dithering_holds_the_average_a_flat_quantization_would_lose() {
+        // Mid-grey is exactly between the two 1-bit levels: without
+        // dithering it collapses to one of them; with it, the error
+        // diffuses into a mix that averages back to the original.
+        let mut flat_result = flat(128, 64, 64);
+        quantize(
+            &mut flat_result,
+            PixelFormat::Grey {
+                levels: 2,
+                dither: false,
+            },
+        );
+        assert!(
+            mean(&flat_result) == 0.0 || mean(&flat_result) == 255.0,
+            "undithered mid-grey collapses"
+        );
+
+        let mut dithered = flat(128, 64, 64);
+        quantize(
+            &mut dithered,
+            PixelFormat::Grey {
+                levels: 2,
+                dither: true,
+            },
+        );
+        assert!(
+            (mean(&dithered) - 128.0).abs() < 12.0,
+            "dithered mean drifted: {}",
+            mean(&dithered)
+        );
+    }
+
+    #[test]
+    fn sixteen_levels_land_on_the_steps() {
+        let mut pixmap = Pixmap::new(16, 16).unwrap();
+        for (i, px) in pixmap.data_mut().chunks_exact_mut(4).enumerate() {
+            let v = (i % 256) as u8;
+            px.copy_from_slice(&[v, v, v, 255]);
+        }
+        quantize(
+            &mut pixmap,
+            PixelFormat::Grey {
+                levels: 16,
+                dither: true,
+            },
+        );
+        let step = 255.0 / 15.0;
+        for px in pixmap.data().chunks_exact(4) {
+            let level = f32::from(px[0]) / step;
+            assert!(
+                (level - level.round()).abs() < 0.01,
+                "{} is not a 16-level step",
+                px[0]
+            );
+        }
+    }
 }

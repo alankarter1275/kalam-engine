@@ -1,6 +1,25 @@
 use crate::geometry::{EdgeSizes, Size};
 use crate::Rgba;
 
+/// What the target panel can actually show. E-ink panels are 16-level grey
+/// or 1-bit, and converting for them belongs in the render pipeline — a
+/// shell that does it itself gets a different answer per shell.
+///
+/// The conversion produces grey *in RGBA*: packing those levels into a
+/// device's own buffer layout is the shell's job, since only it knows the
+/// panel's word order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PixelFormat {
+    /// Full color, as laid out. The default.
+    #[default]
+    Rgba,
+    /// Luminance quantized to `levels` steps (clamped to 2..=16: 1-bit and
+    /// 4-bit panels are the real cases). `dither` diffuses the
+    /// quantization error into neighboring pixels, which images need and
+    /// body text usually does not.
+    Grey { levels: u8, dither: bool },
+}
+
 /// A reading color theme. `Light` is the identity theme: it changes
 /// nothing about how a book renders today. The others repaint the page
 /// ground and the *default* text/link colors — publisher-specified colors

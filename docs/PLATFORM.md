@@ -71,10 +71,16 @@ whole page, which is always correct and sometimes pessimistic. Extending it
 past selections (a page turn that only moves a footer, an image landing in
 a fixed rect) is the obvious next increment.
 
+Panel colour is pipeline policy rather than per-shell improvisation:
+`PixelFormat::Grey { levels, dither }` quantizes luminance to a panel's
+2..=16 steps, optionally diffusing the error Floyd–Steinberg so gradients
+survive. `Session::render` applies it; a shell rasterizing a frame itself
+calls the same `quantize`. Packing those levels into a device's own buffer
+layout stays with the shell, which is the only party that knows the panel's
+word order.
+
 Still required:
 
-- **Pixel format policy.** Panels are 16-level grey or 1-bit; greyscale
-  conversion and dithering belong in the pipeline, not in each shell.
 - **Rotation/orientation** as a first-class metric rather than a shell
   concern.
 

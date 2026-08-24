@@ -27,8 +27,8 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    resolve_in_text, BookKind, ChapbookError, LayeredLocator, PageMetrics, Point, Publication,
-    ReadingSettings, Rect, Result, SpineItem,
+    resolve_in_text, BookKind, ChapbookError, LayeredLocator, PageMetrics, PixelFormat, Point,
+    Publication, ReadingSettings, Rect, Result, SpineItem,
 };
 use chapbook_layout::ChapterLayout;
 use chapbook_library::AnnotationKind;
@@ -168,6 +168,8 @@ pub struct Session {
     /// The selection as of the last frame — the other half of a selection
     /// change, needed to damage what it used to cover.
     painted_selection: Option<(u32, u32)>,
+    /// What the target panel can show; applied to rendered pixels.
+    pixel_format: PixelFormat,
 }
 
 impl Session {
@@ -328,6 +330,7 @@ impl Session {
             empty_images: ImageStore::default(),
             pending: FrameIntent::default(),
             painted_selection: None,
+            pixel_format: PixelFormat::default(),
         })
     }
 
@@ -895,6 +898,21 @@ impl Session {
         ))
     }
 
+    /// Convert rendered pages for a panel that can't show full color —
+    /// 16-level grey or 1-bit e-ink. [`Session::render`] applies it; a
+    /// shell rasterizing a frame itself calls
+    /// `chapbook_render_tinyskia::quantize` at the same point.
+    ///
+    /// This changes pixels, not ops, so it does not disturb the frame
+    /// record: the display list is identical either way.
+    pub fn set_pixel_format(&mut self, format: PixelFormat) {
+        self.pixel_format = format;
+    }
+
+    pub fn pixel_format(&self) -> PixelFormat {
+        self.pixel_format
+    }
+
     /// The image store backing the current unit's `Image` ops. Empty for
     /// units that carry no images.
     pub fn image_store(&self) -> &ImageStore {
@@ -924,6 +942,7 @@ impl Session {
         let images = self.images.get(&spine).unwrap_or(&self.empty_images);
         self.renderer
             .render(&dl, &mut self.fonts, images, scale, &mut pixmap);
+        chapbook_render_tinyskia::quantize(&mut pixmap, self.pixel_format);
         Some(pixmap)
     }
 

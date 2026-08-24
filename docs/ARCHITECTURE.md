@@ -143,7 +143,8 @@ stays that way.
   `DecorationLine`, `PushClip`/`PopClip`. Layout produces into it; image
   formats will too.
 - **chapbook-render-tinyskia** — swash glyph raster cache, `image`-decoded
-  resources, scale applied here.
+  resources, scale applied here, plus `quantize` for panels that can't show
+  full color (grey levels, optional Floyd–Steinberg dithering).
 - **chapbook-opds** — blocking `ureq` + rustls (no async runtime). OPDS 1.2
   Atom as the canonical dialect, parsed at the XML level with namespace-aware
   `quick-xml` (NOT `atom_syndication`/`feed-rs`: both silently drop the
