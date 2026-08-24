@@ -251,19 +251,22 @@ three operations — stage the pixels, ask for a change, find out when it
 landed — and `blit`/`submit`/`wait` is that, with the token making the
 asynchrony explicit rather than assumed.
 
-Five things the matrix says the abstraction still gets wrong or leaves
-unstated.
+Two of the gaps it exposed were contract wording rather than design, and
+are settled. `blit` no longer says "into the panel's own memory" — true
+for a mapped framebuffer and a locked platform surface, false for a panel
+on the far end of a bus, where `blit` stages and `submit` transmits; the
+obligation is only that the pixels are taken before it returns. And
+`submit` now states that a panel may refresh **more** than it was asked to
+and never less, since controllers impose alignment and bus-attached panels
+refresh byte-aligned windows or the whole screen. Widening costs time;
+narrowing leaves the screen showing something untrue, which on e-ink
+persists. A panel that widens owns the consequence: the no-write-under-a-
+live-update rule is enforced above against the region *requested*, because
+that is all a caller knows, so a panel that went further must make its own
+`blit` safe — which on a bus falls out for free, since it cannot transmit
+while the controller is busy.
 
-**`blit` presumes a mapping.** Its wording is "into the panel's own
-memory", which is true for fbdev and for a locked Android `Surface` but
-not for SPI, where `blit` stages into a buffer and `submit` transmits it.
-The shape is right; the doc needs to stop implying memory.
-
-**A panel must be allowed to enlarge the damage rect.** SPI panels refresh
-byte-aligned windows or nothing smaller than the whole screen, and EPDCs
-carry their own alignment rules. So the contract is that a `PanelRect` is
-a *minimum*: a panel may widen it, never narrow it. Nothing says so today,
-which invites a backend to silently under-refresh.
+Three things the matrix says the abstraction still gets wrong.
 
 **E-ink does not imply greyscale.** Kaleido is a colour filter array over a
 mono panel — you send RGB, the array resolves it, and the driver forces

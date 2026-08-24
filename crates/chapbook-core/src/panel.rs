@@ -80,6 +80,9 @@ impl UpdateClass {
 /// Conversion always rounds *outward* — a region trimmed by half a pixel
 /// leaves a stale sliver on screen, and on e-ink a stale sliver stays
 /// there until something else disturbs it.
+///
+/// A rect handed to a panel is a *minimum*, never an allowance. See
+/// [`Panel::submit`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PanelRect {
     pub x: u32,
@@ -239,22 +242,47 @@ pub trait Panel {
     /// Geometry and capabilities. Cheap; callers may ask per frame.
     fn info(&self) -> PanelInfo;
 
-    /// Copy `rect` out of a full panel-sized RGBA buffer into the panel's
-    /// own memory, packing to whatever layout the hardware wants.
+    /// Take `rect` from a full panel-sized RGBA buffer, converted to
+    /// whatever this device wants and held wherever this device holds it.
+    ///
+    /// Deliberately not "copy into the panel's memory": that is true of a
+    /// mapped framebuffer and of a locked platform surface, but a panel on
+    /// the far end of a bus has no memory to copy into. There, `blit`
+    /// stages and [`submit`](Panel::submit) transmits. The obligation is
+    /// only that the pixels are taken by the time this returns, since the
+    /// caller may reuse the buffer.
     ///
     /// `rgba` covers the whole panel with a stride of `info().width * 4`,
-    /// already quantized to `info().format` and turned to `info().
-    /// rotation`; `rect` says which part of it is new. Passing the whole
-    /// buffer rather than pre-cropped pixels lets the caller keep one page
-    /// buffer and state damage separately, which is how a display list
-    /// already arrives.
+    /// already quantized to `info().format` and already turned, so it is
+    /// in panel orientation; `rect` says which part of it is new. Passing
+    /// the whole buffer rather than pre-cropped pixels lets the caller
+    /// keep one page buffer and state damage separately, which is how a
+    /// display list already arrives.
     ///
-    /// Packing lives here because only the panel knows its word order —
-    /// four-bit grey packed two to a byte, RGB565, inverted, whatever.
+    /// Conversion lives here because only the panel knows its own spelling
+    /// — four-bit grey packed two to a byte, RGB565, 1bpp packed,
+    /// inverted, whatever.
     fn blit(&mut self, rgba: &[u8], rect: PanelRect) -> Result<()>;
 
-    /// Ask the panel to show `rect`, using whatever waveform this device
-    /// uses for `class`. Returns as soon as the request is queued.
+    /// Ask the panel to show *at least* `rect`, using whatever waveform
+    /// this device uses for `class`. Returns as soon as the request is
+    /// queued.
+    ///
+    /// A panel may refresh **more** than it was asked to and must never
+    /// refresh less. Hardware routinely forces this: controllers impose
+    /// alignment on the region, panels driven over a bus refresh
+    /// byte-aligned windows or nothing smaller than the whole screen, and
+    /// a flash covers everything by definition. Widening only costs time;
+    /// narrowing leaves the screen showing something that is no longer
+    /// true, which on e-ink persists.
+    ///
+    /// A panel that widens owns the consequence. The rule against writing
+    /// under a live update is enforced above here against the region that
+    /// was *requested*, because that is all a caller knows; a panel that
+    /// went further is the only party that knows it did, so it must make
+    /// its own [`blit`](Panel::blit) safe against the region it actually
+    /// took. On a bus-attached panel that falls out for free — it cannot
+    /// transmit while the controller is busy anyway.
     fn submit(&mut self, rect: PanelRect, class: UpdateClass) -> Result<UpdateToken>;
 
     /// Block until a submitted update has finished reaching the glass.
@@ -430,11 +458,16 @@ impl Panel for RecordingPanel {
 /// There are three, and each is the kind of thing that works on a desk and
 /// fails on a device.
 ///
-/// **Do not write under a live update.** The controller is reading panel
-/// memory while it drives the film. Blitting a region an in-flight update
-/// covers tears, or leaves the panel showing a mixture of two frames. The
-/// driver waits only when the regions actually overlap, so an unrelated
-/// corner of the screen never pays for a slow refresh elsewhere.
+/// **Do not write under a live update.** The controller is reading the
+/// staged pixels while it drives the film. Blitting a region an in-flight
+/// update covers tears, or leaves the panel showing a mixture of two
+/// frames. The driver waits only when the regions actually overlap, so an
+/// unrelated corner of the screen never pays for a slow refresh elsewhere.
+///
+/// This is enforced against the region that was *requested*, which is all
+/// a driver can know: [`Panel::submit`] is free to refresh more than it
+/// was asked to, and a panel that widens is responsible for its own
+/// safety, as that contract says.
 ///
 /// **Clean up after fast updates.** A monochrome update leaves its region
 /// at two levels, and e-ink holds that until something disturbs it — so
