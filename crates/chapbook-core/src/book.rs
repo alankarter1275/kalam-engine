@@ -116,3 +116,32 @@ pub trait Publication {
             .ok_or(ChapbookError::SpineOutOfRange(spine_index))
     }
 }
+
+/// One line of a publication's extracted text layer, in natural (point)
+/// page coordinates with a top-left origin.
+///
+/// Image-per-page publications have no markup to locate text in, so a
+/// producer that can recover one — a PDF's content stream, an OCR pass —
+/// hands back these instead, and the reader places them as hidden
+/// fragments over the page image so selection and search work there too.
+/// The model belongs here rather than to whichever producer happens to
+/// build it, so a session can hold one without depending on that producer.
+#[derive(Debug, Clone)]
+pub struct TextLine {
+    /// Top edge of the line box.
+    pub top: f32,
+    pub height: f32,
+    /// The line's text, glyphs concatenated in visual order.
+    pub text: String,
+    pub glyphs: Vec<TextGlyph>,
+}
+
+/// One positioned glyph cluster within a [`TextLine`].
+#[derive(Debug, Clone)]
+pub struct TextGlyph {
+    /// Left edge, in page points.
+    pub x: f32,
+    pub width: f32,
+    /// Char offset into the page's extracted text.
+    pub offset: u32,
+}

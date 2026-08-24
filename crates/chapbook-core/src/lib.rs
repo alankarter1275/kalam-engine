@@ -13,7 +13,9 @@ mod locator;
 mod page;
 mod panel;
 
-pub use book::{BookKind, BookMetadata, Publication, Resource, SpineItem, TocEntry};
+pub use book::{
+    BookKind, BookMetadata, Publication, Resource, SpineItem, TextGlyph, TextLine, TocEntry,
+};
 pub use cfi::{Cfi, CfiStep};
 pub use error::ChapbookError;
 pub use geometry::{EdgeSizes, Point, Rect, Rgba, Size};

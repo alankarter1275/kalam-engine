@@ -13,14 +13,19 @@ use std::collections::HashSet;
 use std::sync::mpsc;
 use std::sync::Arc;
 
+// Only the comic arm holds a publication as a trait object; PDFs keep
+// their concrete type.
+#[cfg(feature = "_comic")]
 use chapbook_core::Publication;
 
 /// What the worker loads from.
 #[derive(Clone)]
 pub(crate) enum LoadSource {
     /// Any image-per-page publication: unit bytes decode as an image.
+    #[cfg(feature = "_comic")]
     Comic(Arc<dyn Publication + Send + Sync>),
     /// A PDF: rendered to RGBA directly, with its text layer extracted.
+    #[cfg(feature = "pdf")]
     Pdf(Arc<chapbook_pdf::PdfBook>),
 }
 
@@ -29,8 +34,9 @@ pub(crate) struct DecodedUnit {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
-    /// PDF text lines in natural (point) coordinates; empty for comics.
-    pub text: Vec<chapbook_pdf::TextLine>,
+    /// Extracted text lines in natural (point) coordinates; empty for
+    /// comics, which have no text layer to recover.
+    pub text: Vec<chapbook_core::TextLine>,
     /// Natural page size the text coordinates live in (PDF points).
     pub natural: (f32, f32),
 }
@@ -92,6 +98,7 @@ impl Loader {
 
 fn load(source: &LoadSource, spine: usize) -> Result<DecodedUnit, String> {
     match source {
+        #[cfg(feature = "_comic")]
         LoadSource::Comic(book) => {
             let bytes = book.unit_bytes(spine).map_err(|e| e.to_string())?;
             let decoded = image::load_from_memory(&bytes)
@@ -106,6 +113,7 @@ fn load(source: &LoadSource, spine: usize) -> Result<DecodedUnit, String> {
                 natural: (width as f32, height as f32),
             })
         }
+        #[cfg(feature = "pdf")]
         LoadSource::Pdf(book) => {
             let rendered = book.render_page(spine).map_err(|e| e.to_string())?;
             let text = book.text_page(spine).unwrap_or_default();

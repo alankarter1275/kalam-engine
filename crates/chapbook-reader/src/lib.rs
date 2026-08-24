@@ -23,7 +23,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "_image-book")]
 mod loader;
+#[cfg(feature = "_image-book")]
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
@@ -51,9 +53,14 @@ pub use cosmic_text;
 /// the `Publication` trait, so the session keeps the concrete type.
 enum OpenBook {
     Epub(Box<chapbook_epub::Book>),
+    /// Any image-per-page publication: a local CBZ, or a streamed PSE
+    /// feed. Both arrive as a trait object, so neither format needs a
+    /// variant of its own.
+    #[cfg(feature = "_comic")]
     Comic(Arc<dyn Publication + Send + Sync>),
     /// PDFs keep their concrete type: the loader renders straight to RGBA
     /// and extracts the text layer through it.
+    #[cfg(feature = "pdf")]
     Pdf(Arc<chapbook_pdf::PdfBook>),
 }
 
@@ -61,15 +68,20 @@ impl OpenBook {
     fn publication(&self) -> &dyn Publication {
         match self {
             OpenBook::Epub(book) => book.as_ref(),
+            #[cfg(feature = "_comic")]
             OpenBook::Comic(comic) => comic.as_ref(),
+            #[cfg(feature = "pdf")]
             OpenBook::Pdf(pdf) => pdf.as_ref(),
         }
     }
 
+    #[cfg(feature = "_image-book")]
     fn load_source(&self) -> Option<LoadSource> {
         match self {
             OpenBook::Epub(_) => None,
+            #[cfg(feature = "_comic")]
             OpenBook::Comic(comic) => Some(LoadSource::Comic(comic.clone())),
+            #[cfg(feature = "pdf")]
             OpenBook::Pdf(pdf) => Some(LoadSource::Pdf(pdf.clone())),
         }
     }
@@ -84,7 +96,7 @@ type WakerCell = Arc<Mutex<Option<Box<dyn Fn() + Send + Sync>>>>;
 struct LoadedUnit {
     width: u32,
     height: u32,
-    text: Vec<chapbook_pdf::TextLine>,
+    text: Vec<chapbook_core::TextLine>,
     natural: (f32, f32),
 }
 
@@ -204,10 +216,13 @@ pub struct Session {
     /// Restored char offset, turned into a page once the unit lays out.
     pending_offset: Option<u32>,
     /// Worker for image-book units (comics, PDFs); `None` for EPUBs.
+    #[cfg(feature = "_image-book")]
     loader: Option<Loader>,
     /// Metrics-independent metadata of loaded units (pixels live in
     /// `images`, which image books never clear on relayout).
     loaded_units: HashMap<usize, LoadedUnit>,
+    /// Units the loader failed on, so a retry isn't queued every frame.
+    #[cfg(feature = "_image-book")]
     load_errors: HashMap<usize, String>,
     /// Units currently showing a placeholder page (relaid once loaded).
     placeholders: HashSet<usize>,
@@ -263,18 +278,23 @@ impl Session {
             Option<u32>,
             bool,
         ) = if source.starts_with("http://") || source.starts_with("https://") {
-            let mut client = chapbook_opds::OpdsClient::new();
-            if let (Ok(user), Ok(pass)) = (
-                std::env::var("CHAPBOOK_OPDS_USER"),
-                std::env::var("CHAPBOOK_OPDS_PASSWORD"),
-            ) {
-                client.set_basic_auth(&user, &pass);
+            #[cfg(not(feature = "opds"))]
+            return Err(ChapbookError::FormatNotBuilt("OPDS"));
+            #[cfg(feature = "opds")]
+            {
+                let mut client = chapbook_opds::OpdsClient::new();
+                if let (Ok(user), Ok(pass)) = (
+                    std::env::var("CHAPBOOK_OPDS_USER"),
+                    std::env::var("CHAPBOOK_OPDS_PASSWORD"),
+                ) {
+                    client.set_basic_auth(&user, &pass);
+                }
+                let cache = chapbook_library::Library::default_dir().join("pse-cache");
+                let comic = chapbook_opds::StreamedComic::open(client, source, &cache)
+                    .map_err(ChapbookError::from)?;
+                let resume = comic.resume_page().unwrap_or(0);
+                (OpenBook::Comic(Arc::new(comic)), None, resume, None, true)
             }
-            let cache = chapbook_library::Library::default_dir().join("pse-cache");
-            let comic = chapbook_opds::StreamedComic::open(client, source, &cache)
-                .map_err(ChapbookError::from)?;
-            let resume = comic.resume_page().unwrap_or(0);
-            (OpenBook::Comic(Arc::new(comic)), None, resume, None, true)
         } else {
             let path = Path::new(source);
             let ext = path
@@ -282,8 +302,14 @@ impl Session {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase());
             let book = match ext.as_deref() {
+                #[cfg(feature = "cbz")]
                 Some("cbz") => OpenBook::Comic(Arc::new(chapbook_cbz::ComicBook::open(path)?)),
+                #[cfg(not(feature = "cbz"))]
+                Some("cbz") => return Err(ChapbookError::FormatNotBuilt("CBZ")),
+                #[cfg(feature = "pdf")]
                 Some("pdf") => OpenBook::Pdf(Arc::new(chapbook_pdf::PdfBook::open(path)?)),
+                #[cfg(not(feature = "pdf"))]
+                Some("pdf") => return Err(ChapbookError::FormatNotBuilt("PDF")),
                 _ => OpenBook::Epub(Box::new(chapbook_epub::Book::open(path)?)),
             };
 
@@ -364,6 +390,7 @@ impl Session {
             .clone()
             .unwrap_or_else(|| "chapbook".to_string());
         let waker: WakerCell = Arc::new(Mutex::new(None));
+        #[cfg(feature = "_image-book")]
         let loader = book.load_source().map(|source| {
             let cell = waker.clone();
             Loader::spawn(
@@ -395,8 +422,10 @@ impl Session {
             spine: start_spine,
             page: 0,
             pending_offset,
+            #[cfg(feature = "_image-book")]
             loader,
             loaded_units: HashMap::new(),
+            #[cfg(feature = "_image-book")]
             load_errors: HashMap::new(),
             placeholders: HashSet::new(),
             waker,
@@ -427,6 +456,17 @@ impl Session {
 
     /// Drain finished background loads into the caches; returns true when
     /// anything arrived (the shell should redraw).
+    ///
+    /// Always false in a build with no format that loads units in the
+    /// background — the signature stays put so shells compile unchanged.
+    #[cfg(not(feature = "_image-book"))]
+    pub fn poll_loaded(&mut self) -> bool {
+        false
+    }
+
+    /// Drain finished background loads into the caches; returns true when
+    /// anything arrived (the shell should redraw).
+    #[cfg(feature = "_image-book")]
     pub fn poll_loaded(&mut self) -> bool {
         let Some(loader) = self.loader.as_mut() else {
             return false;
@@ -477,7 +517,14 @@ impl Session {
 
     /// Whether background loads are in flight (placeholder pages showing).
     pub fn has_pending_loads(&self) -> bool {
-        self.loader.as_ref().is_some_and(Loader::has_pending)
+        #[cfg(not(feature = "_image-book"))]
+        {
+            false
+        }
+        #[cfg(feature = "_image-book")]
+        {
+            self.loader.as_ref().is_some_and(Loader::has_pending)
+        }
     }
 
     pub fn title(&self) -> &str {
@@ -1617,7 +1664,10 @@ impl Session {
     /// hidden text layer, scaled from natural (point) coordinates into the
     /// placed image rect, so selection works on them.
     fn layout_image_unit(&mut self, spine: usize, metrics: &PageMetrics) -> ChapterLayout {
-        // Prefetch the next unit while we're here.
+        // Prefetch the next unit while we're here. Without a
+        // background-loading format there is no thread to prefetch onto —
+        // and no unit that could reach here to want one.
+        #[cfg(feature = "_image-book")]
         if let Some(loader) = self.loader.as_mut() {
             let next = spine + 1;
             if next < self.book.publication().spine().len()
@@ -1628,6 +1678,7 @@ impl Session {
             }
         }
         let Some(unit) = self.loaded_units.get(&spine) else {
+            #[cfg(feature = "_image-book")]
             if !self.load_errors.contains_key(&spine) {
                 if let Some(loader) = self.loader.as_mut() {
                     loader.request(spine);
@@ -1670,7 +1721,12 @@ impl Session {
         spine: usize,
         metrics: &PageMetrics,
     ) -> Option<(ChapterLayout, ImageStore)> {
-        let OpenBook::Epub(epub) = &self.book else {
+        // Irrefutable when EPUB is the only format compiled in, and the
+        // guard is still the right thing to write: which variants exist is
+        // a build option, and this function is only correct for one of them.
+        #[allow(irrefutable_let_patterns)]
+        let OpenBook::Epub(epub) = &self.book
+        else {
             return None;
         };
         let href = epub.spine_item(spine).ok()?.href.clone();
@@ -1737,7 +1793,7 @@ fn unit_locator_text(book: &dyn Publication, spine: usize) -> Option<String> {
 /// the image rect, glyph offsets become the page's locator space.
 fn push_hidden_text(
     page: &mut chapbook_paint::Page,
-    lines: &[chapbook_pdf::TextLine],
+    lines: &[chapbook_core::TextLine],
     natural: (f32, f32),
     image_rect: chapbook_core::Rect,
 ) {

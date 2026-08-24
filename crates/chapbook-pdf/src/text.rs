@@ -23,27 +23,9 @@ use hayro::hayro_interpret::{
 };
 use hayro::vello_cpu::kurbo::{Affine, BezPath, Point, Rect};
 
-/// One extracted text line, in natural (point) page coordinates,
-/// top-left origin.
-#[derive(Debug, Clone)]
-pub struct TextLine {
-    /// Top edge of the line box.
-    pub top: f32,
-    pub height: f32,
-    /// The line's text, glyphs concatenated in visual order.
-    pub text: String,
-    pub glyphs: Vec<TextGlyph>,
-}
-
-/// One positioned glyph cluster within a [`TextLine`].
-#[derive(Debug, Clone)]
-pub struct TextGlyph {
-    /// Left edge, in page points.
-    pub x: f32,
-    pub width: f32,
-    /// Char offset into the page's extracted text (see module docs).
-    pub offset: u32,
-}
+// The extracted line/glyph model lives in chapbook-core: a reading session
+// holds a page's text layer whether or not this producer is compiled in.
+pub use chapbook_core::{TextGlyph, TextLine};
 
 struct GlyphEvent {
     x: f32,
