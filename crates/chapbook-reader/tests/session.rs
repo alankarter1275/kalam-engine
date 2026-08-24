@@ -612,3 +612,88 @@ fn a_jump_remembers_the_offset_it_left() {
         "back lands on the offset it left, not the chapter start"
     );
 }
+
+#[test]
+fn search_finds_hits_that_navigate_and_select() {
+    let mut s = open_isolated("epub-search", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+
+    let hits = s.search("universally acknowledged", 10);
+    assert_eq!(hits.len(), 1, "one hit in chapter one: {hits:?}");
+    let hit = hits[0].clone();
+    assert_eq!(hit.locator.spine_index, 0);
+    assert_eq!(hit.end - hit.locator.char_offset, 24);
+
+    // The context is list-ready: the raw locator text\'s newlines and
+    // XHTML indentation are collapsed out of it.
+    assert!(!hit.context.contains('\n'));
+    assert!(!hit.context.contains("  "));
+    let matched: String = hit
+        .context
+        .chars()
+        .skip(hit.match_range.0 as usize)
+        .take((hit.match_range.1 - hit.match_range.0) as usize)
+        .collect();
+    assert_eq!(matched, "universally acknowledged", "{:?}", hit.context);
+
+    // A hit is a locator: it navigates, and selecting its range on the
+    // page it lands on reads back the words that were searched for.
+    assert!(s.goto(hit.locator));
+    s.render().expect("page renders");
+    assert_eq!(s.spine(), 0);
+    s.select_range(hit.locator.char_offset, hit.end);
+    assert_eq!(
+        s.selected_text().as_deref(),
+        Some("universally acknowledged")
+    );
+}
+
+#[test]
+fn search_is_case_insensitive_and_spans_the_spine() {
+    let mut s = open_isolated("epub-search-case", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+
+    let hits = s.search("CHAPTER", 50);
+    assert!(hits.len() >= 2, "chapters one and two both match: {hits:?}");
+    assert!(
+        hits.iter().any(|h| h.locator.spine_index == 0)
+            && hits.iter().any(|h| h.locator.spine_index == 1),
+        "hits come from both units"
+    );
+    // Hits arrive in reading order.
+    let mut ordered = hits.clone();
+    ordered.sort_by_key(|h| (h.locator.spine_index, h.locator.char_offset));
+    assert_eq!(hits, ordered);
+
+    assert_eq!(s.search("chapter", 2).len(), 2, "the limit is honored");
+    assert!(
+        s.search("", 10).is_empty(),
+        "an empty query matches nothing"
+    );
+    assert!(s.search("no such phrase anywhere", 10).is_empty());
+}
+
+#[test]
+fn comics_have_nothing_to_search() {
+    let mut s = open_isolated("cbz-search", &fixture("cbz/minimal.cbz"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+    assert!(s.search("anything", 10).is_empty());
+}
+
+#[test]
+fn a_pdf_page_becomes_searchable_once_it_loads() {
+    let mut s = open_isolated("pdf-search", &fixture("pdf/minimal.pdf"));
+    s.set_metrics(metrics());
+    // Page three carries the text; nothing is searchable before it loads.
+    assert!(s.search_unit(2, "Hello").is_empty());
+
+    s.next_unit();
+    s.next_unit();
+    render_loaded(&mut s);
+    let hits = s.search_unit(2, "hello");
+    assert_eq!(hits.len(), 1, "the text layer is searchable: {hits:?}");
+    assert_eq!(hits[0].locator.spine_index, 2);
+    assert!(hits[0].context.starts_with("Hello"));
+}

@@ -112,8 +112,15 @@ select, recolor, or delete one by touching it rather than by id; notes and
 bookmarks (the schema has `AnnotationKind::Note` and `Bookmark`, and only
 `Highlight` has a caller); a whole-book annotation list; and export.
 
-**Search (missing, and nearly free).** In-book full-text search over locator
-text is char-offset indexed already, and results are natively locators.
+**Search (in-book landed).** `search_unit` is the building block — a shell
+wanting the whole book without blocking drives it unit by unit on a worker —
+and `search` walks the spine for the impatient, with the same blocking
+contract as `unit_bytes`. Hits are locators, so they feed straight into
+`goto`, and `select_range` puts one on the page. Each carries a
+whitespace-collapsed context snippet with the match's range inside it, since
+locator text is raw source text and a results list can't show that. Matching
+folds case one character at a time, which keeps every hit on an exact
+offset; full case folding and diacritic folding would not.
 Library-level search across books is a second, separate want.
 
 **Settings (harness-shaped).** `cycle_theme()` and `adjust_font(delta)` are

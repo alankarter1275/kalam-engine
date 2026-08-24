@@ -86,6 +86,21 @@ struct LoadedUnit {
     natural: (f32, f32),
 }
 
+/// One search hit, in the same locator space positions and annotations
+/// live in — so a hit feeds straight into [`Session::goto`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchHit {
+    /// Unit and offset of the match's first character.
+    pub locator: Locator,
+    /// Offset just past the match, within the same unit.
+    pub end: u32,
+    /// The match with a little text on either side, whitespace collapsed,
+    /// for a results list.
+    pub context: String,
+    /// Char range of the match within `context`.
+    pub match_range: (u32, u32),
+}
+
 /// A stored highlight resolved into the open book's locator space.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Highlight {
@@ -695,6 +710,65 @@ impl Session {
         });
     }
 
+    // ---- Search ----
+
+    /// Search one unit. The building block: a shell wanting the whole book
+    /// without blocking drives this unit by unit on a worker.
+    ///
+    /// Matching is case-insensitive by simple per-character lowercasing —
+    /// no full case folding, no diacritic folding — which keeps every hit
+    /// on an exact char offset in the unit's locator text.
+    pub fn search_unit(&mut self, spine: usize, query: &str) -> Vec<SearchHit> {
+        let needle: Vec<char> = query.chars().map(fold_char).collect();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let Some(text) = self.unit_text(spine) else {
+            return Vec::new();
+        };
+        let chars: Vec<char> = text.chars().collect();
+        let folded: Vec<char> = chars.iter().copied().map(fold_char).collect();
+        let mut hits = Vec::new();
+        let mut at = 0;
+        while at + needle.len() <= folded.len() {
+            if folded[at..at + needle.len()] == needle[..] {
+                let (start, end) = (at as u32, (at + needle.len()) as u32);
+                let (context, match_range) = context_around(&chars, start, end);
+                hits.push(SearchHit {
+                    locator: Locator::new(spine, start),
+                    end,
+                    context,
+                    match_range,
+                });
+                at += needle.len();
+            } else {
+                at += 1;
+            }
+        }
+        hits
+    }
+
+    /// Search the whole book, stopping at `limit` hits.
+    ///
+    /// **Blocking:** this reads and extracts every unit's text, which for a
+    /// long book is seconds — the same contract as
+    /// [`chapbook_core::Publication::unit_bytes`], and the same rule: not
+    /// on a UI thread. Comics contribute nothing, having no text layer, and
+    /// a PDF page contributes only once the loader has decoded it — its
+    /// text layer comes out of the same pass as its pixels.
+    pub fn search(&mut self, query: &str, limit: usize) -> Vec<SearchHit> {
+        let mut hits = Vec::new();
+        for spine in 0..self.book.publication().spine().len() {
+            if hits.len() >= limit {
+                break;
+            }
+            let mut unit = self.search_unit(spine, query);
+            unit.truncate(limit - hits.len());
+            hits.append(&mut unit);
+        }
+        hits
+    }
+
     // ---- Selection ----
 
     /// Begin a selection at a point in panel coordinates (CSS px, and
@@ -719,6 +793,13 @@ impl Session {
             self.selection = Some((anchor, offset));
             self.mark(FrameIntent::Selection);
         }
+    }
+
+    /// Select a locator range directly — what a shell does to show where a
+    /// search hit or an annotation sits on the page.
+    pub fn select_range(&mut self, start: u32, end: u32) {
+        self.selection = Some((start, end));
+        self.mark(FrameIntent::Selection);
     }
 
     pub fn selection_clear(&mut self) {
@@ -1396,4 +1477,55 @@ fn push_hidden_text(
             tag: 0,
         });
     }
+}
+
+/// Lowercase a char one-to-one, so folded offsets still index the original
+/// text. Multi-char expansions (ß → ss) keep their first char, which costs
+/// a rare miss and buys exact offsets.
+fn fold_char(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
+/// Text around a match with its whitespace collapsed, plus where the match
+/// sits inside it. Locator text is raw source text — newlines and XHTML
+/// indentation and all — so a results list needs it tidied.
+fn context_around(chars: &[char], start: u32, end: u32) -> (String, (u32, u32)) {
+    const CONTEXT_CHARS: usize = 40;
+    let from = (start as usize).saturating_sub(CONTEXT_CHARS);
+    let to = (end as usize + CONTEXT_CHARS).min(chars.len());
+
+    let mut context = String::new();
+    let (mut match_start, mut match_end) = (0u32, 0u32);
+    let mut pending_space = false;
+    for (i, c) in chars[from..to].iter().enumerate() {
+        let at = from + i;
+        let here = |context: &String| context.chars().count() as u32;
+        if c.is_ascii_whitespace() {
+            // A match ending at whitespace ends before the space that
+            // collapsing may or may not emit.
+            if at == end as usize && match_end == 0 {
+                match_end = here(&context);
+            }
+            // Collapse runs, and never lead with one.
+            pending_space = !context.is_empty();
+            continue;
+        }
+        if pending_space {
+            context.push(' ');
+            pending_space = false;
+        }
+        // Both boundaries are recorded after any collapsed space is
+        // emitted, so they index the string that comes back.
+        if at == start as usize {
+            match_start = here(&context);
+        }
+        if at == end as usize && match_end == 0 {
+            match_end = here(&context);
+        }
+        context.push(*c);
+    }
+    if match_end == 0 {
+        match_end = context.chars().count() as u32;
+    }
+    (context, (match_start, match_end))
 }
