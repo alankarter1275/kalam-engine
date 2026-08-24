@@ -445,6 +445,56 @@ impl Session {
         (end > start).then_some((start, end))
     }
 
+    /// The selection's text, ready to paste.
+    ///
+    /// EPUB units slice the unit's locator text — the space the offsets
+    /// are defined in. PDF units read their hidden text layer instead,
+    /// one entry per extracted line. Comics have no text layer.
+    ///
+    /// Locator text is the raw offset space, so it still carries the
+    /// source document's line breaks and indentation; runs of ASCII
+    /// whitespace collapse to a single space here (non-breaking spaces are
+    /// content and survive).
+    pub fn selected_text(&self) -> Option<String> {
+        let (start, end) = self.selected_range()?;
+        let raw: String = match self.book.publication().kind() {
+            BookKind::Epub => {
+                let unit = unit_locator_text(self.book.publication(), self.spine)?;
+                unit.chars()
+                    .skip(start as usize)
+                    .take((end - start) as usize)
+                    .collect()
+            }
+            BookKind::Pdf => self.hidden_text_in_range(start, end)?,
+            BookKind::Comic => return None,
+        };
+        let text = raw.split_ascii_whitespace().collect::<Vec<_>>().join(" ");
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// A PDF unit's hidden text over a locator range. Line breaks aren't
+    /// part of that locator space — the extracted lines are contiguous in
+    /// it — so they are re-inserted between the sliced lines here.
+    fn hidden_text_in_range(&self, start: u32, end: u32) -> Option<String> {
+        let layout = self.layouts.get(&self.spine)?;
+        let mut lines = Vec::new();
+        for page in &layout.pages {
+            for fragment in &page.fragments {
+                let chapbook_paint::FragmentKind::HiddenText(line) = &fragment.kind else {
+                    continue;
+                };
+                let line_end = line.locator_start + line.text.chars().count() as u32;
+                if line_end <= start || line.locator_start >= end {
+                    continue;
+                }
+                let from = start.saturating_sub(line.locator_start) as usize;
+                let to = (end.min(line_end) - line.locator_start) as usize;
+                lines.push(line.text.chars().take(to).skip(from).collect::<String>());
+            }
+        }
+        (!lines.is_empty()).then(|| lines.join("\n"))
+    }
+
     fn offset_at(&mut self, x: f32, y: f32) -> Option<u32> {
         let (spine, page) = (self.spine, self.page);
         let layout = self.layout_unit(spine)?;

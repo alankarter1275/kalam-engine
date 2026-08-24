@@ -84,6 +84,18 @@ fn epub_session_renders_navigates_and_selects() {
     s.selection_drag(400.0, 140.0);
     let (start, end) = s.selected_range().expect("non-empty selection");
     assert!(end > start);
+    // The selected text comes back ready to paste: the locator space is
+    // the raw source text, so its line breaks and indentation collapse.
+    let text = s.selected_text().expect("selection carries text");
+    assert!(
+        text.starts_with("e Illustrated Chapter"),
+        "selection starts mid-heading: {text:?}"
+    );
+    assert!(
+        text.contains("Text before the picture"),
+        "selection runs into the first paragraph: {text:?}"
+    );
+    assert!(!text.contains('\n'), "pasteable text has no line breaks");
     // The selected page renders with the highlight without panicking.
     s.render().unwrap();
     // Page navigation clears the selection.
@@ -111,8 +123,9 @@ fn cbz_session_pages_through_images() {
         "expected red page: {px:?}"
     );
 
-    // Selection never engages on image pages.
+    // Selection never engages on image pages, so there is nothing to copy.
     assert!(!s.selection_begin(300.0, 400.0));
+    assert_eq!(s.selected_text(), None);
 
     s.next_page();
     assert_eq!(s.spine(), 1, "page turn advances the spine for comics");
@@ -194,6 +207,11 @@ fn pdf_text_selection_highlights() {
     s.selection_drag(ax + 150.0, ay);
     let (start, end) = s.selected_range().expect("selection over PDF text");
     assert!(end > start);
+    let text = s.selected_text().expect("PDF selection carries text");
+    assert!(
+        "Hello selection".starts_with(&text),
+        "expected a prefix of the first text line, got {text:?}"
+    );
 
     // The highlight visibly changes the render.
     let after = render_loaded(&mut s);
