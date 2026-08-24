@@ -218,7 +218,13 @@ impl ApplicationHandler<()> for App {
                 size.width,
                 size.height,
             ) {
-                Ok(gpu) => Backend::Gpu(Box::new(gpu)),
+                Ok(gpu) => {
+                    // Name the adapter, so "GPU" is a fact rather than an
+                    // assumption — a software adapter satisfies the flag
+                    // and looks exactly like the CPU backend.
+                    eprintln!("chapbook-viewer: GPU backend — {}", gpu.adapter());
+                    Backend::Gpu(Box::new(gpu))
+                }
                 Err(e) => {
                     eprintln!("chapbook-viewer: no GPU backend ({e}); falling back to CPU");
                     Backend::PendingCpu

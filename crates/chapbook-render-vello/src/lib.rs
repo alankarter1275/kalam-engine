@@ -490,6 +490,18 @@ impl VelloWindow {
         })
     }
 
+    /// Which adapter pages are actually going through.
+    ///
+    /// Worth surfacing: "the GPU flag is set" and "the GPU is drawing" are
+    /// different claims, and a software adapter satisfies the first while
+    /// looking exactly like the CPU backend.
+    pub fn adapter(&self) -> String {
+        let info = self.context.devices[self.surface.dev_id]
+            .adapter()
+            .get_info();
+        format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type)
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         self.context
             .resize_surface(&mut self.surface, width.max(1), height.max(1));
