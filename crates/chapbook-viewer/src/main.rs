@@ -5,8 +5,8 @@
 //! Sources: an `.epub` or `.cbz` path, or an OPDS URL (page-streamed
 //! comic). Keys: Right/PageDown/Space next page · Left/PageUp previous ·
 //! n/p unit · +/- font size · t theme (light/sepia/dark) · q/Escape quit.
-//! Mouse: press-drag over text selects (highlight only, for now); click
-//! clears.
+//! Mouse or touch: press-drag over text selects (highlight only, for
+//! now); a tap clears. Touch tracks the first finger only.
 //!
 //! Contract note: `Session` may block on unit I/O (a cold PSE page is one
 //! HTTP fetch) — this dev harness accepts that on the event loop.
@@ -15,7 +15,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -42,6 +42,7 @@ fn main() {
         surface: None,
         cursor: (0.0, 0.0),
         selecting: false,
+        active_touch: None,
     };
     event_loop.run_app(&mut app).expect("event loop run");
     app.session.save_position();
@@ -56,6 +57,10 @@ struct App {
     /// Last cursor position in page CSS px.
     cursor: (f32, f32),
     selecting: bool,
+    /// Finger driving a touch selection — winit reports touch as `Touch`
+    /// events, not synthesized pointer events (GTK's gestures abstract
+    /// that; here it's manual). First finger wins; others are ignored.
+    active_touch: Option<u64>,
 }
 
 impl App {
@@ -164,6 +169,43 @@ impl ApplicationHandler for App {
                 if self.selecting {
                     self.session.selection_drag(self.cursor.0, self.cursor.1);
                     self.request_redraw();
+                }
+            }
+            WindowEvent::Touch(Touch {
+                id,
+                phase,
+                location,
+                ..
+            }) => {
+                let scale = self
+                    .window
+                    .as_ref()
+                    .map_or(1.0, |w| w.scale_factor() as f32);
+                let (x, y) = (location.x as f32 / scale, location.y as f32 / scale);
+                match phase {
+                    TouchPhase::Started => {
+                        if self.active_touch.is_none() {
+                            self.active_touch = Some(id);
+                            self.selecting = self.session.selection_begin(x, y);
+                            self.request_redraw();
+                        }
+                    }
+                    TouchPhase::Moved => {
+                        if self.active_touch == Some(id) && self.selecting {
+                            self.session.selection_drag(x, y);
+                            self.request_redraw();
+                        }
+                    }
+                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                        if self.active_touch == Some(id) {
+                            self.active_touch = None;
+                            if self.selecting {
+                                self.session.selection_drag(x, y);
+                                self.selecting = false;
+                            }
+                            self.request_redraw();
+                        }
+                    }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
