@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Rebuild fixtures/cbz/minimal.cbz: three solid-color pages named to
-exercise natural sort, plus junk entries readers must skip. Pure stdlib,
-deterministic (fixed timestamps, stored entries)."""
+"""Rebuild the CBZ fixtures. Pure stdlib, deterministic (fixed timestamps,
+stored entries).
+
+minimal.cbz  three solid-color pages named to exercise natural sort, junk
+             entries readers must skip, and a ComicInfo.xml carrying the
+             metadata and page bookmarks a tagged archive has.
+bare.cbz     the same pages with no sidecar at all — the majority of comics
+             in the wild, and the fallback path."""
 import struct, zlib, zipfile, os
 
 def png(width, height, rgb):
@@ -14,20 +19,46 @@ def png(width, height, rgb):
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
             + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
 
-out = os.path.join(os.path.dirname(__file__), "minimal.cbz")
+here = os.path.dirname(__file__)
 pages = [
     ("page1.png", png(120, 180, (196, 64, 48))),    # red
     ("page2.png", png(120, 180, (52, 120, 82))),    # green
     ("page10.png", png(120, 180, (58, 78, 160))),   # blue - sorts LAST
 ]
+
+# An ampersand and a two-role credit, because both are places a naive
+# reader loses data. Bookmarks index the *sorted* pages, so Image="2" is
+# page10.png.
+comic_info = b"""<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Series>Cogs &amp; Levers</Series>
+  <Number>3</Number>
+  <Summary>Three plates in primary colors.</Summary>
+  <Writer>Ada Lovelace</Writer>
+  <Penciller>Ada Lovelace, Grace Hopper</Penciller>
+  <LanguageISO>en</LanguageISO>
+  <PageCount>3</PageCount>
+  <Pages>
+    <Page Image="0" Type="FrontCover" />
+    <Page Image="1" Bookmark="The Escapement" />
+    <Page Image="2" Bookmark="Afterword" />
+  </Pages>
+</ComicInfo>"""
+
+sidecar = ("ComicInfo.xml", comic_info)
 junk = [
-    ("ComicInfo.xml", b"<ComicInfo><Title>Minimal</Title></ComicInfo>"),
     ("__MACOSX/page1.png", b"junk"),
     (".hidden.png", b"junk"),
 ]
-with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
-    # Write out of order so reading order must come from sorting.
-    for name, data in [pages[2], pages[0], junk[0], pages[1], junk[1], junk[2]]:
-        info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
-        z.writestr(info, data)
-print(f"built {out}")
+
+def build(name, members):
+    out = os.path.join(here, name)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+        for member, data in members:
+            info = zipfile.ZipInfo(member, date_time=(2026, 1, 1, 0, 0, 0))
+            z.writestr(info, data)
+    print(f"built {out}")
+
+# Written out of order so reading order must come from sorting.
+build("minimal.cbz", [pages[2], pages[0], sidecar, pages[1], junk[0], junk[1]])
+build("bare.cbz", [pages[2], pages[0], pages[1]])

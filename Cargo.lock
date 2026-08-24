@@ -472,6 +472,7 @@ version = "0.1.0"
 dependencies = [
  "chapbook-core",
  "image",
+ "quick-xml 0.42.0",
  "zip",
 ]
 

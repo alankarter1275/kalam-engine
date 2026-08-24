@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 chapbook-core = { workspace = true }
+quick-xml = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]

@@ -3,11 +3,16 @@
 //! A CBZ is a zip of page images with no manifest: reading order is the
 //! natural sort of member names (the ComicRack convention — numeric runs
 //! compare as numbers, so `page2` < `page10`), the media type is guessed
-//! from the extension, and non-image members (`ComicInfo.xml`, macOS
-//! resource forks, hidden files) are skipped. Each image is one spine
-//! item; there is no within-page text, so locators for comics carry
-//! `char_offset = 0` and live in `spine_index`/progression (see
-//! `chapbook_core::locator` on per-format progression units).
+//! from the extension, and non-image members (macOS resource forks, hidden
+//! files) are skipped. Each image is one spine item; there is no
+//! within-page text, so locators for comics carry `char_offset = 0` and
+//! live in `spine_index`/progression (see `chapbook_core::locator` on
+//! per-format progression units).
+//!
+//! The one member that is not a page and not junk is `ComicInfo.xml`: when
+//! an archive carries one, it supplies the metadata and the bookmarks a
+//! bare zip cannot (see [`comicinfo`]). Without it a comic still opens —
+//! titled after its filename, with an empty table of contents.
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -17,6 +22,8 @@ use std::sync::Mutex;
 use chapbook_core::{
     BookKind, BookMetadata, ChapbookError, Publication, Resource, Result, SpineItem, TocEntry,
 };
+
+mod comicinfo;
 
 /// A local CBZ archive, opened and indexed.
 pub struct ComicBook {
@@ -50,6 +57,32 @@ fn is_junk(name: &str) -> bool {
         .any(|part| part.starts_with('.') || part.eq_ignore_ascii_case("__MACOSX"))
 }
 
+fn is_comic_info(name: &str) -> bool {
+    name.rsplit('/')
+        .next()
+        .is_some_and(|file| file.eq_ignore_ascii_case("ComicInfo.xml"))
+}
+
+/// How deep a member sits. `ComicInfo.xml` belongs at the archive root, but
+/// archives zipped from a directory bury it a level down, and a few carry
+/// more than one — take the shallowest and leave the rest alone.
+fn depth(name: &str) -> usize {
+    name.matches('/').count()
+}
+
+/// Read one member. Free rather than a method because `open` needs it
+/// before the archive goes behind the mutex.
+fn read_entry(archive: &mut zip::ZipArchive<BufReader<File>>, name: &str) -> Result<Vec<u8>> {
+    let mut entry = archive
+        .by_name(name)
+        .map_err(|e| ChapbookError::ResourceNotFound(format!("{name}: {e}")))?;
+    let mut data = Vec::with_capacity(entry.size() as usize);
+    entry
+        .read_to_end(&mut data)
+        .map_err(|e| ChapbookError::BookMalformed(format!("reading {name}: {e}")))?;
+    Ok(data)
+}
+
 impl ComicBook {
     pub fn open(path: &Path) -> Result<ComicBook> {
         let open_err = |reason: String| ChapbookError::BookOpen {
@@ -61,6 +94,7 @@ impl ComicBook {
             .map_err(|e| open_err(format!("not a zip archive: {e}")))?;
 
         let mut pages: Vec<String> = Vec::new();
+        let mut sidecar: Option<String> = None;
         for i in 0..archive.len() {
             let entry = archive
                 .by_index_raw(i)
@@ -71,6 +105,10 @@ impl ComicBook {
             }
             if page_media_type(&name).is_some() {
                 pages.push(name);
+            } else if is_comic_info(&name)
+                && depth(&name) < sidecar.as_deref().map_or(usize::MAX, depth)
+            {
+                sidecar = Some(name);
             }
         }
         if pages.is_empty() {
@@ -90,32 +128,54 @@ impl ComicBook {
             })
             .collect();
 
-        let title = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .filter(|s| !s.is_empty());
+        let mut metadata = BookMetadata {
+            title: path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .filter(|s| !s.is_empty()),
+            format_version: "cbz".into(),
+            ..BookMetadata::default()
+        };
+        // An unreadable or malformed sidecar is not an unreadable comic:
+        // the pages are already indexed, so fall through to the filename.
+        let mut toc = Vec::new();
+        if let Some(info) = sidecar
+            .and_then(|name| read_entry(&mut archive, &name).ok())
+            .and_then(|bytes| comicinfo::parse(&bytes))
+        {
+            if let Some(title) = info.display_title() {
+                metadata.title = Some(title);
+            }
+            metadata.authors = info.credits;
+            metadata.description = info.summary;
+            metadata.language = info.language;
+            // `Image` indexes the reading-ordered pages, which is what a
+            // spine index is — but it is author-supplied, so bound it.
+            toc = info
+                .bookmarks
+                .into_iter()
+                .filter(|(image, _)| *image < spine.len())
+                .map(|(image, label)| TocEntry {
+                    label,
+                    href: Some(spine[image].href.clone()),
+                    fragment: None,
+                    spine_index: Some(image),
+                    children: Vec::new(),
+                })
+                .collect();
+        }
+
         Ok(ComicBook {
-            metadata: BookMetadata {
-                title,
-                format_version: "cbz".into(),
-                ..BookMetadata::default()
-            },
+            metadata,
             spine,
-            toc: Vec::new(),
+            toc,
             archive: Mutex::new(archive),
         })
     }
 
     fn entry_bytes(&self, name: &str) -> Result<Vec<u8>> {
         let mut archive = self.archive.lock().expect("archive lock");
-        let mut entry = archive
-            .by_name(name)
-            .map_err(|e| ChapbookError::ResourceNotFound(format!("{name}: {e}")))?;
-        let mut data = Vec::with_capacity(entry.size() as usize);
-        entry
-            .read_to_end(&mut data)
-            .map_err(|e| ChapbookError::BookMalformed(format!("reading {name}: {e}")))?;
-        Ok(data)
+        read_entry(&mut archive, name)
     }
 }
 
