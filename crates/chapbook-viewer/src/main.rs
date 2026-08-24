@@ -3,7 +3,10 @@
 //! Exists to exercise chapbook end-to-end; not a polished product.
 //!
 //! Sources: an `.epub` or `.cbz` path, or an OPDS URL (page-streamed
-//! comic). Keys: Right/PageDown/Space next page · Left/PageUp previous ·
+//! comic). `--gpu` rasterizes through vello and wgpu instead of the CPU
+//! backend: same session, same display list, different backend — the
+//! shell asks for a [`Session::frame`] and hands its ops to the GPU
+//! rather than blitting a pixmap. Keys: Right/PageDown/Space next page · Left/PageUp previous ·
 //! n/p unit · +/- font size · t theme (light/sepia/dark) · c copy
 //! selection · h highlight it · b back · q/Escape quit. Mouse or touch:
 //! press-drag over text selects; a tap clears; a press on a link follows
@@ -27,8 +30,10 @@ use chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
 use chapbook_reader::Session;
 
 fn main() {
-    let Some(source) = std::env::args().nth(1) else {
-        eprintln!("usage: chapbook-viewer <book.epub|comic.cbz|doc.pdf|opds-url>");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let gpu = args.iter().any(|a| a == "--gpu");
+    let Some(source) = args.into_iter().find(|a| !a.starts_with("--")) else {
+        eprintln!("usage: chapbook-viewer [--gpu] <book.epub|comic.cbz|doc.pdf|opds-url>");
         std::process::exit(2);
     };
     let session = match Session::open(&source) {
@@ -49,7 +54,12 @@ fn main() {
     let mut app = App {
         session,
         window: None,
-        surface: None,
+        backend: if gpu {
+            // The device is acquired once the window exists.
+            Backend::PendingGpu
+        } else {
+            Backend::PendingCpu
+        },
         cursor: (0.0, 0.0),
         selecting: false,
         active_touch: None,
@@ -63,10 +73,19 @@ fn main() {
 
 type SbSurface = softbuffer::Surface<Arc<Window>, Arc<Window>>;
 
+/// Where pixels go. Both arms consume the same session; the CPU arm takes
+/// its rasterized pixmap, the GPU arm takes its display list.
+enum Backend {
+    PendingCpu,
+    PendingGpu,
+    Cpu(SbSurface),
+    Gpu(Box<chapbook_render_vello::VelloWindow>),
+}
+
 struct App {
     session: Session,
     window: Option<Arc<Window>>,
-    surface: Option<SbSurface>,
+    backend: Backend,
     /// Last cursor position in page CSS px.
     cursor: (f32, f32),
     selecting: bool,
@@ -108,10 +127,6 @@ impl App {
             dpi_scale: scale,
             rotation: Rotation::None,
         });
-        let Some(pixmap) = self.session.render() else {
-            return;
-        };
-
         let page_count = self.session.page_count().max(1);
         window.set_title(&format!(
             "{} — {} {}/{} p {}/{}",
@@ -126,25 +141,47 @@ impl App {
             page_count,
         ));
 
-        let Some(surface) = self.surface.as_mut() else {
-            return;
-        };
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            return;
+        match &mut self.backend {
+            Backend::Cpu(surface) => {
+                let Some(pixmap) = self.session.render() else {
+                    return;
+                };
+                let (Some(w), Some(h)) =
+                    (NonZeroU32::new(size.width), NonZeroU32::new(size.height))
+                else {
+                    return;
+                };
+                if surface.resize(w, h).is_err() {
+                    return;
+                }
+                let Ok(mut buffer) = surface.buffer_mut() else {
+                    return;
+                };
+                // Premultiplied RGBA → 0RGB u32; the page is opaque so no
+                // demultiplication is needed.
+                for (dst, px) in buffer.iter_mut().zip(pixmap.pixels()) {
+                    *dst = (u32::from(px.red()) << 16)
+                        | (u32::from(px.green()) << 8)
+                        | u32::from(px.blue());
+                }
+                let _ = buffer.present();
+            }
+            Backend::Gpu(gpu) => {
+                // The GPU path never calls `render()`: it takes the ops
+                // and the resources they resolve against, which is the
+                // whole point of the seam.
+                gpu.resize(size.width, size.height);
+                let Some(frame) = self.session.frame() else {
+                    return;
+                };
+                let background = self.session.settings().theme.background();
+                let (fonts, images) = self.session.paint_resources();
+                if let Err(e) = gpu.present(&frame.list, fonts, images, scale, background) {
+                    eprintln!("chapbook-viewer: gpu present failed: {e}");
+                }
+            }
+            Backend::PendingCpu | Backend::PendingGpu => {}
         }
-        let Ok(mut buffer) = surface.buffer_mut() else {
-            return;
-        };
-        // Premultiplied RGBA → 0RGB u32; the page is opaque so no
-        // demultiplication is needed.
-        for (dst, px) in buffer.iter_mut().zip(pixmap.pixels()) {
-            *dst =
-                (u32::from(px.red()) << 16) | (u32::from(px.green()) << 8) | u32::from(px.blue());
-        }
-        let _ = buffer.present();
     }
 
     fn request_redraw(&self) {
@@ -174,11 +211,27 @@ impl ApplicationHandler<()> for App {
                 )
                 .expect("create window"),
         );
-        let context = softbuffer::Context::new(window.clone()).expect("softbuffer context");
-        let surface =
-            softbuffer::Surface::new(&context, window.clone()).expect("softbuffer surface");
+        let size = window.inner_size();
+        if matches!(self.backend, Backend::PendingGpu) {
+            self.backend = match chapbook_render_vello::VelloWindow::new(
+                window.clone(),
+                size.width,
+                size.height,
+            ) {
+                Ok(gpu) => Backend::Gpu(Box::new(gpu)),
+                Err(e) => {
+                    eprintln!("chapbook-viewer: no GPU backend ({e}); falling back to CPU");
+                    Backend::PendingCpu
+                }
+            };
+        }
+        if matches!(self.backend, Backend::PendingCpu) {
+            let context = softbuffer::Context::new(window.clone()).expect("softbuffer context");
+            let surface =
+                softbuffer::Surface::new(&context, window.clone()).expect("softbuffer surface");
+            self.backend = Backend::Cpu(surface);
+        }
         self.window = Some(window);
-        self.surface = Some(surface);
     }
 
     fn window_event(

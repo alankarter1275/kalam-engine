@@ -97,15 +97,122 @@ impl std::fmt::Display for VelloError {
 
 impl std::error::Error for VelloError {}
 
+/// Face bytes by font id.
+///
+/// The paint seam hands out a `FontSystem`, and reading a face out of its
+/// database copies the bytes, so every backend ends up keeping something
+/// like this. Shared by the offscreen and windowed paths.
+#[derive(Default)]
+pub struct FontCache {
+    faces: HashMap<cosmic_text::fontdb::ID, FontData>,
+}
+
+impl FontCache {
+    fn data(
+        &mut self,
+        id: cosmic_text::fontdb::ID,
+        fonts: &mut cosmic_text::FontSystem,
+    ) -> Option<&FontData> {
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.faces.entry(id) {
+            let (bytes, index) = fonts
+                .db_mut()
+                .with_face_data(id, |data, index| (data.to_vec(), index))?;
+            slot.insert(FontData::new(Blob::new(Arc::new(bytes)), index));
+        }
+        self.faces.get(&id)
+    }
+}
+
+/// Translate display ops into a vello scene.
+///
+/// The interesting half, and deliberately free-standing: the offscreen
+/// renderer and a windowed shell build the same scene and differ only in
+/// where they send it.
+pub fn build_scene(
+    dl: &DisplayList,
+    cache: &mut FontCache,
+    fonts: &mut cosmic_text::FontSystem,
+    images: &ImageStore,
+    scale: f32,
+) -> Scene {
+    let mut scene = Scene::new();
+    // Device pixels are a transform here, not a re-layout: vello is a
+    // vector renderer, so scale applies to the whole scene.
+    let to_device = Affine::scale(scale as f64);
+
+    for op in &dl.ops {
+        match op {
+            DisplayOp::FillRect { rect, color } => {
+                scene.fill(
+                    Fill::NonZero,
+                    to_device,
+                    peniko_color(*color),
+                    None,
+                    &KRect::new(
+                        rect.min_x() as f64,
+                        rect.min_y() as f64,
+                        rect.max_x() as f64,
+                        rect.max_y() as f64,
+                    ),
+                );
+            }
+            DisplayOp::Image { resource, dest } => {
+                let Some(stored) = images.get(*resource) else {
+                    continue;
+                };
+                let image = ImageData {
+                    data: Blob::new(Arc::new(stored.rgba.clone())),
+                    format: ImageFormat::Rgba8,
+                    alpha_type: ImageAlphaType::Alpha,
+                    width: stored.width,
+                    height: stored.height,
+                };
+                let placement = Affine::translate((dest.min_x() as f64, dest.min_y() as f64))
+                    * Affine::scale_non_uniform(
+                        dest.size.w as f64 / stored.width.max(1) as f64,
+                        dest.size.h as f64 / stored.height.max(1) as f64,
+                    );
+                scene.draw_image(&ImageBrush::new(image), to_device * placement);
+            }
+            DisplayOp::GlyphRun {
+                font,
+                font_size,
+                font_weight: _,
+                color,
+                origin,
+                glyphs,
+            } => {
+                let Some(font_data) = cache.data(*font, fonts) else {
+                    continue;
+                };
+                // Glyph positions are baseline-relative, exactly as the
+                // run carries them; the run origin is the baseline.
+                let run = to_device * Affine::translate((origin.x as f64, origin.y as f64));
+                scene
+                    .draw_glyphs(font_data)
+                    .font_size(*font_size)
+                    .brush(peniko_color(*color))
+                    .transform(run)
+                    .draw(
+                        Fill::NonZero,
+                        glyphs.iter().map(|g| Glyph {
+                            id: u32::from(g.id),
+                            x: g.x,
+                            y: g.y,
+                        }),
+                    );
+            }
+        }
+    }
+    scene
+}
+
 /// Holds the GPU device and the caches that outlive one page.
 pub struct VelloRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: Renderer,
-    /// Face bytes by font id. The paint seam hands out a `FontSystem`, and
-    /// reading a face out of its database means copying the bytes, so this
-    /// pays that once per face rather than once per glyph run.
-    fonts: HashMap<cosmic_text::fontdb::ID, FontData>,
+    fonts: FontCache,
     max_texture: u32,
 }
 
@@ -156,7 +263,7 @@ impl VelloRenderer {
             device,
             queue,
             renderer,
-            fonts: HashMap::new(),
+            fonts: FontCache::default(),
             max_texture: limits.max_texture_dimension_2d,
         })
     }
@@ -183,9 +290,7 @@ impl VelloRenderer {
         self.rasterize(&scene, width, height)
     }
 
-    /// Translate ops into a vello scene. Public because it is the
-    /// interesting half: a windowed shell reuses this and renders the
-    /// scene to its surface instead of reading pixels back.
+    /// The scene for one page, using this renderer's font cache.
     pub fn build_scene(
         &mut self,
         dl: &DisplayList,
@@ -193,91 +298,7 @@ impl VelloRenderer {
         images: &ImageStore,
         scale: f32,
     ) -> Scene {
-        let mut scene = Scene::new();
-        // Device pixels are a transform here, not a re-layout: vello is a
-        // vector renderer, so scale applies to the whole scene.
-        let to_device = Affine::scale(scale as f64);
-
-        for op in &dl.ops {
-            match op {
-                DisplayOp::FillRect { rect, color } => {
-                    scene.fill(
-                        Fill::NonZero,
-                        to_device,
-                        peniko_color(*color),
-                        None,
-                        &KRect::new(
-                            rect.min_x() as f64,
-                            rect.min_y() as f64,
-                            rect.max_x() as f64,
-                            rect.max_y() as f64,
-                        ),
-                    );
-                }
-                DisplayOp::Image { resource, dest } => {
-                    let Some(stored) = images.get(*resource) else {
-                        continue;
-                    };
-                    let image = ImageData {
-                        data: Blob::new(Arc::new(stored.rgba.clone())),
-                        format: ImageFormat::Rgba8,
-                        alpha_type: ImageAlphaType::Alpha,
-                        width: stored.width,
-                        height: stored.height,
-                    };
-                    let placement = Affine::translate((dest.min_x() as f64, dest.min_y() as f64))
-                        * Affine::scale_non_uniform(
-                            dest.size.w as f64 / stored.width.max(1) as f64,
-                            dest.size.h as f64 / stored.height.max(1) as f64,
-                        );
-                    scene.draw_image(&ImageBrush::new(image), to_device * placement);
-                }
-                DisplayOp::GlyphRun {
-                    font,
-                    font_size,
-                    font_weight: _,
-                    color,
-                    origin,
-                    glyphs,
-                } => {
-                    let Some(font_data) = self.font_data(*font, fonts) else {
-                        continue;
-                    };
-                    // Glyph positions are baseline-relative, exactly as the
-                    // run carries them; the run origin is the baseline.
-                    let run = to_device * Affine::translate((origin.x as f64, origin.y as f64));
-                    scene
-                        .draw_glyphs(font_data)
-                        .font_size(*font_size)
-                        .brush(peniko_color(*color))
-                        .transform(run)
-                        .draw(
-                            Fill::NonZero,
-                            glyphs.iter().map(|g| Glyph {
-                                id: u32::from(g.id),
-                                x: g.x,
-                                y: g.y,
-                            }),
-                        );
-                }
-            }
-        }
-        scene
-    }
-
-    /// Face bytes for a font id, copied out of the database once.
-    fn font_data(
-        &mut self,
-        id: cosmic_text::fontdb::ID,
-        fonts: &mut cosmic_text::FontSystem,
-    ) -> Option<&FontData> {
-        if let std::collections::hash_map::Entry::Vacant(slot) = self.fonts.entry(id) {
-            let (bytes, index) = fonts
-                .db_mut()
-                .with_face_data(id, |data, index| (data.to_vec(), index))?;
-            slot.insert(FontData::new(Blob::new(Arc::new(bytes)), index));
-        }
-        self.fonts.get(&id)
+        build_scene(dl, &mut self.fonts, fonts, images, scale)
     }
 
     fn rasterize(
@@ -410,4 +431,135 @@ pub fn device_size(size: Size, scale: f32) -> (u32, u32) {
 
 fn peniko_color(color: Rgba) -> Color {
     Color::from_rgba8(color.r, color.g, color.b, color.a)
+}
+
+/// A vello renderer bound to a window's surface.
+///
+/// The offscreen path above renders into a texture and copies the pixels
+/// back, which is right for tests and wrong for a viewer: a windowed shell
+/// would be paying for a GPU render, a readback, and a CPU blit. This
+/// renders into vello's intermediate target and blits that to the
+/// swapchain, so pixels never leave the device.
+///
+/// Panel policy is deliberately absent here. `PixelFormat` dithering and
+/// `Rotation` are properties of an e-ink target, and applying them on this
+/// path means a compute pass or a scene transform rather than the row
+/// operations in chapbook-paint — worth doing when a GPU e-ink shell
+/// exists, not before.
+pub struct VelloWindow {
+    context: vello::util::RenderContext,
+    surface: vello::util::RenderSurface<'static>,
+    renderer: Renderer,
+    fonts: FontCache,
+}
+
+impl VelloWindow {
+    /// Bind to a window. `target` is anything wgpu accepts as a surface
+    /// target for the `'static` lifetime — an `Arc<Window>`, in practice.
+    pub fn new(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, VelloError> {
+        let mut context = vello::util::RenderContext::new();
+        let surface = pollster::block_on(context.create_surface(
+            target,
+            width.max(1),
+            height.max(1),
+            wgpu::PresentMode::AutoVsync,
+        ))
+        .map_err(|e| VelloError::Device(e.to_string()))?;
+
+        let device = &context.devices[surface.dev_id];
+        let renderer = Renderer::new(
+            &device.device,
+            RendererOptions {
+                use_cpu: false,
+                antialiasing_support: vello::AaSupport::area_only(),
+                num_init_threads: None,
+                pipeline_cache: None,
+            },
+        )
+        .map_err(|e| VelloError::Render(e.to_string()))?;
+
+        Ok(VelloWindow {
+            context,
+            surface,
+            renderer,
+            fonts: FontCache::default(),
+        })
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.context
+            .resize_surface(&mut self.surface, width.max(1), height.max(1));
+    }
+
+    /// Draw a page and present it.
+    pub fn present(
+        &mut self,
+        dl: &DisplayList,
+        fonts: &mut cosmic_text::FontSystem,
+        images: &ImageStore,
+        scale: f32,
+        background: Rgba,
+    ) -> Result<(), VelloError> {
+        let scene = build_scene(dl, &mut self.fonts, fonts, images, scale);
+        let device = &self.context.devices[self.surface.dev_id];
+
+        use wgpu::CurrentSurfaceTexture;
+        let frame = match self.surface.surface.get_current_texture() {
+            CurrentSurfaceTexture::Success(frame) | CurrentSurfaceTexture::Suboptimal(frame) => {
+                frame
+            }
+            // The swapchain needs rebuilding (a resize we haven't been
+            // told about yet, or a lost device). Reconfigure and let the
+            // shell ask for another frame rather than failing the read.
+            CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
+                self.context.configure_surface(&self.surface);
+                return Ok(());
+            }
+            // Nothing to draw into right now; not an error.
+            CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => return Ok(()),
+            other => {
+                return Err(VelloError::Render(format!(
+                    "surface unavailable: {other:?}"
+                )))
+            }
+        };
+        self.renderer
+            .render_to_texture(
+                &device.device,
+                &device.queue,
+                &scene,
+                &self.surface.target_view,
+                &RenderParams {
+                    // Letterboxing: the page rarely fills the window
+                    // exactly, and the ground the display list paints only
+                    // covers the page.
+                    base_color: peniko_color(background),
+                    width: self.surface.config.width,
+                    height: self.surface.config.height,
+                    antialiasing_method: AaConfig::Area,
+                },
+            )
+            .map_err(|e| VelloError::Render(e.to_string()))?;
+
+        let mut encoder = device
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("chapbook-blit"),
+            });
+        self.surface.blitter.copy(
+            &device.device,
+            &mut encoder,
+            &self.surface.target_view,
+            &frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default()),
+        );
+        device.queue.submit([encoder.finish()]);
+        frame.present();
+        Ok(())
+    }
 }

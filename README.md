@@ -26,6 +26,7 @@ not an afterthought bolted onto a scrolling browser.
 | `chapbook-layout` | Pagination-first block + inline layout via cosmic-text |
 | `chapbook-paint` | Format-neutral page model + paint-neutral display list |
 | `chapbook-render-tinyskia` | CPU rasterization backend |
+| `chapbook-render-vello` | GPU rasterization backend (vello + wgpu) |
 | `chapbook-opds` | OPDS 1.2/2.0 catalog client + OPDS-PSE streamed comics |
 | `chapbook-cbz` | CBZ comic-book archive reading |
 | `chapbook-pdf` | PDF reading, rasterized via hayro (pure Rust) |
@@ -52,7 +53,10 @@ pure-Rust hayro engine, with a text layer so selection works there too)
 read in the same viewers with page-unit positions — their pages load and
 decode on a background thread. `chapbook --help` for the dev CLI; `cargo
 run -p chapbook-viewer -- <book.epub|comic.cbz|doc.pdf|opds-url>` (winit)
-or `-p chapbook-viewer-gtk` (GTK4) to read.
+or `-p chapbook-viewer-gtk` (GTK4) to read. Pages rasterize on the CPU with
+tiny-skia, or on the GPU through vello and wgpu (`chapbook-viewer --gpu`) —
+the same session and the same display list, a different backend consuming
+it.
 
 See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:
 fixed-layout EPUB, JavaScript/scripted content, MathML, vertical writing

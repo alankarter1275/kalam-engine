@@ -96,6 +96,13 @@ can actually go wrong across a seam, and that measure catches a 2px error
 while tolerating the antialiasing difference that centroid and per-cell
 coverage both mistake for movement.
 
+`chapbook-viewer --gpu` is a shell over it: a wgpu surface on the window
+instead of softbuffer, `Session::frame` instead of `Session::render`, and
+the session unchanged and unaware. Panel policy (grey quantization,
+rotation) is not wired on that path — those are e-ink properties, and
+applying them to a swapchain means a compute pass rather than the row
+operations in chapbook-paint. Worth doing when a GPU e-ink shell exists.
+
 It found a real bug on its first honest comparison: every line of text was
 rendering up to 1.6px above the baseline layout computed, because swash
 applies cosmic-text's vertical sub-pixel bin in the opposite direction. One

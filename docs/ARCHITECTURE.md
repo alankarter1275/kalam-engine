@@ -182,8 +182,12 @@ stays that way.
   that, not a separate path.
 - **chapbook-viewer** / **chapbook-viewer-gtk** — winit+softbuffer and GTK4
   shells over `chapbook-reader::Session`; each translates input events and
-  blits the session's rasterized page, nothing more. A shell that
-  rasterizes for itself takes the frame instead.
+  blits the session's rasterized page, nothing more. `chapbook-viewer
+  --gpu` is the shell that rasterizes for itself: it takes
+  `Session::frame` and `paint_resources` and presents through
+  chapbook-render-vello's window surface, never calling `render()`. The
+  session needs no knowledge of which one it is talking to, which is the
+  evidence that the seam is a seam.
 - **tools/chapbook-cli** — `meta|toc|text|styles|layout|render|opds|lib`;
   each subcommand ships with its milestone and generates the snapshot inputs
   for that milestone's golden tests.

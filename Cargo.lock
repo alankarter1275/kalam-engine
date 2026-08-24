@@ -782,6 +782,7 @@ dependencies = [
  "arboard",
  "chapbook-core",
  "chapbook-reader",
+ "chapbook-render-vello",
  "softbuffer",
  "winit",
 ]
