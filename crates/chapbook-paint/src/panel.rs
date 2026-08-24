@@ -33,6 +33,25 @@ pub fn quantize(rgba: &mut [u8], width: u32, height: u32, format: PixelFormat) {
     // a deeper request rather than honouring it.
     let levels = f32::from(levels.max(2));
     let (w, h) = (width as usize, height as usize);
+    // Loop-invariant: the step between adjacent output levels, and the
+    // index of the highest one.
+    let step = 255.0 / (levels - 1.0);
+    let top = levels - 1.0;
+
+    if !dither {
+        // Undithered, every pixel is independent of its neighbours, so
+        // this path wants none of the diffusion machinery below — not the
+        // two error rows, and in particular not the clear-per-row that
+        // keeping them costs, which is a second full-width pass over every
+        // row of the page to zero values nothing will read.
+        for px in rgba.chunks_exact_mut(4).take(w * h) {
+            let value = ((luminance(px) / step).round().clamp(0.0, top) * step) as u8;
+            px[0] = value;
+            px[1] = value;
+            px[2] = value;
+        }
+        return;
+    }
 
     // One row of forward error plus the next, so diffusion needs no full
     // second buffer.
@@ -41,21 +60,12 @@ pub fn quantize(rgba: &mut [u8], width: u32, height: u32, format: PixelFormat) {
     for y in 0..h {
         for x in 0..w {
             let i = (y * w + x) * 4;
-            let (r, g, b) = (
-                f32::from(rgba[i]),
-                f32::from(rgba[i + 1]),
-                f32::from(rgba[i + 2]),
-            );
-            let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b + error[x + 1];
-            let step = 255.0 / (levels - 1.0);
-            let quantized = (lum / step).round().clamp(0.0, levels - 1.0) * step;
+            let lum = luminance(&rgba[i..i + 3]) + error[x + 1];
+            let quantized = (lum / step).round().clamp(0.0, top) * step;
             let value = quantized as u8;
             rgba[i] = value;
             rgba[i + 1] = value;
             rgba[i + 2] = value;
-            if !dither {
-                continue;
-            }
             // Floyd–Steinberg: 7/16 right, 3/16 down-left, 5/16 down,
             // 1/16 down-right.
             let residual = lum - quantized;
@@ -67,6 +77,14 @@ pub fn quantize(rgba: &mut [u8], width: u32, height: u32, format: PixelFormat) {
         std::mem::swap(&mut error, &mut next);
         next.iter_mut().for_each(|e| *e = 0.0);
     }
+}
+
+/// Rec. 709 luminance of one RGBA pixel's colour channels.
+///
+/// Pages paint over an opaque background, so this reads the same whether
+/// the pixel is premultiplied or straight.
+fn luminance(px: &[u8]) -> f32 {
+    0.2126 * f32::from(px[0]) + 0.7152 * f32::from(px[1]) + 0.0722 * f32::from(px[2])
 }
 
 /// Turn a rasterized page for a panel mounted in a different orientation,
@@ -110,6 +128,37 @@ mod tests {
     fn mean(rgba: &[u8]) -> f32 {
         let total: f32 = rgba.chunks_exact(4).map(|px| f32::from(px[0])).sum();
         total / (rgba.len() / 4) as f32
+    }
+
+    /// The undithered path takes a shortcut that is only sound because
+    /// quantization without diffusion is a pure per-pixel function. Prove
+    /// it: quantizing the whole page must equal quantizing it a row at a
+    /// time, which cannot hold if any state crosses a pixel boundary.
+    #[test]
+    fn without_dithering_no_state_crosses_a_pixel() {
+        let format = PixelFormat::Grey {
+            levels: 16,
+            dither: false,
+        };
+        // A ramp that is neither flat nor aligned to the 16 output steps,
+        // so rounding lands both ways.
+        let (w, h) = (17u32, 5u32);
+        let page: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let v = ((i * 37) % 256) as u8;
+                [v, v.wrapping_add(11), v.wrapping_sub(7), 255]
+            })
+            .collect();
+
+        let mut whole = page.clone();
+        quantize(&mut whole, w, h, format);
+
+        let mut row_at_a_time = page.clone();
+        for row in row_at_a_time.chunks_exact_mut((w * 4) as usize) {
+            quantize(row, w, 1, format);
+        }
+
+        assert_eq!(whole, row_at_a_time);
     }
 
     #[test]
