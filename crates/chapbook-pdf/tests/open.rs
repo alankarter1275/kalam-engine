@@ -67,3 +67,47 @@ fn text_layer_extracts_lines_with_geometry() {
     // Glyph x positions increase along the line.
     assert!(l0.glyphs.windows(2).all(|w| w[0].x < w[1].x));
 }
+
+#[test]
+fn outline_becomes_a_nested_toc_with_spine_targets() {
+    let book = fixture();
+    let toc = book.toc();
+    assert_eq!(toc.len(), 3, "{toc:#?}");
+
+    // Direct /Dest array.
+    assert_eq!(toc[0].label, "Red plate");
+    assert_eq!(toc[0].spine_index, Some(0));
+    assert_eq!(toc[0].href.as_deref(), Some("page-1"));
+    assert!(toc[0].children.is_empty());
+
+    // UTF-16BE title, and a /GoTo action instead of a /Dest.
+    assert_eq!(toc[1].label, "Blau — Seite zwei");
+    assert_eq!(toc[1].spine_index, Some(1));
+
+    // Child reached by a named destination through the /Names name tree.
+    assert_eq!(toc[1].children.len(), 1);
+    let child = &toc[1].children[0];
+    assert_eq!(child.label, "Text page");
+    assert_eq!(child.spine_index, Some(2));
+    assert_eq!(child.href.as_deref(), Some("page-3"));
+
+    // A /URI action leaves the document: the label survives, the target
+    // does not.
+    assert_eq!(toc[2].label, "Elsewhere");
+    assert_eq!(toc[2].spine_index, None);
+    assert_eq!(toc[2].href, None);
+}
+
+#[test]
+fn every_toc_target_is_a_real_spine_index() {
+    let book = fixture();
+    fn check(entries: &[chapbook_core::TocEntry], spine_len: usize) {
+        for e in entries {
+            if let Some(i) = e.spine_index {
+                assert!(i < spine_len, "{}: spine {i} out of range", e.label);
+            }
+            check(&e.children, spine_len);
+        }
+    }
+    check(book.toc(), book.spine().len());
+}

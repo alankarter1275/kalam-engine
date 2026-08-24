@@ -11,6 +11,8 @@
 //! Rasterizing a cold page takes real CPU time on complex PDFs — the same
 //! `unit_bytes` blocking contract as a remote comic page, for a different
 //! reason.
+//!
+//! The document outline becomes the table of contents; see [`outline`].
 
 use std::path::Path;
 use std::sync::Arc;
@@ -20,6 +22,8 @@ use hayro::hayro_syntax::Pdf;
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::{RenderCache, RenderSettings};
 
+mod outline;
+mod strings;
 mod text;
 pub use text::{TextGlyph, TextLine};
 
@@ -55,7 +59,7 @@ impl PdfBook {
         let text = |bytes: &Option<Vec<u8>>| -> Option<String> {
             bytes
                 .as_ref()
-                .map(|b| String::from_utf8_lossy(b).into_owned())
+                .map(|b| strings::text_string(b))
                 .filter(|s| !s.trim().is_empty())
         };
         let md = pdf.metadata();
@@ -79,12 +83,13 @@ impl PdfBook {
             })
             .collect();
 
+        let toc = outline::read(&pdf);
         Ok(PdfBook {
             pdf,
             interpreter: InterpreterSettings::default(),
             metadata,
             spine,
-            toc: Vec::new(),
+            toc,
         })
     }
 }
