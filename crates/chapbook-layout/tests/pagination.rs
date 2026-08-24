@@ -1226,3 +1226,92 @@ fn decoration_stretches_on_justified_indented_first_line() {
         rect.size.w
     );
 }
+
+// ---- Themes ----
+
+fn layout_html_settings(
+    html: &str,
+    css: &str,
+    page: &PageMetrics,
+    settings: &ReadingSettings,
+) -> ChapterLayout {
+    let mut doc = chapbook_dom::parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
+    let css_sources = vec![css.to_string()];
+    let mut engine = chapbook_style::StyleEngine::new(page, settings);
+    engine.set_author_sheets(&css_sources);
+    engine.style_document(&mut doc);
+    let mut fonts = fonts();
+    chapbook_layout::paginate(
+        &doc,
+        &css_sources,
+        page,
+        &mut fonts,
+        &chapbook_paint::ImageStore::default(),
+    )
+}
+
+fn first_run_color(layout: &ChapterLayout, needle: &str) -> chapbook_core::Rgba {
+    layout
+        .pages
+        .iter()
+        .flat_map(|p| p.fragments.iter())
+        .find_map(|f| match &f.kind {
+            FragmentKind::Line(l) if l.text.contains(needle) => Some(l.runs[0].color),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no line containing {needle:?}"))
+}
+
+#[test]
+fn sepia_recolors_defaults_dark_forces_everything() {
+    use chapbook_core::Theme;
+    let html = "<html><body><p>plain text</p><p class=\"red\">warm text</p></body></html>";
+    let css = ".red { color: #c04030; }";
+    let author_red = chapbook_core::Rgba::new(0xc0, 0x40, 0x30, 255);
+
+    // Sepia is gentle: defaults recolor, author colors survive.
+    let sepia = ReadingSettings {
+        theme: Theme::Sepia,
+        ..ReadingSettings::default()
+    };
+    let layout = layout_html_settings(html, css, &page_for_lines(10), &sepia);
+    assert_eq!(first_run_color(&layout, "plain"), Theme::Sepia.foreground());
+    assert_eq!(
+        first_run_color(&layout, "warm"),
+        author_red,
+        "sepia must not override author-specified colors"
+    );
+
+    // Dark forces: readability beats publisher colors in night mode.
+    let dark = ReadingSettings {
+        theme: Theme::Dark,
+        ..ReadingSettings::default()
+    };
+    let layout = layout_html_settings(html, css, &page_for_lines(10), &dark);
+    assert_eq!(first_run_color(&layout, "plain"), Theme::Dark.foreground());
+    assert_eq!(first_run_color(&layout, "warm"), Theme::Dark.foreground());
+
+    // The identity theme really is identity: default black text.
+    let light = layout_html_settings(html, css, &page_for_lines(10), &ReadingSettings::default());
+    assert_eq!(first_run_color(&light, "plain"), Theme::Light.foreground());
+    assert_eq!(first_run_color(&light, "warm"), author_red);
+}
+
+#[test]
+fn dark_theme_flips_prefers_color_scheme() {
+    use chapbook_core::Theme;
+    let html =
+        "<html><body><p class=\"day\">day only</p><p class=\"night\">night only</p></body></html>";
+    let css = ".night { display: none; } \
+               @media (prefers-color-scheme: dark) { \
+                 .night { display: block; } .day { display: none; } }";
+    let light = layout_html_settings(html, css, &page_for_lines(10), &ReadingSettings::default());
+    let dark_settings = ReadingSettings {
+        theme: Theme::Dark,
+        ..ReadingSettings::default()
+    };
+    let dark = layout_html_settings(html, css, &page_for_lines(10), &dark_settings);
+    let texts = |l: &ChapterLayout| line_texts_in_order(l).join(" ");
+    assert!(texts(&light).contains("day only") && !texts(&light).contains("night only"));
+    assert!(texts(&dark).contains("night only") && !texts(&dark).contains("day only"));
+}

@@ -3,7 +3,8 @@
 //! Not a polished product.
 //!
 //! Keys: Right/PageDown/Space next page · Left/PageUp previous ·
-//! n/p chapter · +/- font size · q/Escape quit.
+//! n/p chapter · +/- font size · t theme (light/sepia/dark) ·
+//! q/Escape quit.
 //!
 //! Contract (see `Publication::unit_bytes`): book I/O may block and fail
 //! with network errors for remote-backed publications. This v1 harness only
@@ -264,6 +265,14 @@ impl App {
         self.invalidate_layouts(true);
     }
 
+    /// Cycle light -> sepia -> dark. Colors are baked into computed styles
+    /// (and dark flips prefers-color-scheme), so this re-runs the cascade
+    /// and relayout, keeping the reading position via the char map.
+    fn cycle_theme(&mut self) {
+        self.settings.theme = self.settings.theme.cycle();
+        self.invalidate_layouts(true);
+    }
+
     /// Capture the current position as a full layered locator and persist.
     fn save_position(&mut self) {
         let (Some(library), Some(id)) = (self.library.as_mut(), self.book_id) else {
@@ -353,6 +362,7 @@ impl App {
             }
         }
         let (dl, page_count) = {
+            let background = self.settings.theme.background();
             let spine = self.spine;
             let page_idx = self.page;
             let Some(layout) = self.layout_chapter(spine) else {
@@ -363,7 +373,7 @@ impl App {
                 return;
             };
             (
-                chapbook_paint::build_display_list(page, chapbook_core::Rgba::WHITE),
+                chapbook_paint::build_display_list(page, background),
                 layout.pages.len(),
             )
         };
@@ -472,6 +482,7 @@ impl ApplicationHandler for App {
                         "p" => self.prev_chapter(),
                         "+" | "=" => self.adjust_font(2.0),
                         "-" => self.adjust_font(-2.0),
+                        "t" => self.cycle_theme(),
                         _ => return,
                     },
                     _ => return,

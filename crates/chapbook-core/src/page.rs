@@ -1,4 +1,80 @@
 use crate::geometry::{EdgeSizes, Size};
+use crate::Rgba;
+
+/// A reading color theme. `Light` is the identity theme: it changes
+/// nothing about how a book renders today. The others repaint the page
+/// ground and the *default* text/link colors — publisher-specified colors
+/// are deliberately left alone (user-origin sheet, normal declarations).
+///
+/// Dark also flips the media `prefers-color-scheme`, so books shipping
+/// their own dark-mode rules get them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Theme {
+    #[default]
+    Light,
+    Sepia,
+    Dark,
+}
+
+impl Theme {
+    /// Page ground, painted as the display list's first op.
+    pub fn background(self) -> Rgba {
+        match self {
+            Theme::Light => Rgba::WHITE,
+            Theme::Sepia => Rgba::new(246, 240, 226, 255),
+            Theme::Dark => Rgba::new(18, 18, 18, 255),
+        }
+    }
+
+    /// Default text color where the publisher didn't specify one.
+    pub fn foreground(self) -> Rgba {
+        match self {
+            Theme::Light => Rgba::new(0, 0, 0, 255),
+            Theme::Sepia => Rgba::new(91, 70, 54, 255),
+            Theme::Dark => Rgba::new(220, 220, 220, 255),
+        }
+    }
+
+    /// Default link color (overrides the UA `a` color, not author colors).
+    pub fn link(self) -> Rgba {
+        match self {
+            Theme::Light => Rgba::new(0, 0, 238, 255),
+            Theme::Sepia => Rgba::new(139, 90, 43, 255),
+            Theme::Dark => Rgba::new(138, 180, 248, 255),
+        }
+    }
+
+    /// Whether media queries should see `prefers-color-scheme: dark`.
+    pub fn is_dark(self) -> bool {
+        matches!(self, Theme::Dark)
+    }
+
+    /// Next theme in the viewer's cycle order.
+    pub fn cycle(self) -> Theme {
+        match self {
+            Theme::Light => Theme::Sepia,
+            Theme::Sepia => Theme::Dark,
+            Theme::Dark => Theme::Light,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Theme::Light => "light",
+            Theme::Sepia => "sepia",
+            Theme::Dark => "dark",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Theme> {
+        match name.to_ascii_lowercase().as_str() {
+            "light" => Some(Theme::Light),
+            "sepia" => Some(Theme::Sepia),
+            "dark" => Some(Theme::Dark),
+            _ => None,
+        }
+    }
+}
 
 /// Physical page geometry that layout targets, in CSS px.
 ///
@@ -57,6 +133,9 @@ pub struct ReadingSettings {
     pub justify: bool,
     /// Honor publisher (author-origin) stylesheets; off = UA + user sheets only.
     pub publisher_styles: bool,
+    /// Color theme: page ground, default text/link colors, and the
+    /// `prefers-color-scheme` the cascade sees.
+    pub theme: Theme,
 }
 
 impl Default for ReadingSettings {
@@ -66,6 +145,7 @@ impl Default for ReadingSettings {
             line_height: 1.5,
             justify: false,
             publisher_styles: true,
+            theme: Theme::default(),
         }
     }
 }
@@ -79,6 +159,7 @@ impl ReadingSettings {
         self.line_height.to_bits().hash(&mut h);
         self.justify.hash(&mut h);
         self.publisher_styles.hash(&mut h);
+        self.theme.hash(&mut h);
         h.finish()
     }
 }

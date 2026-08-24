@@ -72,7 +72,11 @@ impl StyleEngine {
             Scale::new(page.dpi_scale),
             Box::new(BookFontMetricsProvider),
             ComputedValues::initial_values_with_font_override(Font::initial_values()),
-            PrefersColorScheme::Light,
+            if settings.theme.is_dark() {
+                PrefersColorScheme::Dark
+            } else {
+                PrefersColorScheme::Light
+            },
             PointerCapabilities::default(),
             PointerCapabilities::default(),
         );
@@ -87,6 +91,11 @@ impl StyleEngine {
 
         engine.append_sheet(UA_CSS, Origin::UserAgent);
         engine.append_sheet(&settings_css(settings), Origin::UserAgent);
+        if let Some(css) = theme_css(settings.theme) {
+            // User origin: beats the UA defaults; whether it also beats
+            // publisher declarations is per-theme (see `theme_css`).
+            engine.append_sheet(&css, Origin::User);
+        }
         engine
     }
 
@@ -177,6 +186,29 @@ impl StyleEngine {
             AllowImportRules::Yes,
         );
         DocumentStyleSheet(ServoArc::new(data))
+    }
+}
+
+/// The theme's user-origin sheet. `Light` is the identity theme and
+/// injects nothing, so an unthemed pipeline is byte-identical to the
+/// pre-theme one. `Sepia` is gentle: it recolors the *defaults* (normal
+/// user-origin declarations, so publisher colors win where specified).
+/// `Dark` forces: publisher text/background colors are overridden with
+/// `!important` — a light-on-light aside is unreadable in night mode, and
+/// readability beats design there (the Readium/Calibre convention).
+fn theme_css(theme: chapbook_core::Theme) -> Option<String> {
+    use chapbook_core::Theme;
+    let hex = |c: chapbook_core::Rgba| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+    let (fg, link) = (hex(theme.foreground()), hex(theme.link()));
+    match theme {
+        Theme::Light => None,
+        Theme::Sepia => Some(format!(
+            ":root {{ color: {fg}; }}\na {{ color: {link}; }}\n"
+        )),
+        Theme::Dark => Some(format!(
+            "* {{ color: {fg} !important; background-color: transparent !important; }}\n\
+             a {{ color: {link} !important; }}\n"
+        )),
     }
 }
 

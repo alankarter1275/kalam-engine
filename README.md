@@ -38,7 +38,8 @@ cascade its styles through stylo, paginate with cosmic-text, render pages
 with tiny-skia, and read it in the reference viewer with positions that
 survive relayout, font-size changes, and even replaced editions (see
 `docs/LOCATORS.md`). Embedded fonts (including obfuscated ones), images,
-and text decorations render. `chapbook --help` for the dev CLI;
+and text decorations render, with light/sepia/dark themes (sepia recolors
+defaults; dark forces readability). `chapbook --help` for the dev CLI;
 `cargo run -p chapbook-viewer -- <book.epub>` to read.
 
 See `docs/ARCHITECTURE.md` for the design. Explicitly out of scope:

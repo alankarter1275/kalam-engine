@@ -17,12 +17,28 @@ fn repo(rel: &str) -> PathBuf {
 }
 
 fn check_golden_of(book_rel: &str, spine: usize, page: usize, golden_rel: &str) {
+    check_golden_themed(
+        book_rel,
+        spine,
+        page,
+        golden_rel,
+        chapbook_core::Theme::Light,
+    )
+}
+
+fn check_golden_themed(
+    book_rel: &str,
+    spine: usize,
+    page: usize,
+    golden_rel: &str,
+    theme: chapbook_core::Theme,
+) {
     let golden = repo(golden_rel);
     let out = std::env::temp_dir().join(format!(
         "chapbook-render-{}-{spine}-{page}.png",
         golden.file_stem().unwrap().to_string_lossy()
     ));
-    commands::render(&repo(book_rel), spine, page, &out).unwrap();
+    commands::render(&repo(book_rel), spine, page, &out, theme).unwrap();
     let rendered = std::fs::read(&out).unwrap();
 
     if std::env::var_os("UPDATE_RENDER_GOLDENS").is_some() {
@@ -71,5 +87,16 @@ fn render_golden_illustrated() {
         0,
         0,
         "fixtures/render/illustrated-s0p0.png",
+    );
+}
+
+#[test]
+fn render_golden_illustrated_dark() {
+    check_golden_themed(
+        "fixtures/epub/illustrated.epub",
+        0,
+        0,
+        "fixtures/render/illustrated-s0p0-dark.png",
+        chapbook_core::Theme::Dark,
     );
 }

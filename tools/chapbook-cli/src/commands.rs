@@ -75,7 +75,7 @@ pub fn text(epub: &Path, spine: Option<usize>) -> Result<String> {
 pub fn styles(epub: &Path, spine: usize) -> Result<String> {
     let book = Book::open(epub)?;
     let href = book.spine_item(spine)?.href.clone();
-    let (doc, _css, notes) = styled_chapter(&book, spine, &href)?;
+    let (doc, _css, notes) = styled_chapter(&book, spine, &href, &ReadingSettings::default())?;
     Ok(notes + &chapbook_style::dump_computed_styles(&doc))
 }
 
@@ -104,7 +104,7 @@ fn load_chapter_assets(
 pub fn layout(epub: &Path, spine: usize) -> Result<String> {
     let book = Book::open(epub)?;
     let href = book.spine_item(spine)?.href.clone();
-    let (doc, css, notes) = styled_chapter(&book, spine, &href)?;
+    let (doc, css, notes) = styled_chapter(&book, spine, &href, &ReadingSettings::default())?;
 
     // Deterministic fonts: vendored fixture faces only, never host fonts.
     let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
@@ -151,10 +151,20 @@ pub fn layout(epub: &Path, spine: usize) -> Result<String> {
     Ok(out)
 }
 
-pub fn render(epub: &Path, spine: usize, page: usize, out: &Path) -> Result<String> {
+pub fn render(
+    epub: &Path,
+    spine: usize,
+    page: usize,
+    out: &Path,
+    theme: chapbook_core::Theme,
+) -> Result<String> {
     let book = Book::open(epub)?;
     let href = book.spine_item(spine)?.href.clone();
-    let (doc, css, _notes) = styled_chapter(&book, spine, &href)?;
+    let settings = ReadingSettings {
+        theme,
+        ..ReadingSettings::default()
+    };
+    let (doc, css, _notes) = styled_chapter(&book, spine, &href, &settings)?;
 
     let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
     let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
@@ -170,7 +180,7 @@ pub fn render(epub: &Path, spine: usize, page: usize, out: &Path) -> Result<Stri
         ))
     })?;
 
-    let dl = chapbook_paint::build_display_list(page_data, chapbook_core::Rgba::WHITE);
+    let dl = chapbook_paint::build_display_list(page_data, theme.background());
     let scale = metrics.dpi_scale;
     let mut pixmap = chapbook_render_tinyskia::tiny_skia::Pixmap::new(
         (dl.size.w * scale) as u32,
@@ -199,6 +209,7 @@ fn styled_chapter(
     book: &Book,
     spine: usize,
     href: &str,
+    settings: &ReadingSettings,
 ) -> Result<(chapbook_dom::Document, CssSheets, String)> {
     let bytes = book.unit_bytes(spine)?;
     let mut doc = chapbook_dom::parse_xhtml(&bytes, href)?;
@@ -227,8 +238,7 @@ fn styled_chapter(
     }
 
     let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
-    let mut engine =
-        chapbook_style::StyleEngine::new(&PageMetrics::default(), &ReadingSettings::default());
+    let mut engine = chapbook_style::StyleEngine::new(&PageMetrics::default(), settings);
     engine.set_author_sheets(&sheets);
     engine.style_document(&mut doc);
     Ok((doc, css, notes))

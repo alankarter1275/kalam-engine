@@ -81,6 +81,12 @@ stays that way.
   chapter and user-origin override sheets (reader settings, themes), runs the
   restyle traversal, exposes `@font-face` rules for fontdb registration, and
   provides a cosmic-text-backed `FontMetricsProvider` (ex/ch units).
+  Themes (`chapbook_core::Theme`): `Light` is the identity theme; `Sepia`
+  recolors the defaults at user origin (publisher colors win); `Dark`
+  forces text/background colors with `!important` for night-mode
+  readability and flips the device's `prefers-color-scheme`. The page
+  ground is the display list's first op, chosen by the caller from the
+  theme.
 - **chapbook-layout** — the differentiator. Box tree per CSS 2.1 §9.2
   (anonymous blocks, `::before`/`::after`), block flow, each inline formatting
   context laid out as one `cosmic_text::Buffer` (per-span `Attrs` from

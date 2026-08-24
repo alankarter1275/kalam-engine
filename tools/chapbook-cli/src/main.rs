@@ -49,6 +49,9 @@ enum Command {
         page: usize,
         #[arg(short, long, default_value = "page.png")]
         out: PathBuf,
+        /// Color theme: light, sepia, or dark
+        #[arg(long, default_value = "light", value_parser = parse_theme)]
+        theme: chapbook_core::Theme,
     },
     /// Browse, search, and download from OPDS catalogs (M6)
     Opds {
@@ -80,6 +83,11 @@ enum LibCommand {
     Ls,
 }
 
+fn parse_theme(s: &str) -> Result<chapbook_core::Theme, String> {
+    chapbook_core::Theme::from_name(s)
+        .ok_or_else(|| format!("unknown theme {s:?} (light|sepia|dark)"))
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let print = |result: chapbook_core::Result<String>| -> ExitCode {
@@ -105,7 +113,8 @@ fn main() -> ExitCode {
             spine,
             page,
             out,
-        } => print(commands::render(&epub, spine, page, &out)),
+            theme,
+        } => print(commands::render(&epub, spine, page, &out, theme)),
         Command::Opds { command } => match command {
             OpdsCommand::Ls { url } => print(commands::opds_ls(&url)),
             OpdsCommand::Search { url, query } => print(commands::opds_search(&url, &query)),
