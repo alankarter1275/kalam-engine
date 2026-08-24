@@ -202,13 +202,32 @@ Increments left, in the order they will hurt:
 - **Damage beyond selections and highlights.** A page turn that only moves
   a footer, or an image landing in a fixed rect, could both state their
   region and don't.
-- **RGBA end-to-end is the expensive assumption.** For a 1404×1872 panel:
-  a 10.5 MB buffer, a full `quantize` pass, then `rotate` returning a fresh
-  `Vec` rather than working in place — another 10.5 MB — to produce 1.3 MB
-  for a 4-bit panel. Three passes and ~21 MB of churn per page turn on a
-  ~1 GHz ARM core. Free on desktop, possibly a visible slice of the refresh
-  budget on device. Measure on hardware before optimizing, but do not be
-  surprised by it.
+- **RGBA end-to-end is the expensive assumption**, and now partly
+  measured. `cargo run -p chapbook-cli --example timings` breaks the
+  pipeline down; `-p chapbook-paint --example quantbench` isolates the
+  panel conversion. On x86 at Clara geometry, per page turn: render
+  1.17ms, quantize 6.45ms, rotate 0. `rotate` no longer allocates — an
+  unrotated page borrows — so that half of the churn is gone, but
+  `quantize` is now essentially the whole cost, and it is at its serial
+  floor (see the note in the function: three micro-optimizations tried,
+  the two that helped were not bit-exact).
+
+  **Possible later, deliberately not done now:** `quantize` runs over the
+  whole page while `present` blits only the damage rect, so a selection
+  drag converts ~1.5M pixels to update perhaps 50k. Scoping it to damage
+  would cut that roughly by the damage ratio. The catch is that error
+  diffusion is not local — a scoped pass starts from zero error at its
+  edges, leaving a faint dither seam at the boundary — so it would want
+  restricting to `dither: false`, or to the provisional classes that a
+  later Quality update corrects anyway.
+
+  This is probably premature. The numbers above are x86; on a Clara they
+  would be several times larger, but the e-ink refresh they feed is
+  ~450ms, so quantize is plausibly a tenth of perceived latency rather
+  than the 80% of CPU time it looks like here. Trading a visible seam
+  against that is not a judgement to make without the hardware in hand —
+  and on an EPDC the right answer is likely the bullet below instead: hand
+  over undithered grey and let the controller do it.
 - **`dither` is page-global.** Its own doc says images need it and body
   text does not, but one flag covers the whole page, so it cannot be both.
   The display list knows which ops are images; that information is being
