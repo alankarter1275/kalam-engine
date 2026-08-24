@@ -23,6 +23,24 @@ jobs:
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
 
+  device-targets:
+    # The panel backend transcribes kernel structs whose layout shifts with
+    # word size, and every e-ink device is 32- or 64-bit ARM. `check` is
+    # enough: the layout assertions are const-evaluated, so a drifted
+    # transcription fails here without a linker, a device, or an emulator.
+    # Scoped to the crates that cross-compile without system libraries —
+    # the rest of the workspace wants sqlite, fontconfig and GTK.
+    name: check (armv7 + aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-unknown-linux-gnueabihf, aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p chapbook-core -p chapbook-panel-fbdev --target armv7-unknown-linux-gnueabihf
+      - run: cargo check -p chapbook-core -p chapbook-panel-fbdev --target aarch64-unknown-linux-gnu
+
   msrv:
     name: build (MSRV 1.92)
     runs-on: ubuntu-latest

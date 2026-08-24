@@ -61,6 +61,27 @@ fn luminance(r: u8, g: u8, b: u8) -> u8 {
     lum.round().clamp(0.0, 255.0) as u8
 }
 
+/// Write one pixel's low `bytes` bytes in the framebuffer's own order.
+///
+/// A framebuffer's bitfields describe positions inside a *native-endian*
+/// word of `bits_per_pixel` bits, so the bytes reach memory the way this
+/// machine spells that word — not always little-endian. On a big-endian
+/// target the low bytes of a sub-word pixel sit at the end of the
+/// representation, which is why this is not a plain truncation.
+///
+/// Every e-ink device is little-endian ARM, so nothing in the field
+/// depends on the distinction; it is here because getting it silently
+/// wrong would swap every channel on a target nobody thought to check.
+fn write_pixel(dst: &mut [u8], word: u32, bytes: usize) {
+    let repr = word.to_ne_bytes();
+    let low = if cfg!(target_endian = "big") {
+        &repr[4 - bytes..]
+    } else {
+        &repr[..bytes]
+    };
+    dst[..bytes].copy_from_slice(low);
+}
+
 /// One source pixel as the framebuffer's own word.
 pub(crate) fn pack(r: u8, g: u8, b: u8, encoding: Encoding) -> u32 {
     match encoding {
@@ -113,7 +134,7 @@ pub(crate) fn blit_into(
                 break;
             }
             let word = pack(rgba[src], rgba[src + 1], rgba[src + 2], layout.encoding);
-            dst[dst_at..dst_at + bpp].copy_from_slice(&word.to_le_bytes()[..bpp]);
+            write_pixel(&mut dst[dst_at..dst_at + bpp], word, bpp);
         }
     }
 }
@@ -150,6 +171,18 @@ mod tests {
             length: 5,
         },
     };
+
+    /// The inverse of [`write_pixel`], so the tests assert the packing
+    /// rather than the endianness of whatever ran them.
+    fn read_pixel(bytes: &[u8]) -> u32 {
+        let mut repr = [0u8; 4];
+        if cfg!(target_endian = "big") {
+            repr[4 - bytes.len()..].copy_from_slice(bytes);
+        } else {
+            repr[..bytes.len()].copy_from_slice(bytes);
+        }
+        u32::from_ne_bytes(repr)
+    }
 
     fn layout(bpp: usize, line_length: usize, encoding: Encoding) -> Layout {
         Layout {
@@ -204,7 +237,7 @@ mod tests {
             for x in 0..4usize {
                 let at = y * 16 + x * 4;
                 let inside = (1..3).contains(&x) && (1..3).contains(&y);
-                let word = u32::from_le_bytes(dst[at..at + 4].try_into().unwrap());
+                let word = read_pixel(&dst[at..at + 4]);
                 assert_eq!(
                     word != 0,
                     inside,
@@ -227,10 +260,7 @@ mod tests {
         for row in 0..2usize {
             for x in 0..4usize {
                 let at = row * 32 + x * 4;
-                assert_eq!(
-                    u32::from_le_bytes(dst[at..at + 4].try_into().unwrap()),
-                    0x0010_2030
-                );
+                assert_eq!(read_pixel(&dst[at..at + 4]), 0x0010_2030);
             }
             assert!(
                 dst[row * 32 + 16..row * 32 + 32].iter().all(|b| *b == 0),
@@ -246,7 +276,7 @@ mod tests {
         let rgba = [0xFFu8, 0x00, 0x00, 0xFF].repeat(4 * 2);
         blit_into(&mut dst, &layout, &rgba, 4, PanelRect::new(0, 0, 4, 2));
         for pixel in dst.chunks_exact(2) {
-            assert_eq!(u16::from_le_bytes(pixel.try_into().unwrap()), 0xF800);
+            assert_eq!(read_pixel(pixel), 0xF800);
         }
     }
 
@@ -260,10 +290,7 @@ mod tests {
         blit_into(&mut dst, &layout, &rgba, 4, PanelRect::new(2, 2, 999, 999));
         blit_into(&mut dst, &layout, &rgba, 4, PanelRect::new(99, 99, 4, 4));
         blit_into(&mut dst, &layout, &rgba, 4, PanelRect::default());
-        assert_ne!(
-            u32::from_le_bytes(dst[48 + 8..48 + 12].try_into().unwrap()),
-            0
-        );
+        assert_ne!(read_pixel(&dst[48 + 8..48 + 12]), 0);
     }
 
     #[test]

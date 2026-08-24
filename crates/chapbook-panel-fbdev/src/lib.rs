@@ -106,6 +106,56 @@ impl Default for FbFixScreeninfo {
     }
 }
 
+/// The structs above are transcriptions of `linux/fb.h`, and a
+/// transcription that drifts does not fail — it reads plausible garbage
+/// out of the wrong offsets. `--example probe` catches that on whatever
+/// machine runs it; these catch it on every target the crate is ever
+/// compiled for, including ones nobody has.
+///
+/// `fb_var_screeninfo` is all `__u32`, so its layout is the same
+/// everywhere. `fb_fix_screeninfo` embeds two `unsigned long`, which is
+/// eight bytes on a 64-bit target and four on a 32-bit one — and every
+/// e-ink device is 32-bit or 64-bit ARM, so both arms of this are real.
+mod layout_matches_the_kernel {
+    use super::{FbFixScreeninfo, FbVarScreeninfo};
+    use std::mem::{offset_of, size_of};
+
+    const _: () = {
+        assert!(offset_of!(FbVarScreeninfo, xres) == 0);
+        assert!(offset_of!(FbVarScreeninfo, yres) == 4);
+        assert!(offset_of!(FbVarScreeninfo, xres_virtual) == 8);
+        assert!(offset_of!(FbVarScreeninfo, yres_virtual) == 12);
+        assert!(offset_of!(FbVarScreeninfo, bits_per_pixel) == 24);
+        assert!(offset_of!(FbVarScreeninfo, grayscale) == 28);
+        assert!(offset_of!(FbVarScreeninfo, red) == 32);
+        assert!(offset_of!(FbVarScreeninfo, green) == 44);
+        assert!(offset_of!(FbVarScreeninfo, blue) == 56);
+        assert!(offset_of!(FbVarScreeninfo, transp) == 68);
+        assert!(offset_of!(FbVarScreeninfo, rotate) == 136);
+        assert!(size_of::<FbVarScreeninfo>() == 160);
+    };
+
+    #[cfg(target_pointer_width = "64")]
+    const _: () = {
+        assert!(offset_of!(FbFixScreeninfo, smem_start) == 16);
+        assert!(offset_of!(FbFixScreeninfo, smem_len) == 24);
+        assert!(offset_of!(FbFixScreeninfo, visual) == 36);
+        assert!(offset_of!(FbFixScreeninfo, line_length) == 48);
+        assert!(offset_of!(FbFixScreeninfo, mmio_start) == 56);
+        assert!(size_of::<FbFixScreeninfo>() == 80);
+    };
+
+    #[cfg(target_pointer_width = "32")]
+    const _: () = {
+        assert!(offset_of!(FbFixScreeninfo, smem_start) == 16);
+        assert!(offset_of!(FbFixScreeninfo, smem_len) == 20);
+        assert!(offset_of!(FbFixScreeninfo, visual) == 32);
+        assert!(offset_of!(FbFixScreeninfo, line_length) == 44);
+        assert!(offset_of!(FbFixScreeninfo, mmio_start) == 48);
+        assert!(size_of::<FbFixScreeninfo>() == 68);
+    };
+}
+
 fn errno(what: &str) -> ChapbookError {
     ChapbookError::Panel(format!("{what}: {}", std::io::Error::last_os_error()))
 }

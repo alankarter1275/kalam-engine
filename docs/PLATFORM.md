@@ -269,11 +269,19 @@ exercise.
 **Lifecycle and power.** No suspend/resume, no "save state now, you are being
 killed." Mandatory on mobile and e-ink.
 
-**Cross-compilation is unproven.** No armv7/aarch64 device targets in CI.
-These devices ship old glibc; binary size becomes a real budget, and font
-provisioning (fontdb with no usable system fonts) needs a bundled-font
-policy. Nothing about the architecture prevents this — but nobody has
-demonstrated it, and unproven is a gap.
+**Cross-compilation is partly proven.** CI now checks `chapbook-core` and
+`chapbook-panel-fbdev` against armv7 and aarch64, which is what makes the
+panel backend's kernel-struct assertions worth having: `fb_fix_screeninfo`
+embeds two `unsigned long`, so its field offsets move with word size, and
+a drifted transcription reads plausible garbage rather than failing. Those
+are const-evaluated, so the check needs no linker, device, or emulator.
+
+The rest is still unproven. Only two crates cross-compile today — the
+others want sqlite, fontconfig and GTK — and nothing has been *run* on
+ARM, only compiled. These devices ship old glibc; binary size becomes a
+real budget, and font provisioning (fontdb with no usable system fonts)
+needs a bundled-font policy. Nothing about the architecture prevents any
+of it, but unproven is a gap.
 
 ## 4. Features shells cannot add from outside
 
