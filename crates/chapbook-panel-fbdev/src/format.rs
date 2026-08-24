@@ -82,6 +82,19 @@ fn write_pixel(dst: &mut [u8], word: u32, bytes: usize) {
     dst[..bytes].copy_from_slice(low);
 }
 
+/// Read a pixel back out of framebuffer memory — the inverse of
+/// [`write_pixel`], for diagnostics.
+pub(crate) fn read_native(bytes: &[u8]) -> u32 {
+    let mut repr = [0u8; 4];
+    let n = bytes.len().min(4);
+    if cfg!(target_endian = "big") {
+        repr[4 - n..].copy_from_slice(&bytes[..n]);
+    } else {
+        repr[..n].copy_from_slice(&bytes[..n]);
+    }
+    u32::from_ne_bytes(repr)
+}
+
 /// One source pixel as the framebuffer's own word.
 pub(crate) fn pack(r: u8, g: u8, b: u8, encoding: Encoding) -> u32 {
     match encoding {

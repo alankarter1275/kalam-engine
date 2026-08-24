@@ -20,6 +20,28 @@
 //! a screen that actually shows the result. What is left for a device is
 //! only the part that genuinely needs one.
 
+//! # Testing without a device
+//!
+//! A framebuffer's pixel format is decided by the hardware, so unit tests
+//! can only assert bitfield constants someone typed. QEMU supplies real
+//! ones: a host kernel, an initramfs holding `busybox` and the examples,
+//! and `vga=` to pick a mode.
+//!
+//! ```text
+//! qemu-system-x86_64 -kernel /boot/vmlinuz-$(uname -r) -initrd initramfs.gz \
+//!   -append "console=ttyS0 vga=0x314 nomodeset panic=1" \
+//!   -vga std -m 512 -nographic -no-reboot
+//! ```
+//!
+//! `vga=0x314` is 800x600 RGB565, `0x317` is 1024x768 RGB565, `0x315`
+//! lands on 24bpp — which is worth running, since three-byte pixels are
+//! the awkward case for byte order — and `0x303` is an 8bpp palette, which
+//! this backend refuses. The init script must mount devtmpfs itself;
+//! stock kernels do not all set `CONFIG_DEVTMPFS_MOUNT`.
+//!
+//! That is how the palette rejection and the RGB565 packing were checked
+//! against a kernel rather than against an assumption.
+
 mod format;
 
 use std::fs::{File, OpenOptions};
@@ -36,6 +58,17 @@ use format::{Bitfield, Encoding, Layout};
 // ioctls predate the encoding scheme and are literal numbers.
 const FBIOGET_VSCREENINFO: libc::c_ulong = 0x4600;
 const FBIOGET_FSCREENINFO: libc::c_ulong = 0x4602;
+
+// `fb_fix_screeninfo.visual`. Only the direct ones say that a pixel's bits
+// *are* its colour; the pseudocolour visuals say a pixel is an index into
+// a palette, which is a different thing entirely and reads as garbage if
+// you treat the bitfields as channel placement.
+const FB_VISUAL_MONO01: u32 = 0;
+const FB_VISUAL_MONO10: u32 = 1;
+const FB_VISUAL_TRUECOLOR: u32 = 2;
+const FB_VISUAL_PSEUDOCOLOR: u32 = 3;
+const FB_VISUAL_DIRECTCOLOR: u32 = 4;
+const FB_VISUAL_STATIC_PSEUDOCOLOR: u32 = 5;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -253,24 +286,42 @@ impl FbdevPanel {
             return Err(errno(&format!("mmap {}", path.display())));
         }
 
-        let grey = var.grayscale != 0
-            || (var.red.length == 0 && var.green.length == 0 && var.blue.length == 0);
-        let encoding = if grey {
+        // Classify from what the kernel states rather than from the shape
+        // of the bitfields. An 8bpp palette framebuffer reports all three
+        // channels at offset 0 with length 8, which is not a layout at all
+        // — packing to it ORs the channels together and every colour comes
+        // out the same. Guessing produced exactly that; `visual` says so.
+        let encoding = if var.grayscale != 0 {
             Encoding::Grey
         } else {
-            Encoding::Channels {
-                red: Bitfield {
-                    offset: var.red.offset,
-                    length: var.red.length,
+            match fix.visual {
+                FB_VISUAL_TRUECOLOR | FB_VISUAL_DIRECTCOLOR => Encoding::Channels {
+                    red: Bitfield {
+                        offset: var.red.offset,
+                        length: var.red.length,
+                    },
+                    green: Bitfield {
+                        offset: var.green.offset,
+                        length: var.green.length,
+                    },
+                    blue: Bitfield {
+                        offset: var.blue.offset,
+                        length: var.blue.length,
+                    },
                 },
-                green: Bitfield {
-                    offset: var.green.offset,
-                    length: var.green.length,
-                },
-                blue: Bitfield {
-                    offset: var.blue.offset,
-                    length: var.blue.length,
-                },
+                other => {
+                    let name = match other {
+                        FB_VISUAL_MONO01 | FB_VISUAL_MONO10 => "monochrome",
+                        FB_VISUAL_PSEUDOCOLOR | FB_VISUAL_STATIC_PSEUDOCOLOR => "palette",
+                        _ => "unrecognized",
+                    };
+                    return Err(ChapbookError::Panel(format!(
+                        "{} is a {name} framebuffer (visual {other}), which this backend \
+                         cannot pack: its pixels are indices, not colours. Supporting it \
+                         means installing a colormap, which nothing has needed yet.",
+                        path.display()
+                    )));
+                }
             }
         };
 
@@ -319,9 +370,46 @@ impl FbdevPanel {
             ),
         };
         format!(
-            "{}x{} {depth}bpp {encoding}, stride {}",
-            self.width, self.height, self.layout.line_length
+            "{}x{} {depth}bpp {encoding}, stride {}, {} bytes mapped",
+            self.width, self.height, self.layout.line_length, self.map_len
         )
+    }
+
+    /// The device's channel placement as `(offset, length)` for red,
+    /// green and blue, or `None` on a greyscale framebuffer.
+    ///
+    /// Exposed for bring-up: a self-test can work out what a colour
+    /// *should* pack to from the device's own numbers, instead of from a
+    /// constant someone typed while guessing at the hardware.
+    pub fn channels(&self) -> Option<[(u32, u32); 3]> {
+        match self.layout.encoding {
+            Encoding::Grey => None,
+            Encoding::Channels { red, green, blue } => Some([
+                (red.offset, red.length),
+                (green.offset, green.length),
+                (blue.offset, blue.length),
+            ]),
+        }
+    }
+
+    /// Read one pixel back out of the framebuffer as the device spells it.
+    ///
+    /// A diagnostic, not a drawing primitive: it is how a self-test
+    /// confirms that what reached the hardware is what was meant, on a
+    /// panel nobody has tried before.
+    pub fn read_pixel(&self, x: u32, y: u32) -> Option<u32> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        let bpp = self.layout.bytes_per_pixel;
+        let at = y as usize * self.layout.line_length + x as usize * bpp;
+        if at + bpp > self.map_len {
+            return None;
+        }
+        // Safety: `at + bpp` is inside the mapping, which lives as long as
+        // `&self`.
+        let bytes = unsafe { std::slice::from_raw_parts(self.map.add(at), bpp) };
+        Some(format::read_native(bytes))
     }
 
     fn mapping(&mut self) -> &mut [u8] {

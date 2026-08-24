@@ -178,6 +178,16 @@ Increments left, in the order they will hurt:
   that exists. Everything above `Panel` is exercised by it end to end. The
   ioctl layer waits for a device, because code that runs is not evidence
   that it is right.
+
+  Its packing is checked against pixel formats a kernel chose, not ones we
+  typed: QEMU with `vga=` boots vesafb at RGB565, at 24bpp, and at 8bpp
+  palette, and `--example selftest` writes known colours and reads them
+  back. That found a real defect — an 8bpp palette framebuffer reports all
+  three channels at offset 0 with length 8, which is not a layout at all,
+  and packing to it collapsed every colour onto one value. Classification
+  now comes from `fb_fix_screeninfo.visual` rather than from the shape of
+  the bitfields, and palette and monochrome visuals are refused with a
+  reason instead of drawn wrong.
 - **Damage beyond selections and highlights.** A page turn that only moves
   a footer, or an image landing in a fixed rect, could both state their
   region and don't.
