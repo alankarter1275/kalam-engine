@@ -59,7 +59,17 @@ impl Renderer {
                 } => {
                     for glyph in glyphs {
                         let px = (origin.x + glyph.x) * scale;
-                        let py = (origin.y + glyph.y) * scale;
+                        // Baselines snap to whole device pixels, as text
+                        // rasterizers conventionally do: it keeps stems and
+                        // baselines aligned across a line. It is also the
+                        // only correct option here — swash renders the
+                        // sub-pixel offset from cosmic-text's vertical bin
+                        // in the opposite direction, so passing the true
+                        // fraction lifts every line up to ~1.6px above the
+                        // baseline the layout computed. Horizontal
+                        // sub-pixel positioning is kept: that is where it
+                        // buys even spacing.
+                        let py = ((origin.y + glyph.y) * scale).round();
                         let (key, xi, yi) = CacheKey::new(
                             *font,
                             glyph.id,
