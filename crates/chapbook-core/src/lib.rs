@@ -23,7 +23,8 @@ pub use locator::{
 };
 pub use page::{PageMetrics, PixelFormat, ReadingSettings, Rotation, Theme};
 pub use panel::{
-    Panel, PanelInfo, PanelRect, RecordingPanel, RefreshPolicy, UpdateClass, UpdateToken,
+    Panel, PanelDriver, PanelInfo, PanelRect, RecordingPanel, RefreshPolicy, UpdateClass,
+    UpdateToken,
 };
 
 /// Convenience result type used across chapbook crates.

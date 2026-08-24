@@ -70,9 +70,12 @@ stays that way.
   takes 100ms to a second and blocking on it would make page turns feel
   broken), `UpdateClass` as the vendor-neutral half of a waveform choice,
   `PanelRect` rounding outward once for every backend, `RefreshPolicy` for
-  ghosting debt, and `RecordingPanel` so refresh behavior is testable with
-  no panel attached. A device crate implements against this and nothing
-  else — it never sees a display list. No heavy deps.
+  ghosting debt, `PanelDriver` enforcing the rules above a panel (never
+  blit under an in-flight update that overlaps; repaint what a monochrome
+  update degraded when `settle` says the gesture ended; ration the flash),
+  and `RecordingPanel` so all of it is testable with no panel attached. A
+  device crate implements against this and nothing else — it never sees a
+  display list. No heavy deps.
 - **chapbook-epub** — wraps `rbook` for OCF/OPF/spine/TOC; adds relative
   resource resolution, fixed-layout detection (rejected), font
   de-obfuscation (M5). The wrapper boundary means rbook gaps can be patched

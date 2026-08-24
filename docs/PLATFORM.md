@@ -104,6 +104,16 @@ and only the second has a knob a user might want. Fast and monochrome
 updates accrue debt but never trigger the flash themselves: flashing the
 screen under a moving finger is worse than any amount of ghosting.
 
+`PanelDriver` owns the rules a shell would otherwise have to remember,
+and each is the kind that works on a desk and fails on a device. It never
+writes under a live update, waiting only when the regions actually
+overlap so an unrelated corner does not pay for a slow refresh elsewhere.
+It repaints what a monochrome update degraded, on a `settle` call, because
+the session cannot see the moment a gesture ends — it has no way to tell a
+mid-drag `select_range` from the last one, and only the shell knows the
+pointer came up. And it rations the flash through `RefreshPolicy`. All of
+it is asserted against `RecordingPanel` on a build machine.
+
 `Panel` splits `blit` from `submit` because a real controller does — a
 memcpy into mapped memory, then an ioctl — and an update takes 100ms to a
 second, so folding the wait into the submit would make page turns feel
@@ -153,14 +163,19 @@ and decorations all lower to fills first.
 
 Increments left, in the order they will hurt:
 
-- **A driver above `Panel`.** The rule "never blit a region while an update
-  covering it is in flight" is documented on the trait and enforced by
-  nobody. It also has to handle the monochrome cleanup pass — an `A2`
-  region stays two-level until something disturbs it, so when a gesture
-  ends its lines need reissuing at `Quality`. The session cannot see that:
-  it has no way to tell a mid-drag `select_range` from the last one. Only
-  the shell knows the pointer lifted, so this is driver behavior rather
-  than a new intent.
+- **A device implementation, which cannot be written from here.** `mxcfb`
+  is not a generic e-ink API — it is NXP's i.MX driver, and the EPDC is a
+  block in the SoC rather than anything the panel knows about. It looks
+  universal only because one vendor's chip won a decade of the market.
+  KOReader's `framebuffer_mxcfb.lua` carries eleven device-specific
+  refresh functions, several `mxcfb_update_data` struct versions, and
+  waveform constants that differ per vendor for the same logical update;
+  Allwinner Kobos reach it through a shim and need their own backend,
+  MediaTek is a third path, reMarkable 2 has no framebuffer at all. So the
+  first backend should be a plain Linux fbdev panel — no EPDC, `UpdateClass`
+  ignored, testable in a VM — which gives the trait a second implementor
+  the way vello did for the display list. The ioctl layer waits for
+  hardware, because code that runs is not evidence it is right.
 - **Damage beyond selections and highlights.** A page turn that only moves
   a footer, or an image landing in a fixed rect, could both state their
   region and don't.

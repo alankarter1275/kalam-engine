@@ -57,6 +57,19 @@ impl UpdateClass {
     pub fn is_visible(self) -> bool {
         self != UpdateClass::None
     }
+
+    /// Whether the class leaves its region visibly degraded once it
+    /// settles, so a driver owes it a full-fidelity pass later.
+    ///
+    /// Only [`UpdateClass::Monochrome`] qualifies. It drops the region to
+    /// two levels, which turns antialiased text into something you would
+    /// not want to read once the finger stops moving. `Fast` also loses
+    /// grey levels, but stays legible, and cleaning after every settled
+    /// highlight would blink the screen more than the ghosting is worth —
+    /// [`RefreshPolicy`] catches its slower accumulation instead.
+    pub fn is_provisional(self) -> bool {
+        self == UpdateClass::Monochrome
+    }
 }
 
 /// A rectangle in whole panel pixels, already turned into the panel's own
@@ -146,6 +159,19 @@ impl PanelRect {
             && other.x < self.max_x()
             && self.y < other.max_y()
             && other.y < self.max_y()
+    }
+
+    /// Whether `other` lies entirely inside this region. An empty region
+    /// is contained by anything and contains nothing.
+    pub fn contains(self, other: PanelRect) -> bool {
+        if other.is_empty() {
+            return true;
+        }
+        !self.is_empty()
+            && self.x <= other.x
+            && self.y <= other.y
+            && self.max_x() >= other.max_x()
+            && self.max_y() >= other.max_y()
     }
 
     /// The smallest region covering both. An empty operand contributes
@@ -398,6 +424,173 @@ impl Panel for RecordingPanel {
     }
 }
 
+/// Drives a [`Panel`] correctly: the rules a shell would otherwise have to
+/// remember, in one place that can be tested without hardware.
+///
+/// There are three, and each is the kind of thing that works on a desk and
+/// fails on a device.
+///
+/// **Do not write under a live update.** The controller is reading panel
+/// memory while it drives the film. Blitting a region an in-flight update
+/// covers tears, or leaves the panel showing a mixture of two frames. The
+/// driver waits only when the regions actually overlap, so an unrelated
+/// corner of the screen never pays for a slow refresh elsewhere.
+///
+/// **Clean up after fast updates.** A monochrome update leaves its region
+/// at two levels, and e-ink holds that until something disturbs it — so
+/// the selected lines stay chunky after the finger lifts. The session
+/// cannot see that moment: it has no way to tell a mid-drag selection from
+/// the last one. Only the shell knows the pointer came up, so it calls
+/// [`settle`](PanelDriver::settle) and the driver repaints what it left
+/// provisional.
+///
+/// **Ration the flash.** Delegated to [`RefreshPolicy`].
+#[derive(Debug)]
+pub struct PanelDriver<P: Panel> {
+    panel: P,
+    policy: RefreshPolicy,
+    /// The update still reaching the glass, and the region it covers.
+    in_flight: Option<(UpdateToken, PanelRect)>,
+    /// Region left at reduced fidelity, owed a full-fidelity pass.
+    provisional: Option<PanelRect>,
+}
+
+impl<P: Panel> PanelDriver<P> {
+    /// Drive `panel` with the default ghosting cadence.
+    pub fn new(panel: P) -> Self {
+        PanelDriver::with_policy(panel, RefreshPolicy::default())
+    }
+
+    pub fn with_policy(panel: P, policy: RefreshPolicy) -> Self {
+        PanelDriver {
+            panel,
+            policy,
+            in_flight: None,
+            provisional: None,
+        }
+    }
+
+    pub fn info(&self) -> PanelInfo {
+        self.panel.info()
+    }
+
+    pub fn panel(&self) -> &P {
+        &self.panel
+    }
+
+    pub fn panel_mut(&mut self) -> &mut P {
+        &mut self.panel
+    }
+
+    pub fn into_panel(self) -> P {
+        self.panel
+    }
+
+    /// The region owed a full-fidelity repaint, if any.
+    pub fn provisional(&self) -> Option<PanelRect> {
+        self.provisional
+    }
+
+    /// Put a page on the panel.
+    ///
+    /// `rgba` covers the whole panel, already quantized and turned;
+    /// `damage` is the region that changed, with `None` meaning the whole
+    /// panel — the same convention `Frame::damage` uses, so a shell passes
+    /// one through to the other. Returns the token of the update it
+    /// submitted, or `None` when there was nothing to do.
+    pub fn present(
+        &mut self,
+        rgba: &[u8],
+        damage: Option<PanelRect>,
+        class: UpdateClass,
+    ) -> Result<Option<UpdateToken>> {
+        let info = self.panel.info();
+        let full = PanelRect::full(info.width, info.height);
+        let class = self.policy.resolve(class);
+        if class == UpdateClass::None {
+            return Ok(None);
+        }
+        // A flash exists to clear the whole screen's accumulated charge;
+        // flashing a corner would spend the visual cost without buying
+        // the result.
+        let rect = if class == UpdateClass::Flash {
+            full
+        } else {
+            damage.unwrap_or(full)
+        };
+        if rect.is_empty() {
+            return Ok(None);
+        }
+        self.submit_region(rgba, rect, class).map(Some)
+    }
+
+    /// Repaint whatever a fast update left degraded — what a shell calls
+    /// when a gesture ends.
+    ///
+    /// `Ok(None)` when nothing is owed, which is the common case and
+    /// deliberately cheap: a shell can call this on every idle tick.
+    pub fn settle(&mut self, rgba: &[u8]) -> Result<Option<UpdateToken>> {
+        let Some(rect) = self.provisional else {
+            return Ok(None);
+        };
+        // Through the policy like any other update: the cleanup pass is a
+        // real change to the panel and may itself come due for a flash.
+        let class = self.policy.resolve(UpdateClass::Quality);
+        if class == UpdateClass::None {
+            return Ok(None);
+        }
+        let rect = if class == UpdateClass::Flash {
+            let info = self.panel.info();
+            PanelRect::full(info.width, info.height)
+        } else {
+            rect
+        };
+        self.submit_region(rgba, rect, class).map(Some)
+    }
+
+    /// Block until the outstanding update has reached the glass. A shell
+    /// owes this before it tears the panel down, and nowhere else.
+    pub fn flush(&mut self) -> Result<()> {
+        if let Some((token, _)) = self.in_flight.take() {
+            self.panel.wait(token)?;
+        }
+        Ok(())
+    }
+
+    fn submit_region(
+        &mut self,
+        rgba: &[u8],
+        rect: PanelRect,
+        class: UpdateClass,
+    ) -> Result<UpdateToken> {
+        // Only an overlap forces a wait; a change elsewhere on the page
+        // proceeds while the previous refresh is still running.
+        if let Some((token, live)) = self.in_flight {
+            if live.intersects(rect) {
+                self.panel.wait(token)?;
+                self.in_flight = None;
+            }
+        }
+        self.panel.blit(rgba, rect)?;
+        let token = self.panel.submit(rect, class)?;
+        self.in_flight = Some((token, rect));
+
+        self.provisional = if class.is_provisional() {
+            // Successive fast updates chase a moving gesture; the debt is
+            // everything they have touched.
+            Some(match self.provisional {
+                Some(owed) => owed.union(rect),
+                None => rect,
+            })
+        } else {
+            // A full-fidelity update pays off only what it actually
+            // covered.
+            self.provisional.filter(|owed| !rect.contains(*owed))
+        };
+        Ok(token)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,6 +802,226 @@ mod tests {
         let first = panel.submit(rect, UpdateClass::Quality).unwrap();
         let second = panel.submit(rect, UpdateClass::Quality).unwrap();
         assert_ne!(first, second);
+    }
+
+    // ---- PanelDriver ----
+
+    fn driver(flash_every: u32) -> (PanelDriver<RecordingPanel>, Vec<u8>) {
+        let info = info(100, 200);
+        let buffer = vec![0u8; 100 * 200 * 4];
+        (
+            PanelDriver::with_policy(RecordingPanel::new(info), RefreshPolicy::new(flash_every)),
+            buffer,
+        )
+    }
+
+    #[test]
+    fn a_drag_issues_fast_updates_and_never_flashes() {
+        let (mut driver, buffer) = driver(6);
+        for y in 0..40 {
+            let rect = PanelRect::new(0, y, 100, 20);
+            driver
+                .present(&buffer, Some(rect), UpdateClass::Monochrome)
+                .unwrap();
+        }
+        let panel = driver.panel();
+        assert_eq!(panel.count(UpdateClass::Monochrome), 40);
+        assert_eq!(panel.count(UpdateClass::Flash), 0, "flashed under a drag");
+    }
+
+    #[test]
+    fn settling_after_a_drag_repaints_what_it_degraded() {
+        let (mut driver, buffer) = driver(60);
+        for y in [0, 20, 40] {
+            driver
+                .present(
+                    &buffer,
+                    Some(PanelRect::new(0, y, 100, 20)),
+                    UpdateClass::Monochrome,
+                )
+                .unwrap();
+        }
+        // The debt is everything the gesture touched, not just its last step.
+        assert_eq!(driver.provisional(), Some(PanelRect::new(0, 0, 100, 60)));
+
+        driver.settle(&buffer).unwrap().expect("a cleanup update");
+        assert_eq!(driver.provisional(), None);
+        let (rect, class) = *driver.panel().updates.last().unwrap();
+        assert_eq!(class, UpdateClass::Quality);
+        assert_eq!(rect, PanelRect::new(0, 0, 100, 60));
+    }
+
+    #[test]
+    fn settling_with_nothing_owed_does_nothing() {
+        let (mut driver, buffer) = driver(60);
+        driver
+            .present(&buffer, None, UpdateClass::Quality)
+            .unwrap()
+            .expect("the page itself");
+        let before = driver.panel().updates.len();
+        // Cheap enough for a shell to call on every idle tick.
+        for _ in 0..10 {
+            assert!(driver.settle(&buffer).unwrap().is_none());
+        }
+        assert_eq!(driver.panel().updates.len(), before);
+    }
+
+    #[test]
+    fn an_overlapping_update_waits_for_the_one_in_flight() {
+        let (mut driver, buffer) = driver(60);
+        let first = driver
+            .present(
+                &buffer,
+                Some(PanelRect::new(0, 0, 100, 20)),
+                UpdateClass::Fast,
+            )
+            .unwrap()
+            .unwrap();
+        driver
+            .present(
+                &buffer,
+                Some(PanelRect::new(0, 10, 100, 20)),
+                UpdateClass::Fast,
+            )
+            .unwrap();
+        assert_eq!(
+            driver.panel().waits,
+            vec![first],
+            "writing under a live update tears the panel"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_region_does_not_wait() {
+        let (mut driver, buffer) = driver(60);
+        driver
+            .present(
+                &buffer,
+                Some(PanelRect::new(0, 0, 100, 20)),
+                UpdateClass::Fast,
+            )
+            .unwrap();
+        driver
+            .present(
+                &buffer,
+                Some(PanelRect::new(0, 100, 100, 20)),
+                UpdateClass::Fast,
+            )
+            .unwrap();
+        assert!(
+            driver.panel().waits.is_empty(),
+            "a far corner paid for a refresh it did not overlap"
+        );
+    }
+
+    #[test]
+    fn a_flash_covers_the_whole_panel() {
+        let (mut driver, buffer) = driver(60);
+        driver
+            .present(
+                &buffer,
+                Some(PanelRect::new(0, 0, 10, 10)),
+                UpdateClass::Flash,
+            )
+            .unwrap();
+        let (rect, class) = driver.panel().updates[0];
+        assert_eq!(class, UpdateClass::Flash);
+        assert_eq!(
+            rect,
+            PanelRect::full(100, 200),
+            "a flash of one corner spends the blink without clearing the screen"
+        );
+    }
+
+    #[test]
+    fn nothing_to_show_touches_nothing() {
+        let (mut driver, buffer) = driver(60);
+        // An annotation on another page states a region that is not here.
+        assert!(driver
+            .present(&buffer, Some(PanelRect::default()), UpdateClass::Fast)
+            .unwrap()
+            .is_none());
+        assert!(driver
+            .present(&buffer, None, UpdateClass::None)
+            .unwrap()
+            .is_none());
+        assert!(driver.panel().updates.is_empty());
+        assert!(driver.panel().blits.is_empty());
+    }
+
+    #[test]
+    fn unstated_damage_means_the_whole_panel() {
+        let (mut driver, buffer) = driver(60);
+        driver
+            .present(&buffer, None, UpdateClass::Quality)
+            .unwrap()
+            .unwrap();
+        assert_eq!(driver.panel().updates[0].0, PanelRect::full(100, 200));
+    }
+
+    #[test]
+    fn a_covering_repaint_pays_the_debt_without_settling() {
+        let (mut driver, buffer) = driver(60);
+        driver
+            .present(
+                &buffer,
+                Some(PanelRect::new(0, 0, 100, 20)),
+                UpdateClass::Monochrome,
+            )
+            .unwrap();
+        assert!(driver.provisional().is_some());
+        // A page turn repaints the lines anyway; the cleanup is already done.
+        driver.present(&buffer, None, UpdateClass::Quality).unwrap();
+        assert_eq!(driver.provisional(), None);
+        assert!(driver.settle(&buffer).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_partial_repaint_leaves_the_rest_owed() {
+        let (mut driver, buffer) = driver(60);
+        driver
+            .present(
+                &buffer,
+                Some(PanelRect::new(0, 0, 100, 60)),
+                UpdateClass::Monochrome,
+            )
+            .unwrap();
+        driver
+            .present(
+                &buffer,
+                Some(PanelRect::new(0, 0, 100, 20)),
+                UpdateClass::Quality,
+            )
+            .unwrap();
+        assert_eq!(
+            driver.provisional(),
+            Some(PanelRect::new(0, 0, 100, 60)),
+            "a repaint that covered part of the region cleared all of it"
+        );
+    }
+
+    #[test]
+    fn the_flash_cadence_survives_the_driver() {
+        let (mut driver, buffer) = driver(3);
+        for _ in 0..6 {
+            driver.present(&buffer, None, UpdateClass::Quality).unwrap();
+        }
+        assert_eq!(driver.panel().count(UpdateClass::Flash), 2);
+        assert_eq!(driver.panel().count(UpdateClass::Quality), 4);
+    }
+
+    #[test]
+    fn flush_waits_for_the_outstanding_update() {
+        let (mut driver, buffer) = driver(60);
+        let token = driver
+            .present(&buffer, None, UpdateClass::Quality)
+            .unwrap()
+            .unwrap();
+        driver.flush().unwrap();
+        assert_eq!(driver.panel().waits, vec![token]);
+        // Nothing outstanding: a second flush is free.
+        driver.flush().unwrap();
+        assert_eq!(driver.panel().waits.len(), 1);
     }
 
     #[test]
