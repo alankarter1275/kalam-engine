@@ -62,6 +62,20 @@ fn render_loaded(s: &mut Session) -> chapbook_reader::tiny_skia::Pixmap {
     panic!("unit never finished loading");
 }
 
+/// Anchor a selection on the first hit-testable text on the current page.
+/// The placed image rect depends on the page's natural size and the
+/// margins, so sweep for a hit rather than hardcoding coordinates.
+fn sweep_for_text(s: &mut Session) -> (f32, f32) {
+    for y in (60..760).step_by(8) {
+        for x in (60..560).step_by(8) {
+            if s.selection_begin(x as f32, y as f32) {
+                return (x as f32, y as f32);
+            }
+        }
+    }
+    panic!("no hit-testable text on this page");
+}
+
 fn metrics() -> PageMetrics {
     PageMetrics {
         size: Size::new(600.0, 800.0),
@@ -191,19 +205,7 @@ fn pdf_text_selection_highlights() {
     assert_eq!(s.spine(), 2);
     let before = render_loaded(&mut s);
 
-    // The 300x400pt page scales into a 600x800 window (40px margins):
-    // fit height 720 -> factor 1.8, image x-origin 30+40=70... derive from
-    // hit-testing instead of hardcoding: sweep for a text hit.
-    let mut anchor = None;
-    'outer: for y in (60..760).step_by(8) {
-        for x in (60..560).step_by(8) {
-            if s.selection_begin(x as f32, y as f32) {
-                anchor = Some((x as f32, y as f32));
-                break 'outer;
-            }
-        }
-    }
-    let (ax, ay) = anchor.expect("PDF text line is hit-testable");
+    let (ax, ay) = sweep_for_text(&mut s);
     s.selection_drag(ax + 150.0, ay);
     let (start, end) = s.selected_range().expect("selection over PDF text");
     assert!(end > start);
@@ -217,4 +219,83 @@ fn pdf_text_selection_highlights() {
     let after = render_loaded(&mut s);
     assert_ne!(before.data(), after.data(), "selection must paint");
     s.selection_clear();
+}
+
+#[test]
+fn epub_highlight_persists_across_sessions() {
+    let source = fixture("epub/illustrated.epub");
+    let (start, end, text) = {
+        let mut s = open_isolated("epub-highlight", &source);
+        s.set_metrics(metrics());
+        s.render().expect("page renders");
+        assert!(s.selection_begin(100.0, 70.0));
+        s.selection_drag(400.0, 140.0);
+        let (start, end) = s.selected_range().expect("non-empty selection");
+        let text = s.selected_text().expect("selection carries text");
+        let id = s.add_highlight().expect("highlight is stored");
+        assert!(id > 0);
+        assert_eq!(s.highlights(0).len(), 1, "visible without a reload");
+        (start, end, text)
+    };
+
+    let mut s = reopen_isolated("epub-highlight", &source);
+    s.set_metrics(metrics());
+    let stored = s.highlights(0).to_vec();
+    assert_eq!(stored.len(), 1, "highlight survives the session");
+    assert_eq!(
+        (stored[0].start, stored[0].end),
+        (start, end),
+        "same edition resolves the exact offsets"
+    );
+    assert_eq!(stored[0].text.as_deref(), Some(text.as_str()));
+
+    s.remove_highlight(stored[0].id);
+    assert!(s.highlights(0).is_empty(), "delete clears the cache too");
+
+    let mut s = reopen_isolated("epub-highlight", &source);
+    s.set_metrics(metrics());
+    assert!(s.highlights(0).is_empty(), "delete survives the session");
+}
+
+#[test]
+fn pdf_highlight_resolves_against_the_page_text_layer() {
+    let source = fixture("pdf/minimal.pdf");
+    let (start, end) = {
+        let mut s = open_isolated("pdf-highlight", &source);
+        s.set_metrics(metrics());
+        // Page 3 carries the text lines.
+        s.next_page();
+        s.next_page();
+        render_loaded(&mut s);
+        let (ax, ay) = sweep_for_text(&mut s);
+        s.selection_drag(ax + 150.0, ay);
+        let range = s.selected_range().expect("selection over PDF text");
+        assert!(s.add_highlight().expect("PDF highlight is stored") > 0);
+        range
+    };
+
+    let mut s = reopen_isolated("pdf-highlight", &source);
+    s.set_metrics(metrics());
+    s.next_page();
+    s.next_page();
+    assert_eq!(s.spine(), 2);
+    // The page's text layer is what the endpoints resolve against, so
+    // nothing resolves until the page has loaded.
+    assert!(
+        s.highlights(2).is_empty(),
+        "unresolved before the page loads"
+    );
+    render_loaded(&mut s);
+    let stored = s.highlights(2).to_vec();
+    assert_eq!(stored.len(), 1);
+    assert_eq!((stored[0].start, stored[0].end), (start, end));
+}
+
+#[test]
+fn comic_pages_take_no_highlights() {
+    let mut s = open_isolated("cbz-highlight", &fixture("cbz/minimal.cbz"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+    assert_eq!(s.add_highlight(), None, "no text layer to anchor to");
+    assert!(s.highlights(0).is_empty());
 }

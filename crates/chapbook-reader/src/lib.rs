@@ -26,10 +26,11 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    BookKind, ChapbookError, LayeredLocator, PageMetrics, Point, Publication, ReadingSettings,
-    Result,
+    resolve_in_text, BookKind, ChapbookError, LayeredLocator, PageMetrics, Point, Publication,
+    ReadingSettings, Result, SpineItem,
 };
 use chapbook_layout::ChapterLayout;
+use chapbook_library::AnnotationKind;
 use chapbook_paint::{ImageStore, Selection};
 
 pub use chapbook_core;
@@ -77,6 +78,45 @@ struct LoadedUnit {
     natural: (f32, f32),
 }
 
+/// A stored highlight resolved into the open book's locator space.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Highlight {
+    /// Library annotation id — the handle for [`Session::remove_highlight`].
+    pub id: i64,
+    pub spine: usize,
+    /// Locator offsets within the unit, `[start, end)`.
+    pub start: u32,
+    pub end: u32,
+    /// The text as captured, for a highlight list.
+    pub text: Option<String>,
+}
+
+/// A highlight as the library stores it, plus where it lands in this
+/// book's spine. Resolution into offsets waits for the unit's text.
+struct StoredHighlight {
+    id: i64,
+    /// Spine item the endpoints resolve against: by href where the book
+    /// still has that item, else the stored index.
+    target: usize,
+    /// The stored href matched a spine item — only then, and only in the
+    /// same edition, are the exact offsets trustworthy.
+    href_matched: bool,
+    start: LayeredLocator,
+    end: LayeredLocator,
+    text: Option<String>,
+}
+
+/// Book-wide char counts around the current unit — what
+/// [`LayeredLocator::capture`] needs beyond the offset itself.
+struct UnitCharContext {
+    /// The current unit's locator text.
+    text: String,
+    /// Chars in the spine items before it.
+    prior: u64,
+    /// Chars across the whole book.
+    total: u64,
+}
+
 /// One open book and everything needed to read it.
 pub struct Session {
     book: OpenBook,
@@ -105,6 +145,13 @@ pub struct Session {
     selection: Option<(u32, u32)>,
     library: Option<chapbook_library::Library>,
     book_id: Option<chapbook_library::BookId>,
+    /// Highlights as stored, awaiting resolution against unit text.
+    stored_highlights: Vec<StoredHighlight>,
+    /// Resolved per unit, cached: the locator space of a unit doesn't move
+    /// under relayout, so this survives font-size and theme changes.
+    resolved_highlights: HashMap<usize, Vec<Highlight>>,
+    /// The open file is the edition the positions were captured against.
+    same_edition: bool,
 }
 
 impl Session {
@@ -119,11 +166,12 @@ impl Session {
                 .map_err(|e| eprintln!("chapbook: library unavailable: {e}"))
                 .ok();
 
-        let (book, book_id, start_spine, pending_offset): (
+        let (book, book_id, start_spine, pending_offset, same_edition): (
             OpenBook,
             Option<chapbook_library::BookId>,
             usize,
             Option<u32>,
+            bool,
         ) = if source.starts_with("http://") || source.starts_with("https://") {
             let mut client = chapbook_opds::OpdsClient::new();
             if let (Ok(user), Ok(pass)) = (
@@ -136,7 +184,7 @@ impl Session {
             let comic = chapbook_opds::StreamedComic::open(client, source, &cache)
                 .map_err(ChapbookError::from)?;
             let resume = comic.resume_page().unwrap_or(0);
-            (OpenBook::Comic(Arc::new(comic)), None, resume, None)
+            (OpenBook::Comic(Arc::new(comic)), None, resume, None, true)
         } else {
             let path = Path::new(source);
             let ext = path
@@ -184,7 +232,39 @@ impl Session {
                 },
                 _ => (0, None),
             };
-            (book, book_id, start_spine, pending_offset)
+            (book, book_id, start_spine, pending_offset, same_edition)
+        };
+
+        // Highlights load with the book; endpoints resolve lazily, per
+        // unit, once that unit's locator text is available.
+        let stored_highlights = match (&library, book_id) {
+            (Some(lib), Some(id)) => lib
+                .annotations(id)
+                .map_err(|e| eprintln!("chapbook: failed to read highlights: {e}"))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|a| a.kind == AnnotationKind::Highlight)
+                .filter_map(|a| {
+                    let end = a.end?;
+                    let by_href = book
+                        .publication()
+                        .spine()
+                        .iter()
+                        .position(|s: &SpineItem| s.href == a.start.spine_href);
+                    let len = book.publication().spine().len();
+                    Some(StoredHighlight {
+                        id: a.id,
+                        target: by_href
+                            .unwrap_or(a.start.spine_index)
+                            .min(len.saturating_sub(1)),
+                        href_matched: by_href.is_some(),
+                        start: a.start,
+                        end,
+                        text: a.text,
+                    })
+                })
+                .collect(),
+            _ => Vec::new(),
         };
 
         let title = book
@@ -226,6 +306,9 @@ impl Session {
             selection: None,
             library,
             book_id,
+            stored_highlights,
+            resolved_highlights: HashMap::new(),
+            same_edition,
         })
     }
 
@@ -501,6 +584,178 @@ impl Session {
         layout.pages.get(page)?.offset_at(Point::new(x, y))
     }
 
+    // ---- Highlights ----
+
+    /// Persist the current selection as a highlight and return its library
+    /// id. `None` without a text selection, without a library (OPDS
+    /// streams have no local record), or on a comic — no text layer, so
+    /// nothing to anchor to.
+    pub fn add_highlight(&mut self) -> Option<i64> {
+        let (start, end) = self.selected_range()?;
+        let text = self.selected_text()?;
+        let (start_loc, end_loc) = self.capture_endpoints(start, end)?;
+        let book_id = self.book_id?;
+        let id = self
+            .library
+            .as_mut()?
+            .add_annotation(
+                book_id,
+                AnnotationKind::Highlight,
+                &start_loc,
+                Some(&end_loc),
+                Some(&text),
+                None,
+            )
+            .map_err(|e| eprintln!("chapbook: failed to save highlight: {e}"))
+            .ok()?;
+        let spine = self.spine;
+        self.stored_highlights.push(StoredHighlight {
+            id,
+            target: spine,
+            href_matched: true,
+            start: start_loc,
+            end: end_loc,
+            text: Some(text.clone()),
+        });
+        // Show it immediately: the cache is authoritative once populated.
+        self.resolved_highlights
+            .entry(spine)
+            .or_default()
+            .push(Highlight {
+                id,
+                spine,
+                start,
+                end,
+                text: Some(text),
+            });
+        Some(id)
+    }
+
+    /// Stored highlights landing in `spine`, resolved into its locator
+    /// space and cached. Empty while that text is unavailable — an image
+    /// book's unit resolves only once its page has loaded.
+    pub fn highlights(&mut self, spine: usize) -> &[Highlight] {
+        if !self.resolved_highlights.contains_key(&spine) {
+            let Some(text) = self.unit_text(spine) else {
+                return &[];
+            };
+            let resolved = self.resolve_highlights(spine, &text);
+            self.resolved_highlights.insert(spine, resolved);
+        }
+        self.resolved_highlights
+            .get(&spine)
+            .map_or(&[][..], Vec::as_slice)
+    }
+
+    /// Delete a highlight (a soft delete in the library, kept for sync).
+    pub fn remove_highlight(&mut self, id: i64) {
+        if let Some(library) = self.library.as_mut() {
+            if let Err(e) = library.delete_annotation(id) {
+                eprintln!("chapbook: failed to delete highlight: {e}");
+                return;
+            }
+        }
+        self.stored_highlights.retain(|h| h.id != id);
+        for resolved in self.resolved_highlights.values_mut() {
+            resolved.retain(|h| h.id != id);
+        }
+    }
+
+    fn resolve_highlights(&self, spine: usize, text: &str) -> Vec<Highlight> {
+        self.stored_highlights
+            .iter()
+            .filter(|h| h.target == spine)
+            .filter_map(|h| {
+                let trusted = self.same_edition && h.href_matched;
+                let start = resolve_in_text(text, &h.start, trusted).offset();
+                let end = resolve_in_text(text, &h.end, trusted).offset();
+                // A range that collapsed under re-anchoring has nothing
+                // left to paint.
+                (end > start).then(|| Highlight {
+                    id: h.id,
+                    spine,
+                    start,
+                    end,
+                    text: h.text.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// Full layered locators for a selection's endpoints.
+    fn capture_endpoints(&self, start: u32, end: u32) -> Option<(LayeredLocator, LayeredLocator)> {
+        let href = self
+            .book
+            .publication()
+            .spine_item(self.spine)
+            .ok()?
+            .href
+            .clone();
+        match self.book.publication().kind() {
+            BookKind::Epub => {
+                let ctx = self.unit_char_context();
+                let capture = |offset| {
+                    LayeredLocator::capture(
+                        &href, self.spine, &ctx.text, offset, ctx.prior, ctx.total,
+                    )
+                };
+                Some((capture(start), capture(end)))
+            }
+            // A PDF page's extracted text is a real locator space, so the
+            // within-unit layers are exact — but the whole-book
+            // progression stays page-based, as it is for every image book.
+            BookKind::Pdf => {
+                let text = self.unit_text(self.spine)?;
+                let units = self.book.publication().spine().len() as u64;
+                let capture = |offset| {
+                    let mut loc = LayeredLocator::capture(&href, self.spine, &text, offset, 0, 0);
+                    loc.book_progression =
+                        chapbook_core::book_progression(self.spine as u64, 0, units);
+                    loc
+                };
+                Some((capture(start), capture(end)))
+            }
+            BookKind::Comic => None,
+        }
+    }
+
+    /// A unit's locator text — the space its selection offsets live in.
+    /// EPUB chapters extract it on demand; a PDF page's is its text layer,
+    /// contiguous across the extracted lines, and only exists once the
+    /// page has loaded.
+    fn unit_text(&self, spine: usize) -> Option<String> {
+        match self.book.publication().kind() {
+            BookKind::Epub => unit_locator_text(self.book.publication(), spine),
+            BookKind::Pdf => {
+                let unit = self.loaded_units.get(&spine)?;
+                Some(unit.text.iter().map(|line| line.text.as_str()).collect())
+            }
+            BookKind::Comic => None,
+        }
+    }
+
+    /// Char counts around the current unit, extracted over the whole
+    /// spine. One pass serves any number of captures in the same unit.
+    fn unit_char_context(&self) -> UnitCharContext {
+        let mut ctx = UnitCharContext {
+            text: String::new(),
+            prior: 0,
+            total: 0,
+        };
+        for i in 0..self.book.publication().spine().len() {
+            let text = unit_locator_text(self.book.publication(), i).unwrap_or_default();
+            let chars = text.chars().count() as u64;
+            if i < self.spine {
+                ctx.prior += chars;
+            }
+            if i == self.spine {
+                ctx.text = text;
+            }
+            ctx.total += chars;
+        }
+        ctx
+    }
+
     // ---- Rendering ----
 
     /// Rasterize the current page at the current metrics. `None` until
@@ -555,7 +810,7 @@ impl Session {
     /// Capture the position as a full layered locator and persist it.
     /// Comics persist page-unit progression (see `chapbook_core::locator`).
     pub fn save_position(&mut self) {
-        let (Some(library), Some(id)) = (self.library.as_mut(), self.book_id) else {
+        let Some(id) = self.book_id else {
             return;
         };
         let offset = self
@@ -569,28 +824,8 @@ impl Session {
         let href = item.href.clone();
         let locator = match self.book.publication().kind() {
             BookKind::Epub => {
-                let mut prior_chars = 0u64;
-                let mut total_chars = 0u64;
-                let mut current_text = String::new();
-                for i in 0..self.book.publication().spine().len() {
-                    let text = unit_locator_text(self.book.publication(), i).unwrap_or_default();
-                    let chars = text.chars().count() as u64;
-                    if i < self.spine {
-                        prior_chars += chars;
-                    }
-                    if i == self.spine {
-                        current_text = text;
-                    }
-                    total_chars += chars;
-                }
-                LayeredLocator::capture(
-                    &href,
-                    self.spine,
-                    &current_text,
-                    offset,
-                    prior_chars,
-                    total_chars,
-                )
+                let ctx = self.unit_char_context();
+                LayeredLocator::capture(&href, self.spine, &ctx.text, offset, ctx.prior, ctx.total)
             }
             // Image books: the progression unit is pages.
             BookKind::Comic | BookKind::Pdf => LayeredLocator::capture(
@@ -601,6 +836,9 @@ impl Session {
                 self.spine as u64,
                 self.book.publication().spine().len() as u64,
             ),
+        };
+        let Some(library) = self.library.as_mut() else {
+            return;
         };
         if let Err(e) = library.set_position(id, &locator) {
             eprintln!("chapbook: failed to save position: {e}");
