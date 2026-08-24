@@ -281,3 +281,28 @@ fn media_type_essence_comparison() {
     let spaced = MediaType::parse("application/atom+xml; kind=acquisition; profile=opds-catalog");
     assert!(spaced.is_opds_catalog());
 }
+
+/// Entity references arrive from quick-xml as events of their own, split
+/// out of the surrounding text. Dropping them silently deleted both the
+/// character and the spaces around it — `Science &amp; Nature` came back
+/// as `ScienceNature` — and ampersands are everywhere in catalogue titles.
+#[test]
+fn entities_survive_in_titles_and_summaries() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Science &amp; Nature</title>
+  <id>urn:test</id>
+  <entry>
+    <title>Ha&#39;penny &lt;draft&gt;</title>
+    <id>urn:test:1</id>
+    <summary>Tom &amp; Jerry, &quot;quoted&quot;</summary>
+  </entry>
+</feed>"#;
+    let feed = parse_atom(xml, "https://example.invalid/").unwrap();
+    assert_eq!(feed.title, "Science & Nature");
+    assert_eq!(feed.entries[0].title, "Ha'penny <draft>");
+    assert_eq!(
+        feed.entries[0].summary.as_deref(),
+        Some("Tom & Jerry, \"quoted\"")
+    );
+}

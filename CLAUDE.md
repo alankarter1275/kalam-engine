@@ -53,6 +53,10 @@ positioning, media overlays, DRM.
 - cosmic-text 0.19: `Buffer` methods don't take `FontSystem` except `new` and
   `shape_until_scroll`; clamp `line_height` above zero (real books ship
   `line-height: 0`).
+- quick-xml 0.42 reports `&amp;` and friends as `Event::GeneralRef`, splitting
+  the text around them into separate events. A `_ => {}` arm deletes every
+  entity, and `trim_text(true)` then eats the spaces on either side. Handle
+  `GeneralRef`, leave `trim_text` off, and trim assembled values instead.
 - Tests that touch the library set process-global env — they serialize behind
   `ENV_LOCK` and use per-test dirs. Follow the existing `open_isolated` /
   `reopen_isolated` helpers.

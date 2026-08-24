@@ -3,7 +3,7 @@
 //! (`opds:facetGroup`, `opds:activeFacet`, `thr:count`, `pse:*`) that lossy
 //! feed crates drop (docs/OPDS-INTEROP.md §0).
 
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::NamespaceResolver;
 use quick_xml::name::ResolveResult;
 use quick_xml::NsReader;
@@ -25,8 +25,10 @@ type Attr = (String, String, String);
 /// Parse an OPDS 1.x document: an acquisition/navigation `<feed>`, or a
 /// standalone complete `<entry>` (which comes back as a one-entry feed).
 pub fn parse_atom(bytes: &[u8], base_url: &str) -> Result<Feed, OpdsError> {
+    // No `trim_text`: an entity reference splits the text around it into
+    // separate events, and trimming each of those eats the spaces on either
+    // side of an `&amp;`. Every consumer below trims the assembled value.
     let mut reader = NsReader::from_reader(bytes);
-    reader.config_mut().trim_text(true);
 
     let mut feed = Feed {
         version: OpdsVersion::V1,
@@ -131,6 +133,7 @@ pub fn parse_atom(bytes: &[u8], base_url: &str) -> Result<Feed, OpdsError> {
             Event::CData(t) => {
                 text.push_str(&t.into_inner());
             }
+            Event::GeneralRef(t) => push_entity(&mut text, t),
             Event::Eof => break,
             _ => {}
         }
@@ -290,6 +293,26 @@ fn handle_close(
         }
         _ => {}
     }
+}
+
+/// quick-xml reports `&amp;` and friends as an event of their own, so a
+/// parser that ignores it drops every entity it meets — and catalogue
+/// titles are full of them (`Science &amp; Nature`, `Barnes &amp; Noble`).
+fn push_entity(out: &mut String, entity: BytesRef) {
+    if let Ok(Some(c)) = entity.resolve_char_ref() {
+        out.push(c);
+        return;
+    }
+    // The five XML predefined entities. Anything else needs a DTD to define
+    // it, which an Atom feed does not carry.
+    out.push_str(match entity.into_inner().as_ref() {
+        "amp" => "&",
+        "lt" => "<",
+        "gt" => ">",
+        "quot" => "\"",
+        "apos" => "'",
+        _ => "",
+    });
 }
 
 fn some_text(text: &str) -> Option<String> {
