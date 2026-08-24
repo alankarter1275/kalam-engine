@@ -375,19 +375,53 @@ exercise.
 **Lifecycle and power.** No suspend/resume, no "save state now, you are being
 killed." Mandatory on mobile and e-ink.
 
-**Cross-compilation is partly proven.** CI now checks `chapbook-core` and
+**Cross-compilation is proven, except GTK.** CI checks `chapbook-core` and
 `chapbook-panel-fbdev` against armv7 and aarch64, which is what makes the
 panel backend's kernel-struct assertions worth having: `fb_fix_screeninfo`
 embeds two `unsigned long`, so its field offsets move with word size, and
 a drifted transcription reads plausible garbage rather than failing. Those
 are const-evaluated, so the check needs no linker, device, or emulator.
 
-The rest is still unproven. Only two crates cross-compile today — the
-others want sqlite, fontconfig and GTK — and nothing has been *run* on
-ARM, only compiled. These devices ship old glibc; binary size becomes a
-real budget, and font provisioning (fontdb with no usable system fonts)
-needs a bundled-font policy. Nothing about the architecture prevents any
-of it, but unproven is a gap.
+Beyond `check`, everything except `chapbook-viewer-gtk` now cross-*builds
+and links* for `aarch64-unknown-linux-gnu` — the CLI, the winit viewer,
+and the panel examples, `ring` and bundled SQLite and hayro included. The
+linked binary needs `libc`, `libm` and `libgcc_s` and nothing else.
+
+Two worries recorded here were simply wrong. SQLite is `bundled`, so it
+compiles from source with the cross toolchain instead of wanting a target
+sysroot. And "fontconfig" is `fontconfig-parser`, a pure-Rust reader of
+fontconfig's *config files* — libfontconfig is never linked, and never
+was. GTK is the real exception, and it is a packaging problem rather than
+a code one: `gobject-sys` wants a pkg-config sysroot for the target.
+
+**It has been run.** The fbdev backend has been exercised on a Raspberry
+Pi 4 with an 800x480 RGB565 DSI panel, cross-built as above: `probe`
+reports what the kernel reports, `selftest` passes all seven packing cases
+against read-back, and `show` renders and turns pages. What that did and
+did not settle:
+
+- The panel is `vc4drmfb` — **fbdev via DRM emulation, not a native fbdev
+  driver**. That is how most modern ARM boards and a good few readers
+  expose a framebuffer at all, so it is the more important case to have
+  working, and it does.
+- The struct assertions matching is reassuring but not news: aarch64
+  shares pointer width and endianness with x86-64, so const-eval there
+  already implied it. What was untested until now is the surrounding
+  code — the ioctls, and classifying a real driver's `visual` and
+  bitfields rather than QEMU's.
+- Binary size is a real budget, as recorded: the all-formats `show` is
+  18.8 MB. That is what §6's feature flags are for.
+- Font provisioning did not bite, because a general-purpose distro ships
+  dozens of fonts. The concern is narrower than written here: it applies
+  to a stripped device rootfs, not to any Linux with a desktop lineage.
+- **The refresh policy is still unproven.** That hardware is an LCD: no
+  EPDC, no waveforms. `UpdateClass` resolves and the plumbing is
+  exercised, but `RefreshPolicy`'s whole reason for existing — rationing
+  the ghosting flash, refusing to flash under a moving finger — needs an
+  e-ink panel and still has none.
+
+The glibc worry also stands only for readers, not for boards: a current
+distro is current, a Kobo is not.
 
 ## 4. Features shells cannot add from outside
 
@@ -457,7 +491,16 @@ The unglamorous half, and the real distance between "modular codebase" and
   the pipeline; nothing explains how to write a shell.
 - **A shell conformance harness** — given a `Session`, assert a shell drives
   it correctly (page turns, resize/relayout, position save/restore,
-  selection). Same spirit as the golden tests, applied to the seam.
+  selection). Same spirit as the golden tests, applied to the seam. There
+  is now a concrete instance behind this: the first end-to-end run of the
+  fbdev example on real hardware turned exactly one page and stopped, and
+  the defect was in the *shell*, not the engine — it compared
+  `session.page()` across a turn, but `next_page` crosses into the next
+  spine item by resetting the page to 0, so a unit change read as "did not
+  move". Every book that opens on a single-page cover hit it. Nothing in
+  the test suite could have caught that, because it is not about what
+  `Session` computes but about how a shell drives it — which is precisely
+  the gap this bullet describes.
 - **A reference minimal shell** — smaller than the winit viewer, existing to
   be copied.
 
