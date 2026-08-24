@@ -43,7 +43,13 @@ impl RenderedPage {
     /// Turn the page for a panel mounted in another orientation. Quarter
     /// turns swap the page's dimensions.
     pub fn rotate(self, rotation: Rotation) -> RenderedPage {
-        let rgba = chapbook_paint::rotate(&self.rgba, self.width, self.height, rotation);
+        // Not merely a borrow: this consumes the page, so an unrotated
+        // turn is the page itself and touches no pixels at all.
+        if rotation == Rotation::None {
+            return self;
+        }
+        let rgba =
+            chapbook_paint::rotate(&self.rgba, self.width, self.height, rotation).into_owned();
         let (width, height) = if rotation.swaps_axes() {
             (self.height, self.width)
         } else {

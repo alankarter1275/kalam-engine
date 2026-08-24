@@ -75,7 +75,7 @@ fn main() {
             buf.copy_from_slice(&src);
             chapbook_paint::quantize(&mut buf, w, h, PixelFormat::Rgba);
         });
-        bench("rotate None (full copy)", 50, || {
+        bench("rotate None (borrows, no copy)", 50, || {
             std::hint::black_box(chapbook_paint::rotate(&src, w, h, Rotation::None));
         });
         bench("rotate Quarter", 50, || {

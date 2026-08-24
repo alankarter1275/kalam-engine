@@ -1575,7 +1575,7 @@ impl Session {
         } else {
             (w, h)
         };
-        tiny_skia::Pixmap::from_vec(turned, tiny_skia::IntSize::from_wh(tw, th)?)
+        tiny_skia::Pixmap::from_vec(turned.into_owned(), tiny_skia::IntSize::from_wh(tw, th)?)
     }
 
     // ---- Persistence ----

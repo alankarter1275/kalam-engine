@@ -13,6 +13,8 @@
 //! straight values coincide here and neither function has to care which it
 //! was handed.
 
+use std::borrow::Cow;
+
 use chapbook_core::{PixelFormat, Rotation};
 
 /// Convert a rasterized page for a panel that cannot show full color.
@@ -117,14 +119,20 @@ fn luminance(px: &[u8]) -> f32 {
 
 /// Turn a rasterized page for a panel mounted in a different orientation,
 /// clockwise. Quarter turns swap the page's dimensions, so the returned
-/// rows are `height` wide; [`Rotation::None`] copies.
+/// rows are `height` wide.
+///
+/// [`Rotation::None`] borrows: an unrotated shell is the common case — a
+/// device is mounted the way it is mounted — and it was paying a full-page
+/// allocation and copy every frame to be handed back what it already had.
+/// Callers that genuinely need to own the pixels say `into_owned()`, which
+/// costs nothing on the turned paths because those already allocated.
 ///
 /// The inverse for input is [`chapbook_core::PageMetrics::panel_to_page`],
 /// so a shell that turns its output here reads pointer coordinates back
 /// through that.
-pub fn rotate(rgba: &[u8], width: u32, height: u32, rotation: Rotation) -> Vec<u8> {
+pub fn rotate(rgba: &[u8], width: u32, height: u32, rotation: Rotation) -> Cow<'_, [u8]> {
     if rotation == Rotation::None {
-        return rgba.to_vec();
+        return Cow::Borrowed(rgba);
     }
     let (w, h) = (width as usize, height as usize);
     let dw = if rotation.swaps_axes() { h } else { w };
@@ -141,7 +149,7 @@ pub fn rotate(rgba: &[u8], width: u32, height: u32, rotation: Rotation) -> Vec<u
             out[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 #[cfg(test)]
@@ -348,7 +356,8 @@ mod tests {
 
     #[test]
     fn a_quarter_turn_swaps_the_axes() {
-        let turned = rotate(&pair(), 2, 1, Rotation::Quarter);
+        let page = pair();
+        let turned = rotate(&page, 2, 1, Rotation::Quarter);
         // Clockwise: the left pixel goes to the top of a 1x2 page.
         assert_eq!(at(&turned, 1, 0, 0), [255, 0, 0, 255]);
         assert_eq!(at(&turned, 1, 0, 1), [0, 0, 255, 255]);
@@ -356,7 +365,8 @@ mod tests {
 
     #[test]
     fn a_half_turn_keeps_the_shape_and_reverses_it() {
-        let turned = rotate(&pair(), 2, 1, Rotation::Half);
+        let page = pair();
+        let turned = rotate(&page, 2, 1, Rotation::Half);
         assert_eq!(at(&turned, 2, 0, 0), [0, 0, 255, 255]);
         assert_eq!(at(&turned, 2, 1, 0), [255, 0, 0, 255]);
     }
@@ -367,15 +377,27 @@ mod tests {
         let mut turned = original.clone();
         let (mut w, mut h) = (2u32, 1u32);
         for _ in 0..4 {
-            turned = rotate(&turned, w, h, Rotation::Quarter);
+            turned = rotate(&turned, w, h, Rotation::Quarter).into_owned();
             std::mem::swap(&mut w, &mut h);
         }
         assert_eq!(turned, original);
     }
 
     #[test]
-    fn none_is_a_copy() {
+    fn none_hands_back_the_same_pixels_without_copying() {
         let original = pair();
-        assert_eq!(rotate(&original, 2, 1, Rotation::None), original);
+        let turned = rotate(&original, 2, 1, Rotation::None);
+        assert_eq!(turned.as_ref(), original.as_slice());
+        // And it is the caller's own buffer, not a duplicate of it: an
+        // unrotated shell allocates nothing per frame here.
+        assert!(matches!(turned, Cow::Borrowed(_)));
+        assert!(std::ptr::eq(turned.as_ref().as_ptr(), original.as_ptr()));
+    }
+
+    #[test]
+    fn a_turn_owns_what_it_builds() {
+        let original = pair();
+        let turned = rotate(&original, 2, 1, Rotation::Quarter);
+        assert!(matches!(turned, Cow::Owned(_)));
     }
 }
