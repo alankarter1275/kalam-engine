@@ -309,6 +309,51 @@ different.
    which has no path and no extension, and is therefore the rung that forces
    `Source::Reader` and `Format::Guess` to be real.
 
+### What rungs 1 and 2 found
+
+**Rung 1 needed no source changes at all.** `cargo ndk -t arm64-v8a -t x86_64
+-P 24 build -p chapbook-reader` builds the whole thing, every feature on —
+bundled SQLite and `ring` both compile against the NDK's clang without
+persuasion. That is better than this document predicted: the two C gaps were
+the only ones, and the toolchain closes both.
+
+Then four things the build could not have told us.
+
+**A font source is not merely missing, it is unreachable.** `Session::open`
+calls `chapbook_layout::system_font_system()` directly, and nothing takes its
+place, so on Android the session begins life with an empty font database and
+no way to fill it. The only door is `paint_resources()`, which hands back
+`&mut FontSystem` — so the spike reaches through a *paint* accessor to
+configure fonts before anything is painted, which works solely because the two
+happen to share a `FontSystem`. It is the right shape for exactly nobody, and
+it is the strongest argument in this document for the constructor argument.
+
+**Loading the faces is only half of it.** Even with `/system/fonts` in the
+database, the five CSS generics still resolve to fontdb's built-in defaults,
+which are desktop family names no Android device has. They have to be pointed
+at `Noto Serif`, `Roboto` and friends explicitly. On Linux fontconfig does this
+invisibly, which is why it has never come up. A `FontSource` therefore has to
+carry generic-family mappings, not just a list of faces or directories.
+
+**`#[link(name = "jnigraphics")]` is load-bearing, and its absence is
+silent.** Without it the crate compiles, the `.so` is produced, and
+`llvm-readelf` shows all three `AndroidBitmap_*` symbols `UND` with no
+`DT_NEEDED` entry naming the library. Nothing fails until `System.loadLibrary`
+on a device. Any C ABI shipped as an Android artifact wants a link-time check
+that the needed list is what it should be, because a green build proves
+nothing here.
+
+**The conformance harness takes an opener, not a session.** `Harness::new`
+wants `FnMut() -> Session`, because "position survives a restart" cannot be
+asked of a session that never stopped. So the C ABI cannot expose conformance
+as a method on a handle; it needs the source, and it needs to construct
+sessions itself. Worth knowing before the header says otherwise.
+
+Size, for the record: the release `.so` for arm64 with CBZ and PDF built in is
+**15.7 MB**, already stripped by the release profile. In the same country as
+the 18.8 MB fbdev binary, and the same answer applies — feature flags, and
+per-ABI splits so no device downloads two.
+
 ### Shape on disk
 
 Two Gradle modules from the start, because a library others build on is the
