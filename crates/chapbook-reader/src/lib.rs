@@ -14,6 +14,10 @@
 //! a one-page [`ChapterLayout`] around a single scaled image fragment, so
 //! navigation, the char map, and position persistence are one code path.
 //!
+//! `docs/SHELLS.md` is the contract from the shell's side — the loop, the
+//! loader rule, metrics, position, panel policy — and
+//! [`conformance`] is that contract as runnable assertions.
+//!
 //! Blocking caveat, inherited from `Publication::unit_bytes`: layout of a
 //! not-yet-cached unit may block on I/O (seconds, for a cold PSE page).
 //! These shells are dev harnesses and call it on the UI thread anyway —

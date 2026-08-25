@@ -506,22 +506,37 @@ The unglamorous half, and the real distance between "modular codebase" and
   C toolchain; `hayro`'s `embed-fonts`/`embed-cmaps`, which are correctness
   for PDF; and wgpu's backend set behind `chapbook-render-vello`, which no
   device build links at all.
-- **Docs for shell authors** — the missing genre. `ARCHITECTURE.md` explains
-  the pipeline; nothing explains how to write a shell.
-- **A shell conformance harness** — given a `Session`, assert a shell drives
-  it correctly (page turns, resize/relayout, position save/restore,
-  selection). Same spirit as the golden tests, applied to the seam. There
-  is now a concrete instance behind this: the first end-to-end run of the
-  fbdev example on real hardware turned exactly one page and stopped, and
-  the defect was in the *shell*, not the engine — it compared
-  `session.page()` across a turn, but `next_page` crosses into the next
-  spine item by resetting the page to 0, so a unit change read as "did not
-  move". Every book that opens on a single-page cover hit it. Nothing in
-  the test suite could have caught that, because it is not about what
-  `Session` computes but about how a shell drives it — which is precisely
-  the gap this bullet describes.
-- **A reference minimal shell** — smaller than the winit viewer, existing to
-  be copied.
+- **Docs for shell authors** — was the missing genre; now `SHELLS.md`.
+  `ARCHITECTURE.md` explains the pipeline, this explains how to sit on top
+  of it: the five-step shape of a shell, metrics in reading orientation,
+  what `frame()` carries and the fact that taking one consumes the change
+  record, the loader rule, position, panel policy, and what to depend on.
+- **A shell conformance harness** — done: `chapbook_reader::conformance`.
+  Given a session factory it asserts eleven rules a shell relies on, with
+  `Skipped` a first-class outcome so a comic's missing text layer cannot
+  masquerade as a pass; `examples/conform.rs` is the same thing from a
+  terminal.
+
+  The concrete instance behind it: the first end-to-end run of the fbdev
+  example on real hardware turned exactly one page and stopped, and the
+  defect was in the *shell*, not the engine — it compared `session.page()`
+  across a turn, but `next_page` crosses into the next spine item by
+  resetting the page to 0, so a unit change read as "did not move". Every
+  book that opens on a single-page cover hit it. Nothing in the test suite
+  could have caught it, because it is not about what `Session` computes but
+  about how a shell drives it.
+
+  The harness proves the rule; the API now also makes it hard to get
+  wrong. `next_page`/`prev_page`/`next_unit`/`prev_unit` return whether the
+  position moved, and `Session::position()` returns the `(spine, page)`
+  pair as one value, so the broken comparison is no longer the obvious one
+  to write.
+- **A reference minimal shell** — done:
+  `chapbook-viewer/examples/minimal.rs` — 185 lines against the viewer's
+  389, and a good share of those are commentary. Selection, links,
+  clipboard, touch and the GPU backend are all stripped out, so what is
+  left is only what every shell must get right. Its six numbered comments
+  are `SHELLS.md`'s five steps plus the loader rule.
 
 ## Priorities
 

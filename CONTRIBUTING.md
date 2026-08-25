@@ -2,8 +2,9 @@
 
 Design lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), reading
 positions in [docs/LOCATORS.md](docs/LOCATORS.md), the OPDS wire contract in
-[docs/OPDS-INTEROP.md](docs/OPDS-INTEROP.md), and device porting in
-[docs/PLATFORM.md](docs/PLATFORM.md). Read the relevant one before changing
+[docs/OPDS-INTEROP.md](docs/OPDS-INTEROP.md), device porting in
+[docs/PLATFORM.md](docs/PLATFORM.md), and driving the engine from a shell
+in [docs/SHELLS.md](docs/SHELLS.md). Read the relevant one before changing
 that subsystem — several of the constraints below are load-bearing in ways
 the code alone does not explain.
 

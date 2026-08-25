@@ -14,6 +14,9 @@
 //! single-page cover it read that on the first turn. No test in the
 //! workspace could have caught it, because none of them drove a shell.
 //!
+//! The prose companion is `docs/SHELLS.md`, which states the same rules
+//! in the order a shell author meets them.
+//!
 //! # Using it
 //!
 //! Give the harness a way to open a session; it opens a fresh one per

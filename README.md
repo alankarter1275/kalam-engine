@@ -106,6 +106,7 @@ units resolved by approximation.
 | | |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design: crate boundaries and why they fall where they do |
+| [docs/SHELLS.md](docs/SHELLS.md) | Writing a shell against `Session`: the loop, the loader rule, and the conformance harness |
 | [docs/LOCATORS.md](docs/LOCATORS.md) | Reading positions that survive relayout, and EPUB CFI |
 | [docs/OPDS-INTEROP.md](docs/OPDS-INTEROP.md) | What the OPDS client must interoperate with, and how it was verified |
 | [docs/PLATFORM.md](docs/PLATFORM.md) | Porting to real devices: panels, e-ink, cross-compilation, what is proven and what is not |
