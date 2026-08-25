@@ -148,8 +148,8 @@ shape with a discriminant, once there is a second caller to justify it.
 
 ## Which FFI technology
 
-**Recommendation: a hand-written C ABI in a new `chapbook-ffi` crate, with
-cbindgen generating the header.**
+**Decided: a hand-written C ABI in a new `chapbook-ffi` crate, with cbindgen
+generating the header.**
 
 The reason is not that it is the least work — it isn't — but that it is the
 only artifact all three named hosts consume. Kotlin reaches it through JNI
@@ -160,13 +160,13 @@ already establishes the culture of proving a boundary from outside it.
 Licence hygiene points the same way: the repo gates its dependency terms in
 `deny.toml`, and a C ABI adds nothing to the graph.
 
-**The honest counter is UniFFI.** It would generate idiomatic Kotlin and
+**The counter, considered and rejected, was UniFFI.** It would generate idiomatic Kotlin and
 Swift — records, sealed classes, exceptions from `Result`, callback
 interfaces — and delete essentially all of the glue described above. The
 costs are that it is MPL-2.0 and therefore a `deny.toml` decision rather
 than a technical one, that its WASM story is not the one we would want, and
-that it dictates the API's shape from the outside. It is a genuine option
-and should be rejected on purpose or not at all.
+that it dictates the API's shape from the outside. It was a genuine option, and
+it is rejected on purpose rather than by default.
 
 **What makes the choice cheap to defer:** the irreversible work here is the
 *shape* — typed sources, `render_into`, a font source, a cache budget, a
@@ -223,6 +223,46 @@ Purpose: **discover the API's defects against a real platform before the C
 header freezes them in.** A header designed without having run on the device
 will be wrong, and the Contract tier means it will be wrong for a long time.
 So the first rung is deliberately throwaway.
+
+### What Android does and does not lend you
+
+A recurring assumption worth killing early: Android ships SQLite and BoringSSL,
+so surely native code should use them rather than carrying its own. It cannot.
+The NDK exposes a fixed list of system libraries, and the dynamic linker refuses
+everything outside it — this is the sysroot for NDK 30 at API 37, in full:
+
+```
+libaaudio  libamidi  libandroid  libbinder_ndk  libcamera2ndk  libc++  libc
+libdl  libEGL  libGLESv1_CM  libGLESv2  libGLESv3  libicu  libjnigraphics
+liblog  libmediandk  libm  libnativehelper  libnativewindow  libneuralnetworks
+libOpenMAXAL  libOpenSLES  libstdc++  libsync  libvulkan  libz
+```
+
+No `libsqlite`, no `libssl`, no `libcrypto`. Android's SQLite is reachable only
+through the Java `android.database.sqlite` API, and its BoringSSL only through
+Java's `javax.net.ssl`. Both exist on the device as private libraries, and
+linking them from native code fails at load time.
+
+So:
+
+- **SQLite: bundle it, which is what we already do.** `rusqlite`'s `bundled`
+  feature is not a workaround here, it is the only supported arrangement for
+  native code. Nothing to change; the alternative would be routing the whole
+  library layer back through JNI to Java, which is a far worse trade than
+  ~1 MB per ABI.
+- **Crypto: bundle it too**, which `ring` already does. The part that is *not*
+  fine to bundle is the **trust store**. `webpki-roots` carries Mozilla's CA
+  list and therefore ignores the device's actual trust configuration —
+  enterprise roots, user-installed CAs, an app's network security config, and
+  OS root updates. The Android-correct answer is `rustls-platform-verifier`,
+  which calls Android's `X509TrustManager` through JNI and honours all of it.
+- **And none of this blocks the spike**, because TLS arrives only with the
+  `opds` feature, and the spike should not build it. The trust-store question
+  becomes real the day OPDS runs on Android, and not before.
+
+Two entries on that list are ones we actively want: `libjnigraphics`, which is
+`AndroidBitmap_lockPixels` and therefore the `render_into` destination, and
+`libnativewindow` for a `SurfaceView` path later.
 
 ### Prerequisites
 
@@ -310,6 +350,42 @@ cleanup. That is right about the dependency and wrong about the order:
   licence decision as much as a technical one.
 - **Whether `frame()` crosses the boundary at all**, or whether hosts get
   pixels only. Pixels only, for now, is the recommendation.
-- **Whether the WASM target is real.** It changes the source model — no
-  filesystem, no threads — and it is cheaper to know now than to discover
-  after the header is a contract.
+- **Whether the WASM target is real.** See below; the decision is open, but it
+  does not gate the C ABI.
+
+## WASM: measured, not decided
+
+`wasm-bindgen` wraps Rust, not C, so a WASM build would be a sibling exporter
+over the same shape and never a consumer of the header. The C ABI is therefore
+safe either way, and what follows constrains the *shape* only.
+
+**It compiles, and it is smaller than expected.** Every engine crate passes
+`cargo check --target wasm32-unknown-unknown`, including `chapbook-library`;
+only the `opds` feature fails, on `getrandom` wanting its `js` backend. A real
+`cdylib` linking the whole EPUB reading path — open, paginate, walk, render,
+search, TOC — built at `opt-level = "z"` with LTO, `panic = "abort"` and
+symbols stripped, is **6.0 MB raw and 2.08 MB gzipped**. Brotli would land
+lower still. That is an ordinary web app's payload, not a disqualifying one.
+
+**But `check` is not `run`, and the gap is entirely ambient dependencies.**
+Nothing in the engine's own code is hostile to WASM — there are no
+platform-specific paths and no OS assumptions. What breaks at runtime is
+everything the session reaches for implicitly: `std::fs` (stubs that always
+fail), SQLite's need for a filesystem VFS, `std::env::var`, `std::thread`, and
+`Instant::now`, which panics outright and which `conformance::settle` uses for
+its budget.
+
+Every one of those is already on the fix-the-shape list for Android reasons,
+with exactly two exceptions. WASM is the only caller that forces:
+
+- **The library must be optional.** No SQLite means no positions, no
+  annotations, no import — a session that reads and reports its locator but
+  persists nothing, with the host storing it. Defensible on non-WASM grounds
+  too: a stripped e-ink build may not want SQLite either.
+- **The loader thread must be optional.** EPUB never uses it — chapters lay
+  out on the session thread — so an EPUB-only build should not require one.
+  CBZ and PDF in a browser would need `SharedArrayBuffer` and
+  cross-origin isolation, which is a separate decision from this one.
+
+Both are cheap now and structural later, which is the argument for doing them
+whether or not a browser build ever ships.
