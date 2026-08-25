@@ -1,10 +1,10 @@
 //! The format-neutral page model and paint-neutral display list — the
-//! contract every rasterization backend builds against (tiny-skia now,
-//! e-ink or GPU later), and the seam where non-text formats join.
+//! contract every rasterization backend builds against (tiny-skia on the
+//! CPU, vello on the GPU), and the seam where non-text formats join.
 //!
 //! `Page`/`Fragment` are produced by format-specific layout (chapbook-layout
-//! for XHTML; image-per-page formats directly). The `DisplayList` flattening
-//! and draw ops land in M4.
+//! for XHTML; image-per-page formats directly), and the `DisplayList`
+//! flattens them into draw ops a backend consumes.
 
 mod display;
 mod images;

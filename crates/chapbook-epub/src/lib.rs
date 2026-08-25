@@ -3,9 +3,8 @@
 //! Wraps [`rbook`] for OCF/OPF/spine/TOC handling and adds what a reading
 //! system needs on top: an owned, simple view of the book structure (rbook's
 //! API is borrow-heavy), resource resolution relative to a chapter, and
-//! fixed-layout detection (rejected — chapbook is reflowable-only).
-//!
-//! IDPF/Adobe font de-obfuscation lands in M5.
+//! fixed-layout detection (rejected — chapbook is reflowable-only), and
+//! IDPF/Adobe font de-obfuscation.
 
 mod book;
 mod href;

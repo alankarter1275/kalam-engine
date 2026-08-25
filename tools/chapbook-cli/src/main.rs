@@ -28,19 +28,19 @@ enum Command {
         #[arg(long)]
         spine: Option<usize>,
     },
-    /// Dump computed styles per element for a spine item (M2)
+    /// Dump computed styles per element for a spine item
     Styles {
         epub: PathBuf,
         #[arg(long, default_value_t = 0)]
         spine: usize,
     },
-    /// Dump the paginated fragment tree for a spine item (M3)
+    /// Dump the paginated fragment tree for a spine item
     Layout {
         epub: PathBuf,
         #[arg(long, default_value_t = 0)]
         spine: usize,
     },
-    /// Render a page to PNG (M4)
+    /// Render a page to PNG
     Render {
         epub: PathBuf,
         #[arg(long, default_value_t = 0)]
@@ -66,12 +66,12 @@ enum Command {
         #[arg(long)]
         cfi: Option<String>,
     },
-    /// Browse, search, and download from OPDS catalogs (M6)
+    /// Browse, search, and download from OPDS catalogs
     Opds {
         #[command(subcommand)]
         command: OpdsCommand,
     },
-    /// Manage the local library (M7)
+    /// Manage the local library
     Lib {
         #[command(subcommand)]
         command: LibCommand,

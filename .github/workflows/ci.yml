@@ -15,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # The only system library the workspace needs: gtk4-sys probes for
+      # gtk4.pc through pkg-config, and the runner image ships pkg-config
+      # but no GTK. Everything else builds from source — sqlite is bundled,
+      # fontconfig is the pure-Rust parser.
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -86,6 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.92"
