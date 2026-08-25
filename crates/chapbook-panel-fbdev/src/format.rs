@@ -28,16 +28,41 @@ pub(crate) enum Encoding {
         green: Bitfield,
         blue: Bitfield,
     },
+    /// One *bit* per pixel, eight to a byte — a bare SPI panel, and the
+    /// hardware `PixelFormat::Grey { levels: 2 }` exists to feed.
+    ///
+    /// `one_is_white` comes from the kernel's visual (`FB_VISUAL_MONO10`
+    /// says a set bit is white, `FB_VISUAL_MONO01` says it is black),
+    /// because getting it backwards produces a perfectly formed negative
+    /// image and no error.
+    ///
+    /// Bit order within the byte is MSB-first — the leftmost pixel in the
+    /// high bit. Nothing in `fb_var_screeninfo` or `fb_fix_screeninfo`
+    /// reports it; it is the convention every mono fbdev driver in the
+    /// kernel follows, and the one `cfb_imageblit` assumes.
+    Mono { one_is_white: bool },
 }
 
 /// Everything about the destination buffer's shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Layout {
-    pub bytes_per_pixel: usize,
-    /// Bytes per row, which is not always `width * bytes_per_pixel`:
-    /// framebuffers pad rows to an alignment of their own choosing.
+    /// Bits, not bytes, because a mono framebuffer's pixel is smaller than
+    /// the unit it is stored in and the byte path cannot describe it.
+    pub bits_per_pixel: usize,
+    /// Bytes per row, which is not always `width * bits / 8`: framebuffers
+    /// pad rows to an alignment of their own choosing.
     pub line_length: usize,
     pub encoding: Encoding,
+}
+
+impl Layout {
+    /// Whole bytes per pixel, or `None` when a pixel is narrower than one
+    /// — which is the question every byte-addressed path here is really
+    /// asking before it multiplies.
+    pub fn bytes_per_pixel(&self) -> Option<usize> {
+        (self.bits_per_pixel >= 8 && self.bits_per_pixel.is_multiple_of(8))
+            .then_some(self.bits_per_pixel / 8)
+    }
 }
 
 /// Fit an 8-bit channel into a field of `length` bits.
@@ -99,6 +124,15 @@ pub(crate) fn read_native(bytes: &[u8]) -> u32 {
 pub(crate) fn pack(r: u8, g: u8, b: u8, encoding: Encoding) -> u32 {
     match encoding {
         Encoding::Grey => u32::from(luminance(r, g, b)),
+        // A pixel is one bit, so the only question is which side of the
+        // middle it falls. The pipeline has normally already quantized to
+        // two levels — `PixelFormat::Grey { levels: 2 }`, which is what a
+        // mono panel asks for — in which case every value is 0 or 255 and
+        // the threshold is not doing any rounding of its own.
+        Encoding::Mono { one_is_white } => {
+            let lit = luminance(r, g, b) >= 128;
+            u32::from(lit == one_is_white)
+        }
         Encoding::Channels { red, green, blue } => {
             fit(r, red.length) << red.offset
                 | fit(g, green.length) << green.offset
@@ -121,8 +155,16 @@ pub(crate) fn blit_into(
     src_width: u32,
     rect: PanelRect,
 ) {
-    let bpp = layout.bytes_per_pixel;
-    if bpp == 0 || bpp > 4 || src_width == 0 {
+    if src_width == 0 {
+        return;
+    }
+    let Some(bpp) = layout.bytes_per_pixel() else {
+        if layout.bits_per_pixel == 1 {
+            blit_mono(dst, layout, rgba, src_width, rect);
+        }
+        return;
+    };
+    if bpp > 4 {
         return;
     }
     let src_width = src_width as usize;
@@ -148,6 +190,64 @@ pub(crate) fn blit_into(
             }
             let word = pack(rgba[src], rgba[src + 1], rgba[src + 2], layout.encoding);
             write_pixel(&mut dst[dst_at..dst_at + bpp], word, bpp);
+        }
+    }
+}
+
+/// The same blit, for a framebuffer whose pixel is one bit.
+///
+/// Two things make this not just the byte path with smaller numbers.
+/// Eight pixels share a byte, so a partial byte at either end of a damage
+/// rect has to be read, edited and written back or it takes its
+/// neighbours with it — and damage rects are in no way byte-aligned,
+/// since they come from glyph geometry. And a whole interior byte is
+/// worth assembling in one go rather than eight read-modify-writes, which
+/// is what the split below is for.
+fn blit_mono(dst: &mut [u8], layout: &Layout, rgba: &[u8], src_width: u32, rect: PanelRect) {
+    let Encoding::Mono { .. } = layout.encoding else {
+        return;
+    };
+    let src_width = src_width as usize;
+    let src_rows = rgba.len() / (src_width * 4);
+    let dst_rows = dst.len().checked_div(layout.line_length).unwrap_or(0);
+
+    let x0 = rect.x as usize;
+    let x1 = (rect.max_x() as usize).min(src_width);
+    let y0 = rect.y as usize;
+    let y1 = (rect.max_y() as usize).min(src_rows).min(dst_rows);
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+
+    for y in y0..y1 {
+        let src_row = y * src_width * 4;
+        let dst_row = y * layout.line_length;
+        let mut x = x0;
+        while x < x1 {
+            let byte_at = dst_row + x / 8;
+            if byte_at >= dst.len() {
+                break;
+            }
+            let first_bit = x % 8;
+            // How much of this byte the rect actually covers.
+            let bits = (8 - first_bit).min(x1 - x);
+            let mut value = 0u8;
+            for i in 0..bits {
+                let src = src_row + (x + i) * 4;
+                let bit = pack(rgba[src], rgba[src + 1], rgba[src + 2], layout.encoding);
+                // MSB-first: the leftmost pixel is bit 7.
+                value |= (bit as u8) << (7 - (first_bit + i));
+            }
+            if bits == 8 {
+                dst[byte_at] = value;
+            } else {
+                // Keep the pixels outside the rect. `mask` is the span
+                // this pass owns; everything else in the byte belongs to
+                // whatever was there before.
+                let mask = (((1u16 << bits) - 1) << (8 - first_bit - bits)) as u8;
+                dst[byte_at] = (dst[byte_at] & !mask) | (value & mask);
+            }
+            x += bits;
         }
     }
 }
@@ -199,10 +299,31 @@ mod tests {
 
     fn layout(bpp: usize, line_length: usize, encoding: Encoding) -> Layout {
         Layout {
-            bytes_per_pixel: bpp,
+            bits_per_pixel: bpp * 8,
             line_length,
             encoding,
         }
+    }
+
+    /// A 1bpp framebuffer `width` pixels across, rows padded to bytes.
+    fn mono_layout(width: usize, one_is_white: bool) -> Layout {
+        Layout {
+            bits_per_pixel: 1,
+            line_length: width.div_ceil(8),
+            encoding: Encoding::Mono { one_is_white },
+        }
+    }
+
+    /// An RGBA buffer from a bit pattern per row, 1 meaning white.
+    fn mono_source(rows: &[&[u8]]) -> Vec<u8> {
+        let mut rgba = Vec::new();
+        for row in rows {
+            for bit in *row {
+                let v = if *bit == 1 { 0xFF } else { 0x00 };
+                rgba.extend_from_slice(&[v, v, v, 0xFF]);
+            }
+        }
+        rgba
     }
 
     #[test]
@@ -291,6 +412,124 @@ mod tests {
         for pixel in dst.as_chunks::<2>().0 {
             assert_eq!(read_pixel(pixel), 0xF800);
         }
+    }
+
+    #[test]
+    fn mono_packs_eight_pixels_to_a_byte_msb_first() {
+        let layout = mono_layout(8, true);
+        let mut dst = vec![0u8; 1];
+        // Leftmost pixel white, the rest black: the high bit and nothing
+        // else. Getting this backwards is the classic mono bug, and it
+        // looks like a mirrored page rather than like an error.
+        let rgba = mono_source(&[&[1, 0, 0, 0, 0, 0, 0, 0]]);
+        blit_into(&mut dst, &layout, &rgba, 8, PanelRect::new(0, 0, 8, 1));
+        assert_eq!(dst[0], 0b1000_0000);
+
+        let rgba = mono_source(&[&[0, 0, 0, 0, 0, 0, 0, 1]]);
+        blit_into(&mut dst, &layout, &rgba, 8, PanelRect::new(0, 0, 8, 1));
+        assert_eq!(dst[0], 0b0000_0001);
+
+        let rgba = mono_source(&[&[1, 0, 1, 1, 0, 0, 1, 0]]);
+        blit_into(&mut dst, &layout, &rgba, 8, PanelRect::new(0, 0, 8, 1));
+        assert_eq!(dst[0], 0b1011_0010);
+    }
+
+    #[test]
+    fn mono_polarity_comes_from_the_device_not_from_a_guess() {
+        let rgba = mono_source(&[&[1, 0, 0, 0, 0, 0, 0, 0]]);
+        let mut lit = vec![0u8; 1];
+        blit_into(
+            &mut lit,
+            &mono_layout(8, true),
+            &rgba,
+            8,
+            PanelRect::new(0, 0, 8, 1),
+        );
+        let mut inverted = vec![0u8; 1];
+        blit_into(
+            &mut inverted,
+            &mono_layout(8, false),
+            &rgba,
+            8,
+            PanelRect::new(0, 0, 8, 1),
+        );
+        // The same page, on the two wirings, is the exact complement —
+        // which is why the polarity has to come from `visual` and not
+        // from whichever one somebody tried first.
+        assert_eq!(lit[0], !inverted[0]);
+        assert_eq!(lit[0], 0b1000_0000);
+    }
+
+    #[test]
+    fn a_mono_damage_rect_leaves_the_rest_of_the_byte_alone() {
+        let layout = mono_layout(8, true);
+        // Eight pixels in one byte, all currently white.
+        let mut dst = vec![0b1111_1111u8];
+        // Repaint only pixels 2..5 — black. Damage rects come from glyph
+        // geometry and are in no way byte-aligned, so the surrounding
+        // pixels have to survive a read-modify-write.
+        let rgba = mono_source(&[&[1, 1, 0, 0, 0, 1, 1, 1]]);
+        blit_into(&mut dst, &layout, &rgba, 8, PanelRect::new(2, 0, 3, 1));
+        assert_eq!(dst[0], 0b1100_0111);
+    }
+
+    #[test]
+    fn a_mono_rect_spanning_bytes_writes_both_ends_and_the_middle() {
+        // 20 pixels: three bytes a row, the last one only half used.
+        let layout = mono_layout(20, true);
+        let mut dst = vec![0u8; 3];
+        let row: Vec<u8> = (0..20).map(|_| 1u8).collect();
+        let rgba = mono_source(&[&row]);
+        // Start mid-byte and end mid-byte, crossing a whole one.
+        blit_into(&mut dst, &layout, &rgba, 20, PanelRect::new(3, 0, 14, 1));
+        assert_eq!(dst[0], 0b0001_1111, "leading partial byte");
+        assert_eq!(dst[1], 0b1111_1111, "whole interior byte");
+        assert_eq!(dst[2], 0b1000_0000, "trailing partial byte");
+    }
+
+    #[test]
+    fn mono_rows_follow_the_stride_not_the_width() {
+        // 12 pixels wide, so a row is two bytes with four bits of padding.
+        let layout = mono_layout(12, true);
+        let mut dst = vec![0u8; 2 * 2];
+        let rgba = mono_source(&[
+            &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+        ]);
+        blit_into(&mut dst, &layout, &rgba, 12, PanelRect::new(0, 0, 12, 2));
+        assert_eq!(dst[0], 0b1000_0000);
+        assert_eq!(dst[1], 0b0000_0000);
+        assert_eq!(dst[2], 0b0000_0000);
+        assert_eq!(dst[3], 0b1000_0000, "second row starts at the stride");
+    }
+
+    #[test]
+    fn a_mono_blit_past_the_mapping_stops_rather_than_faulting() {
+        let layout = mono_layout(16, true);
+        // Only one row is mapped; a two-row blit must not run off it.
+        let mut dst = vec![0u8; 2];
+        let rgba = mono_source(&[&[1; 16], &[1; 16]]);
+        blit_into(&mut dst, &layout, &rgba, 16, PanelRect::new(0, 0, 16, 2));
+        assert_eq!(dst, vec![0xFF, 0xFF]);
+        // And a rect entirely outside is simply nothing.
+        let mut dst = vec![0u8; 2];
+        blit_into(&mut dst, &layout, &rgba, 16, PanelRect::new(99, 99, 16, 2));
+        assert_eq!(dst, vec![0, 0]);
+    }
+
+    #[test]
+    fn mono_thresholds_at_the_middle_of_the_luminance_range() {
+        // Not-yet-quantized colour still lands somewhere sensible: the
+        // pipeline normally reduces to two levels first, but the blit is
+        // the last line and must not depend on that.
+        assert_eq!(pack(0, 0, 0, Encoding::Mono { one_is_white: true }), 0);
+        assert_eq!(
+            pack(255, 255, 255, Encoding::Mono { one_is_white: true }),
+            1
+        );
+        // Green carries most of the luminance; pure blue is nearly none.
+        assert_eq!(pack(0, 255, 0, Encoding::Mono { one_is_white: true }), 1);
+        assert_eq!(pack(0, 0, 255, Encoding::Mono { one_is_white: true }), 0);
     }
 
     #[test]

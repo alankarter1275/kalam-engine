@@ -262,11 +262,28 @@ Increments left, in the order they will hurt:
   means `PixelFormat` wants to become a request a panel can decline rather
   than a decision made above it. That inverts part of the current design,
   so it is written down rather than acted on.
-- **Sub-byte pixels are foreclosed.** `FbdevPanel::open` rejects any depth
-  that is not a whole number of bytes, so a 1bpp framebuffer is turned
-  away before anything else runs — and 1-bit packed is the *normal* case
-  for a bare SPI panel, as well as what `PixelFormat::Grey { levels: 2 }`
-  exists to serve.
+- **Sub-byte pixels** were foreclosed — `FbdevPanel::open` rejected any
+  depth that was not a whole number of bytes, so a 1bpp framebuffer was
+  turned away before anything else ran, and 1-bit packed is the *normal*
+  case for a bare SPI panel as well as what `PixelFormat::Grey { levels: 2 }`
+  exists to serve. It is now supported: `Encoding::Mono` packs eight
+  pixels to a byte MSB-first, and a partial byte at either end of a damage
+  rect is read-modified-written rather than overwritten, because damage
+  rects come from glyph geometry and are aligned to nothing.
+
+  Two details are load-bearing. Polarity comes from the kernel's visual
+  (`FB_VISUAL_MONO10` versus `MONO01`) rather than from a convention,
+  because guessing wrong produces a flawless negative and no error to
+  notice it by. And depth is classified before `grayscale`, because a mono
+  framebuffer may well set that flag and `Encoding::Grey` writes a whole
+  byte per pixel — eight pixels' worth of memory for every one.
+
+  A mono panel is also the one case where a non-`Rgba` default is honest:
+  it asks for `Grey { levels: 2, dither: true }`, so the reduction happens
+  where the error can be diffused rather than one pixel at a time in the
+  blit's threshold. 2bpp and 4bpp are still out, and for a reason rather
+  than an oversight: nothing in `fb_var_screeninfo` or `fb_fix_screeninfo`
+  says which end of the byte their pixels start at.
 
 ### The targets the seam has to survive
 

@@ -31,6 +31,17 @@ the pin is a deliberate change, like the stylo pins, and the two places that
 carry the version (`rust-toolchain.toml` and `RUST_PIN` in
 `.github/workflows/ci.yml`) move together.
 
+One consequence to know about: a pinned version is a *different toolchain*
+from `stable`, with its own installed targets. If you cross-check the
+device build, add them to the pin rather than to `stable`, or the check
+fails with `can't find crate for core` — which reads like a broken build
+and is not one:
+
+```sh
+rustup target add --toolchain "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" \
+    armv7-unknown-linux-gnueabihf aarch64-unknown-linux-gnu
+```
+
 One more trap worth naming: clippy stops at the first crate that fails, so
 the errors in a CI log are a prefix of the problem, not the whole of it. When
 a new lint lands, sweep the workspace with `grep` for the pattern instead of

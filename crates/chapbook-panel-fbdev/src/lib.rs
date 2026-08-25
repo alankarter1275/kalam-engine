@@ -241,7 +241,13 @@ impl FbdevPanel {
             }
         }
 
-        if var.bits_per_pixel == 0 || var.bits_per_pixel % 8 != 0 || var.bits_per_pixel > 32 {
+        // 1 is the sub-byte case a bare SPI panel presents; the rest are
+        // whole bytes. Nothing between them: 2 and 4 bits per pixel exist
+        // on shallow grey e-ink, but the kernel has no field that says
+        // which end of the byte their pixels start at, so packing one
+        // would be a guess.
+        let sub_byte = var.bits_per_pixel == 1;
+        if !sub_byte && (var.bits_per_pixel % 8 != 0 || var.bits_per_pixel > 32) {
             return Err(ChapbookError::Panel(format!(
                 "{} reports {} bits per pixel, which this backend cannot pack",
                 path.display(),
@@ -260,7 +266,9 @@ impl FbdevPanel {
         let line_length = if fix.line_length > 0 {
             fix.line_length as usize
         } else {
-            var.xres as usize * (var.bits_per_pixel as usize / 8)
+            // Round up, not down: a 1bpp row of 200 pixels is 25 bytes,
+            // and integer division by 8 would have made it 0.
+            (var.xres as usize * var.bits_per_pixel as usize).div_ceil(8)
         };
         // `smem_len` is what is actually mappable; the visible geometry can
         // be smaller than the virtual one, and a pan offset lives in the
@@ -292,7 +300,28 @@ impl FbdevPanel {
         // channels at offset 0 with length 8, which is not a layout at all
         // — packing to it ORs the channels together and every colour comes
         // out the same. Guessing produced exactly that; `visual` says so.
-        let encoding = if var.grayscale != 0 {
+        let encoding = if sub_byte {
+            // Depth decides before `grayscale` does. A mono framebuffer
+            // may well set `grayscale`, and `Encoding::Grey` writes a
+            // whole byte per pixel — taking that branch at 1bpp would
+            // scribble eight pixels' worth of memory for every one.
+            match fix.visual {
+                FB_VISUAL_MONO10 => Encoding::Mono { one_is_white: true },
+                FB_VISUAL_MONO01 => Encoding::Mono {
+                    one_is_white: false,
+                },
+                // Every 1bpp framebuffer is one or the other. If a driver
+                // says otherwise, the polarity is unknown, and a guess
+                // shows up as a negative image rather than as an error.
+                other => {
+                    return Err(ChapbookError::Panel(format!(
+                        "{} is 1 bit per pixel but reports visual {other}, not \
+                         monochrome, so which bit means white is unknown",
+                        path.display()
+                    )));
+                }
+            }
+        } else if var.grayscale != 0 {
             Encoding::Grey
         } else {
             match fix.visual {
@@ -312,6 +341,9 @@ impl FbdevPanel {
                 },
                 other => {
                     let name = match other {
+                        // Mono is handled above, at the only depth it
+                        // comes in; reaching here means a driver claimed
+                        // monochrome pixels a byte or more wide.
                         FB_VISUAL_MONO01 | FB_VISUAL_MONO10 => "monochrome",
                         FB_VISUAL_PSEUDOCOLOR | FB_VISUAL_STATIC_PSEUDOCOLOR => "palette",
                         _ => "unrecognized",
@@ -331,7 +363,7 @@ impl FbdevPanel {
             map: map.cast::<u8>(),
             map_len,
             layout: Layout {
-                bytes_per_pixel: var.bits_per_pixel as usize / 8,
+                bits_per_pixel: var.bits_per_pixel as usize,
                 line_length,
                 encoding,
             },
@@ -341,7 +373,27 @@ impl FbdevPanel {
             // can show 256 levels, so asking the pipeline to quantize to
             // e-ink's sixteen would throw away quality for nothing. Use
             // `with_format` to emulate a shallower panel deliberately.
-            format: PixelFormat::Rgba,
+            //
+            // A mono framebuffer is the exception, and the only place a
+            // non-default is honest: it has exactly two levels, so the
+            // blit's threshold is going to reduce to them whatever it is
+            // handed. Asking for it up front means the reduction happens
+            // where the error can be diffused instead of one pixel at a
+            // time — which at two levels is the difference between a
+            // photograph and a silhouette.
+            //
+            // Dithering the text as well is the cost, and it is the
+            // lesser one: an undithered image here is unreadable, while
+            // diffused error along a glyph's antialiased edge is roughly
+            // what a 1-bit reader looks like anyway. It is also the case
+            // the per-op dither work exists to stop having to choose.
+            format: match encoding {
+                Encoding::Mono { .. } => PixelFormat::Grey {
+                    levels: 2,
+                    dither: true,
+                },
+                _ => PixelFormat::Rgba,
+            },
             next_token: 1,
         })
     }
@@ -359,9 +411,15 @@ impl FbdevPanel {
     /// A description of the device, for a shell that wants to say what it
     /// found — the same reason the GPU backend names its adapter.
     pub fn describe(&self) -> String {
-        let depth = self.layout.bytes_per_pixel * 8;
+        let depth = self.layout.bits_per_pixel;
         let encoding = match self.layout.encoding {
             Encoding::Grey => "grey".to_string(),
+            // Say which way round it is: a mono panel wired the other way
+            // shows a flawless negative, and the string is the only place
+            // that becomes visible before the glass does.
+            Encoding::Mono { one_is_white } => {
+                format!("mono {}=white", u8::from(one_is_white))
+            }
             // Offsets as well as widths: a wrong `#[repr(C)]` shows up
             // here as nonsense, where a swapped channel order would
             // otherwise only be visible as wrong colours on the glass.
@@ -384,7 +442,7 @@ impl FbdevPanel {
     /// constant someone typed while guessing at the hardware.
     pub fn channels(&self) -> Option<[(u32, u32); 3]> {
         match self.layout.encoding {
-            Encoding::Grey => None,
+            Encoding::Grey | Encoding::Mono { .. } => None,
             Encoding::Channels { red, green, blue } => Some([
                 (red.offset, red.length),
                 (green.offset, green.length),
@@ -402,7 +460,19 @@ impl FbdevPanel {
         if x >= self.width || y >= self.height {
             return None;
         }
-        let bpp = self.layout.bytes_per_pixel;
+        let Some(bpp) = self.layout.bytes_per_pixel() else {
+            // Sub-byte: the pixel is a bit inside a byte, so read the byte
+            // and return the bit as 0 or 1 — the same value `pack`
+            // produced for it, which is what a self-test compares against.
+            let at = y as usize * self.layout.line_length + x as usize / 8;
+            if at >= self.map_len {
+                return None;
+            }
+            // Safety: `at` is inside the mapping, which lives as long as
+            // `&self`.
+            let byte = unsafe { *self.map.add(at) };
+            return Some(u32::from((byte >> (7 - x % 8)) & 1));
+        };
         let at = y as usize * self.layout.line_length + x as usize * bpp;
         if at + bpp > self.map_len {
             return None;

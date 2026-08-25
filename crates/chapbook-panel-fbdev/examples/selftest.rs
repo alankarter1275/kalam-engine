@@ -78,9 +78,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             None => {
-                // Greyscale: no channel placement to check against, so
-                // only the ordering property is meaningful.
-                println!("  {name:>8}  wrote {r:02x}{g:02x}{b:02x}  read {got:#010x}  (grey)");
+                // Greyscale or mono: no channel placement to check
+                // against, so only the ordering property is meaningful.
+                // On a 1bpp panel `read_pixel` returns the bit itself,
+                // so the interesting reading is 0 versus 1.
+                println!(
+                    "  {name:>8}  wrote {r:02x}{g:02x}{b:02x}  read {got:#010x}  \
+                     (no channel placement)"
+                );
             }
         }
     }
