@@ -333,9 +333,11 @@ impl ApplicationHandler<()> for App {
                 match event.logical_key {
                     Key::Named(NamedKey::ArrowRight)
                     | Key::Named(NamedKey::PageDown)
-                    | Key::Named(NamedKey::Space) => self.session.next_page(),
+                    | Key::Named(NamedKey::Space) => {
+                        self.session.next_page();
+                    }
                     Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::PageUp) => {
-                        self.session.prev_page()
+                        self.session.prev_page();
                     }
                     Key::Named(NamedKey::Escape) => {
                         if self.session.selected_range().is_some() {
@@ -353,8 +355,12 @@ impl ApplicationHandler<()> for App {
                             event_loop.exit();
                             return;
                         }
-                        "n" => self.session.next_unit(),
-                        "p" => self.session.prev_unit(),
+                        "n" => {
+                            self.session.next_unit();
+                        }
+                        "p" => {
+                            self.session.prev_unit();
+                        }
                         "+" | "=" => self.session.adjust_font(2.0),
                         "-" => self.session.adjust_font(-2.0),
                         "t" => self.session.cycle_theme(),

@@ -75,14 +75,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // than just the first full paint.
     for _ in 0..3 {
         std::thread::sleep(Duration::from_secs(2));
-        // Position is (unit, page), not page: `next_page` crosses into the
-        // next spine item by resetting the page to 0, so comparing the page
-        // alone reads a successful unit change as "did not move". Most
-        // books open on a single-page cover, which made this stop after one
-        // turn — exactly the turns it exists to demonstrate.
-        let before = (session.spine(), session.page());
-        session.next_page();
-        if (session.spine(), session.page()) == before {
+        // `next_page` answers "did it move" itself, which is the whole
+        // reason it returns anything. Deriving it here is what broke this
+        // loop the first time: it compared the page alone, and a turn off
+        // the end of a unit crosses into the next one by resetting the
+        // page to 0, so a successful move read as "did not move". Most
+        // books open on a single-page cover, so it stopped on turn one.
+        // `chapbook_reader::conformance` now asserts this for any shell.
+        if !session.next_page() {
             break;
         }
         show(&mut session, &mut driver)?;

@@ -23,6 +23,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+pub mod conformance;
+
 #[cfg(feature = "_image-book")]
 mod loader;
 #[cfg(feature = "_image-book")]
@@ -198,6 +200,20 @@ struct PendingDamage {
     unstated: bool,
     /// Union of the regions that could, in page coordinates.
     region: Option<Rect>,
+}
+
+/// Where the reader is: which spine unit, and which page inside it.
+///
+/// The pair, never the page alone. `next_page` crosses into the next unit
+/// by resetting the page to 0, so a shell comparing `page()` across a turn
+/// reads a successful move as "did not move" — and since most books open on
+/// a single-page cover, it reads that on the very first turn. That is not
+/// hypothetical: it is what stopped the fbdev shell dead on its first run
+/// against real hardware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    pub spine: usize,
+    pub page: usize,
 }
 
 /// One open book and everything needed to read it.
@@ -547,6 +563,16 @@ impl Session {
         self.page
     }
 
+    /// Where the reader is, as the pair that actually identifies a place.
+    /// Prefer this to `spine()`/`page()` for "did anything move" — see
+    /// [`Position`] for the turn that made the difference matter.
+    pub fn position(&self) -> Position {
+        Position {
+            spine: self.spine,
+            page: self.page,
+        }
+    }
+
     pub fn settings(&self) -> &ReadingSettings {
         &self.settings
     }
@@ -594,7 +620,12 @@ impl Session {
 
     // ---- Navigation ----
 
-    pub fn next_page(&mut self) {
+    /// Turn forward one page, crossing into the next unit at the end of
+    /// this one. Returns whether the position moved, which is the answer a
+    /// shell's loop wants and the one it cannot reliably derive from
+    /// `page()` — see [`Position`].
+    pub fn next_page(&mut self) -> bool {
+        let before = self.position();
         let count = self.page_count();
         if self.page + 1 < count {
             self.page += 1;
@@ -605,9 +636,12 @@ impl Session {
             self.mark(FrameIntent::UnitChange);
         }
         self.selection = None;
+        self.position() != before
     }
 
-    pub fn prev_page(&mut self) {
+    /// Turn back one page. Returns whether the position moved.
+    pub fn prev_page(&mut self) -> bool {
+        let before = self.position();
         if self.page > 0 {
             self.page -= 1;
             self.mark(FrameIntent::PageTurn);
@@ -621,24 +655,31 @@ impl Session {
             self.mark(FrameIntent::UnitChange);
         }
         self.selection = None;
+        self.position() != before
     }
 
-    pub fn next_unit(&mut self) {
+    /// Skip to the start of the next unit. Returns whether it moved.
+    pub fn next_unit(&mut self) -> bool {
+        let before = self.position();
         if self.spine + 1 < self.spine_len() {
             self.spine += 1;
             self.page = 0;
             self.selection = None;
             self.mark(FrameIntent::UnitChange);
         }
+        self.position() != before
     }
 
-    pub fn prev_unit(&mut self) {
+    /// Skip to the start of the previous unit. Returns whether it moved.
+    pub fn prev_unit(&mut self) -> bool {
+        let before = self.position();
         if self.spine > 0 {
             self.spine -= 1;
             self.page = 0;
             self.selection = None;
             self.mark(FrameIntent::UnitChange);
         }
+        self.position() != before
     }
 
     // ---- Settings ----
@@ -1519,7 +1560,9 @@ impl Session {
     /// Convert rendered pages for a panel that can't show full color —
     /// 16-level grey or 1-bit e-ink. [`Session::render`] applies it; a
     /// shell rasterizing a frame itself calls
-    /// `chapbook_render_tinyskia::quantize` at the same point.
+    /// [`chapbook_paint::quantize`] at the same point — panel policy
+    /// belongs to the target, not to whichever rasterizer produced the
+    /// pixels.
     ///
     /// This changes pixels, not ops, so it does not disturb the frame
     /// record: the display list is identical either way.

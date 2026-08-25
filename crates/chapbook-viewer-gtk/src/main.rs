@@ -121,10 +121,18 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
         key.connect_key_pressed(move |_, keyval, _, _| {
             let mut s = session.borrow_mut();
             match keyval.name().as_deref() {
-                Some("Right") | Some("Page_Down") | Some("space") => s.next_page(),
-                Some("Left") | Some("Page_Up") => s.prev_page(),
-                Some("n") => s.next_unit(),
-                Some("p") => s.prev_unit(),
+                Some("Right") | Some("Page_Down") | Some("space") => {
+                    s.next_page();
+                }
+                Some("Left") | Some("Page_Up") => {
+                    s.prev_page();
+                }
+                Some("n") => {
+                    s.next_unit();
+                }
+                Some("p") => {
+                    s.prev_unit();
+                }
                 Some("plus") | Some("equal") => s.adjust_font(2.0),
                 Some("minus") => s.adjust_font(-2.0),
                 Some("t") => s.cycle_theme(),
