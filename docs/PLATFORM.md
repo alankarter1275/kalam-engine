@@ -245,10 +245,24 @@ Increments left, in the order they will hurt:
   against that is not a judgement to make without the hardware in hand —
   and on an EPDC the right answer is likely the bullet below instead: hand
   over undithered grey and let the controller do it.
-- **`dither` is page-global.** Its own doc says images need it and body
-  text does not, but one flag covers the whole page, so it cannot be both.
-  The display list knows which ops are images; that information is being
-  discarded. Mostly harmless at 16 levels, decisive at 2.
+- **`dither` was page-global.** Its own doc said images need it and body
+  text does not, but one flag covered the whole page, so it could not be
+  both — and the display list, which knows which ops are images, was
+  having that discarded at the seam. `DisplayList::dither_regions` now
+  hands those rects to `chapbook_paint::quantize_regions`, which diffuses
+  inside them and quantizes plainly everywhere else; `Session::render`
+  and the fbdev example both go through it.
+
+  The seam objection above applies here too and is answered by *where*
+  the seam falls. Error diffusion scoped to a region starts from zero at
+  its edges, which is a discontinuity — but an image's boundary is
+  already a hard content edge, so a discontinuity there is invisible in a
+  way the same one mid-paragraph would not be. That is the difference
+  between this and scoping to a damage rect, whose edges fall wherever
+  the last glyph happened to move.
+
+  Mostly harmless at 16 levels, decisive at 2 — which is no longer
+  hypothetical now that a 1bpp panel can be opened at all.
 - **Quantizing above the panel is redundant on the hardware that matters,
   and the level count is attached to the wrong thing.** An EPDC quantizes
   and dithers itself — passthrough, Floyd–Steinberg, Atkinson, ordered,

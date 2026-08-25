@@ -1,7 +1,7 @@
 //! The paint-neutral display list: dumb draw ops in page coordinates
 //! (CSS px), executed by any backend without re-shaping or style access.
 
-use chapbook_core::{Point, Rect, Rgba, Size, UpdateClass};
+use chapbook_core::{PanelRect, Point, Rect, Rgba, Rotation, Size, UpdateClass};
 
 use crate::page::{FragmentKind, Glyph, Page};
 
@@ -10,6 +10,35 @@ pub struct DisplayList {
     /// Full page size in CSS px; backends scale to device pixels.
     pub size: Size,
     pub ops: Vec<DisplayOp>,
+}
+
+impl DisplayList {
+    /// Where on the page a panel should diffuse quantization error:
+    /// wherever an image is, and nowhere else.
+    ///
+    /// The list is the only thing that knows the difference between a
+    /// photograph and a paragraph by the time pixels exist, so the answer
+    /// has to come from here. Hand the result to
+    /// [`quantize_regions`](crate::quantize_regions).
+    ///
+    /// Device pixels in page orientation, rounded outward — the space a
+    /// rasterized page is in before [`rotate`](crate::rotate) turns it,
+    /// which is also where quantization happens.
+    pub fn dither_regions(&self, scale: f32) -> Vec<PanelRect> {
+        self.ops
+            .iter()
+            .filter_map(|op| match op {
+                DisplayOp::Image { dest, .. } => Some(PanelRect::from_page(
+                    *dest,
+                    self.size,
+                    scale,
+                    Rotation::None,
+                )),
+                _ => None,
+            })
+            .filter(|rect| !rect.is_empty())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]

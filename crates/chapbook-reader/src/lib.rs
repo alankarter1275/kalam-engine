@@ -1637,9 +1637,13 @@ impl Session {
         self.renderer
             .render(&dl, &mut self.fonts, images, scale, &mut pixmap);
         // Panel policy is backend-neutral: the same conversion a GPU shell
-        // would apply to its own pixels.
+        // would apply to its own pixels. Dithering is scoped to where the
+        // page has images, because diffusing error through body text
+        // stipples every glyph's edge and not diffusing it through a
+        // photograph flattens the photograph.
         let (w, h) = (pixmap.width(), pixmap.height());
-        chapbook_paint::quantize(pixmap.data_mut(), w, h, self.pixel_format);
+        let dithered = dl.dither_regions(scale);
+        chapbook_paint::quantize_regions(pixmap.data_mut(), w, h, self.pixel_format, &dithered);
         if metrics.rotation == Rotation::None {
             return Some(pixmap);
         }

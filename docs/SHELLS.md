@@ -242,11 +242,31 @@ thread.
 A framebuffer or e-ink panel needs three things a window does not.
 
 **Pixel format.** `session.set_pixel_format(PixelFormat::Grey { levels, dither })`
-makes `render()` quantize for a panel that cannot show full colour. A
-shell rasterizing its own frames calls `chapbook_paint::quantize` at the
-same point. Panel policy belongs to the target, not to whichever
-rasterizer produced the pixels — which is also why `chapbook_paint::rotate`
-lives there rather than in a backend.
+makes `render()` quantize for a panel that cannot show full colour. Panel
+policy belongs to the target, not to whichever rasterizer produced the
+pixels — which is also why `chapbook_paint::rotate` lives there rather
+than in a backend.
+
+A shell rasterizing its own frames does the same reduction itself, and
+should reach for `chapbook_paint::quantize_regions` rather than
+`quantize`:
+
+```rust
+let dithered = frame.list.dither_regions(scale);
+chapbook_paint::quantize_regions(&mut pixels, w, h, format, &dithered);
+```
+
+`dither` is one flag for a whole page, and a page is not one kind of
+thing. Diffusing error through body text stipples the antialiased edge of
+every glyph; *not* diffusing it through a photograph turns the photograph
+into a silhouette. `dither_regions` asks the display list which pixels
+came from images — the last point at which anything knows — so the
+diffusion happens over those and nowhere else. At sixteen levels this is
+a refinement; at two, which is what a 1bpp panel has, it is the
+difference between a readable page and an unreadable one.
+
+`quantize` is still there for a caller with no display list to hand, and
+still dithers the whole page when asked.
 
 **Rotation.** Set it in `PageMetrics` and the page is laid out unturned and
 turned on the way out. `panel_size()` gives you the buffer size (axes

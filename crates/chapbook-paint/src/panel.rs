@@ -15,7 +15,7 @@
 
 use std::borrow::Cow;
 
-use chapbook_core::{PixelFormat, Rotation};
+use chapbook_core::{PanelRect, PixelFormat, Rotation};
 
 /// Convert a rasterized page for a panel that cannot show full color.
 ///
@@ -106,6 +106,163 @@ pub fn quantize(rgba: &mut [u8], width: u32, height: u32, format: PixelFormat) {
         // `fill` is a memset; the element-wise loop this replaces was a
         // second full-width pass over every row.
         next.fill(0.0);
+    }
+}
+
+/// Quantize a page, dithering only where the page asked for it.
+///
+/// One flag for a whole page is the wrong shape, and at two levels it is
+/// decisively wrong. Diffusing error through body text stipples the
+/// antialiased edge of every glyph; *not* diffusing it through a
+/// photograph turns the photograph into a silhouette. The display list
+/// knows which of the two a given pixel came from — see
+/// [`DisplayList::dither_regions`] — and that knowledge used to be thrown
+/// away at this seam.
+///
+/// `dithered` is in device pixels, in page orientation, because that is
+/// what a rasterized page is before [`rotate`] turns it.
+///
+/// Each region diffuses within itself and no error crosses its edge.
+/// That is a seam, and it is placed where a seam is already: an image's
+/// boundary is a hard content edge, so a discontinuity there is invisible
+/// in a way the same discontinuity mid-paragraph would not be.
+///
+/// With `dither` off, or with no regions, this is exactly [`quantize`]
+/// without dithering — including the case worth stating plainly: a page
+/// of nothing but text asks for no diffusion at all, which is the point.
+pub fn quantize_regions(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    dithered: &[PanelRect],
+) {
+    let PixelFormat::Grey { levels, dither } = format else {
+        return;
+    };
+    let (step, top) = steps(levels);
+    let w = width as usize;
+    if w == 0 {
+        return;
+    }
+    let h = (height as usize).min(rgba.len() / (w * 4));
+
+    if !dither || dithered.is_empty() {
+        for row in rgba.chunks_exact_mut(w * 4).take(h) {
+            quantize_span(row, step, top);
+        }
+        return;
+    }
+
+    for rect in dithered {
+        dither_rect(rgba, w, h, *rect, step, top);
+    }
+    quantize_outside(rgba, w, h, dithered, step, top);
+}
+
+/// The step between adjacent output levels, and the index of the highest.
+///
+/// Floored at two, not capped: two levels is where the arithmetic stops
+/// meaning anything, while an upper bound would be a guess about which
+/// panels exist.
+fn steps(levels: u8) -> (f32, f32) {
+    let levels = f32::from(levels.max(2));
+    (255.0 / (levels - 1.0), levels - 1.0)
+}
+
+/// Quantize a run of pixels with no regard for their neighbours.
+fn quantize_span(span: &mut [u8], step: f32, top: f32) {
+    for px in span.as_chunks_mut::<4>().0 {
+        let value = ((luminance(px) / step).round().clamp(0.0, top) * step) as u8;
+        px[0] = value;
+        px[1] = value;
+        px[2] = value;
+    }
+}
+
+/// Floyd–Steinberg confined to one rectangle. The error rows are the
+/// rectangle's width, so nothing diffuses past its edges — see
+/// [`quantize_regions`] for why that seam is placed where it is.
+fn dither_rect(rgba: &mut [u8], w: usize, h: usize, rect: PanelRect, step: f32, top: f32) {
+    let x0 = (rect.x as usize).min(w);
+    let x1 = (rect.max_x() as usize).min(w);
+    let y0 = (rect.y as usize).min(h);
+    let y1 = (rect.max_y() as usize).min(h);
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let rw = x1 - x0;
+    let mut error = vec![0.0f32; rw + 2];
+    let mut next = vec![0.0f32; rw + 2];
+    for y in y0..y1 {
+        let row = &mut rgba[y * w * 4..(y + 1) * w * 4];
+        for (i, px) in row[x0 * 4..x1 * 4]
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
+            let lum = luminance(px) + error[i + 1];
+            let quantized = (lum / step).round().clamp(0.0, top) * step;
+            let value = quantized as u8;
+            px[0] = value;
+            px[1] = value;
+            px[2] = value;
+            let residual = lum - quantized;
+            error[i + 2] += residual * 7.0 / 16.0;
+            next[i] += residual * 3.0 / 16.0;
+            next[i + 1] += residual * 5.0 / 16.0;
+            next[i + 2] += residual / 16.0;
+        }
+        std::mem::swap(&mut error, &mut next);
+        next.fill(0.0);
+    }
+}
+
+/// Plain quantization everywhere the dithered regions do not reach.
+///
+/// Walked as complement spans per row rather than through a page-sized
+/// mask: a page carries a handful of images at most, so the covering
+/// intervals for a row are found by looking at those few rects, and the
+/// alternative is a megabyte-scale allocation and memset per frame on
+/// exactly the devices that can least afford one.
+fn quantize_outside(
+    rgba: &mut [u8],
+    w: usize,
+    h: usize,
+    dithered: &[PanelRect],
+    step: f32,
+    top: f32,
+) {
+    let mut covering: Vec<(usize, usize)> = Vec::new();
+    for y in 0..h {
+        covering.clear();
+        for rect in dithered {
+            if y < rect.y as usize || y >= rect.max_y() as usize {
+                continue;
+            }
+            let a = (rect.x as usize).min(w);
+            let b = (rect.max_x() as usize).min(w);
+            if a < b {
+                covering.push((a, b));
+            }
+        }
+        let row = &mut rgba[y * w * 4..(y + 1) * w * 4];
+        if covering.is_empty() {
+            quantize_span(row, step, top);
+            continue;
+        }
+        covering.sort_unstable();
+        let mut cursor = 0usize;
+        for (a, b) in covering.iter().copied() {
+            if a > cursor {
+                quantize_span(&mut row[cursor * 4..a * 4], step, top);
+            }
+            cursor = cursor.max(b);
+        }
+        if cursor < w {
+            quantize_span(&mut row[cursor * 4..w * 4], step, top);
+        }
     }
 }
 
@@ -360,6 +517,142 @@ mod tests {
     fn at(rgba: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * w + x) * 4) as usize;
         rgba[i..i + 4].try_into().unwrap()
+    }
+
+    /// A ramp across the page, so quantization has something to round
+    /// both ways and diffusion has error to carry.
+    fn ramp(w: u32, h: u32) -> Vec<u8> {
+        (0..w * h)
+            .flat_map(|i| {
+                let v = ((i * 37) % 256) as u8;
+                [v, v, v, 255]
+            })
+            .collect()
+    }
+
+    const SIXTEEN: PixelFormat = PixelFormat::Grey {
+        levels: 16,
+        dither: true,
+    };
+    const SIXTEEN_FLAT: PixelFormat = PixelFormat::Grey {
+        levels: 16,
+        dither: false,
+    };
+
+    /// With no region asking for it, a page gets no diffusion at all —
+    /// which is the whole point for a page of text.
+    #[test]
+    fn no_regions_means_no_dithering_anywhere() {
+        let (w, h) = (23u32, 7u32);
+        let mut scoped = ramp(w, h);
+        quantize_regions(&mut scoped, w, h, SIXTEEN, &[]);
+        let mut plain = ramp(w, h);
+        quantize(&mut plain, w, h, SIXTEEN_FLAT);
+        assert_eq!(scoped, plain);
+    }
+
+    /// And a region covering everything reproduces the page-global
+    /// dither exactly, so the scoped path is the same arithmetic and not
+    /// a second implementation that happens to look similar.
+    #[test]
+    fn a_region_covering_the_page_is_the_page_global_dither() {
+        let (w, h) = (23u32, 7u32);
+        let mut scoped = ramp(w, h);
+        quantize_regions(&mut scoped, w, h, SIXTEEN, &[PanelRect::full(w, h)]);
+        let mut global = ramp(w, h);
+        quantize(&mut global, w, h, SIXTEEN);
+        assert_eq!(scoped, global);
+    }
+
+    /// The claim that makes this worth doing: pixels outside the region
+    /// are bit-for-bit what they would have been with dithering off, so
+    /// no error leaks out of an image and into the text beside it.
+    #[test]
+    fn no_error_escapes_a_region() {
+        let (w, h) = (24u32, 8u32);
+        let region = PanelRect::new(4, 2, 8, 4);
+
+        let mut scoped = ramp(w, h);
+        quantize_regions(&mut scoped, w, h, SIXTEEN, &[region]);
+        let mut plain = ramp(w, h);
+        quantize(&mut plain, w, h, SIXTEEN_FLAT);
+
+        let mut inside_differs = false;
+        for y in 0..h {
+            for x in 0..w {
+                let at = ((y * w + x) * 4) as usize;
+                let within =
+                    x >= region.x && x < region.max_x() && y >= region.y && y < region.max_y();
+                if within {
+                    inside_differs |= scoped[at] != plain[at];
+                } else {
+                    assert_eq!(
+                        scoped[at], plain[at],
+                        "pixel ({x},{y}) is outside {region:?} but the dither reached it"
+                    );
+                }
+            }
+        }
+        assert!(
+            inside_differs,
+            "the region was not actually dithered, so the test proves nothing"
+        );
+    }
+
+    /// Overlapping regions must not dither a pixel twice or leave a strip
+    /// between them unquantized — the two ways a span walk goes wrong.
+    #[test]
+    fn overlapping_regions_still_cover_every_pixel_exactly_once() {
+        let (w, h) = (20u32, 6u32);
+        let regions = [PanelRect::new(2, 1, 8, 4), PanelRect::new(6, 2, 9, 3)];
+        let mut page = ramp(w, h);
+        quantize_regions(&mut page, w, h, SIXTEEN, &regions);
+
+        // Every output pixel must sit on one of the sixteen levels. A
+        // pixel quantized twice, or missed entirely, does not.
+        let step = 255.0 / 15.0;
+        for (i, px) in page.as_chunks::<4>().0.iter().enumerate() {
+            let level = f32::from(px[0]) / step;
+            assert!(
+                (level - level.round()).abs() < 1e-3,
+                "pixel {i} is {} which is not on a level",
+                px[0]
+            );
+            assert_eq!(px[0], px[1]);
+            assert_eq!(px[1], px[2]);
+        }
+    }
+
+    /// A region hanging off the page is clipped, not a panic.
+    #[test]
+    fn a_region_outside_the_page_is_survived() {
+        let (w, h) = (8u32, 4u32);
+        let mut page = ramp(w, h);
+        quantize_regions(
+            &mut page,
+            w,
+            h,
+            SIXTEEN,
+            &[
+                PanelRect::new(6, 3, 99, 99),
+                PanelRect::new(50, 50, 4, 4),
+                PanelRect::default(),
+            ],
+        );
+        let step = 255.0 / 15.0;
+        for px in page.as_chunks::<4>().0 {
+            let level = f32::from(px[0]) / step;
+            assert!((level - level.round()).abs() < 1e-3);
+        }
+    }
+
+    /// `Rgba` still means "do not reduce", regions or not.
+    #[test]
+    fn rgba_is_untouched_by_the_scoped_path_too() {
+        let mut page = flat(120, 4, 4);
+        let before = page.clone();
+        quantize_regions(&mut page, 4, 4, PixelFormat::Rgba, &[PanelRect::full(4, 4)]);
+        assert_eq!(page, before);
     }
 
     #[test]

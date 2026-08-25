@@ -382,11 +382,11 @@ impl FbdevPanel {
             // time — which at two levels is the difference between a
             // photograph and a silhouette.
             //
-            // Dithering the text as well is the cost, and it is the
-            // lesser one: an undithered image here is unreadable, while
-            // diffused error along a glyph's antialiased edge is roughly
-            // what a 1-bit reader looks like anyway. It is also the case
-            // the per-op dither work exists to stop having to choose.
+            // The old cost of asking for it — that the text got dithered
+            // too — is gone: `quantize_regions` diffuses over the images
+            // the display list names and quantizes the rest plainly, so
+            // this asks for diffusion where a photograph needs it without
+            // stippling every glyph's edge to get it.
             format: match encoding {
                 Encoding::Mono { .. } => PixelFormat::Grey {
                     levels: 2,

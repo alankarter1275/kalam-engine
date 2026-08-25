@@ -584,6 +584,54 @@ fn a_prefetch_that_lands_off_screen_asks_for_nothing() {
     );
 }
 
+/// Dithering follows the images, not the page. The display list is the
+/// only thing that still knows which pixels came from a photograph by the
+/// time there are pixels, so it is where the answer has to come from.
+#[test]
+fn dither_regions_name_the_images_and_nothing_else() {
+    let mut s = open_isolated("epub-dither", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+
+    // Find the page that actually carries the image.
+    let m = metrics();
+    for _ in 0..40 {
+        let list = s.frame().expect("frame").list;
+        let images: Vec<_> = list
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                chapbook_reader::chapbook_paint::DisplayOp::Image { dest, .. } => Some(*dest),
+                _ => None,
+            })
+            .collect();
+        let regions = list.dither_regions(1.0);
+        assert_eq!(
+            regions.len(),
+            images.len(),
+            "one region per image op, and no region for anything else"
+        );
+        if let Some(dest) = images.first() {
+            let region = regions[0];
+            // Rounded outward, so the region covers the op rather than
+            // trimming it — a trimmed edge leaves an undithered sliver.
+            assert!(f32::from(region.x as u16) <= dest.min_x() + 1.0);
+            assert!(f32::from(region.max_x() as u16) >= dest.max_x() - 1.0);
+            // And it is a region, not the page.
+            assert!(
+                region.w < m.size.w as u32 || region.h < m.size.h as u32,
+                "{region:?} is the whole page"
+            );
+            return;
+        }
+        if !s.next_page() {
+            break;
+        }
+        render_loaded(&mut s);
+    }
+    panic!("no image op anywhere in the fixture, so this asserts nothing");
+}
+
 #[test]
 fn a_grey_panel_gets_grey_pages() {
     use chapbook_core::PixelFormat;

@@ -58,8 +58,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (fonts, images) = session.paint_resources();
         renderer.render(&frame.list, fonts, images, 1.0, &mut pixmap);
 
-        // Panel policy, exactly as any other backend applies it.
-        chapbook_paint::quantize(pixmap.data_mut(), w, h, info.format);
+        // Panel policy, exactly as any other backend applies it. The
+        // display list says where dithering belongs — over images, not
+        // over text — which is the one part of this a shell cannot work
+        // out from the pixels it was handed.
+        let dithered = frame.list.dither_regions(1.0);
+        chapbook_paint::quantize_regions(pixmap.data_mut(), w, h, info.format, &dithered);
         let rgba = chapbook_paint::rotate(pixmap.data(), w, h, rotation);
 
         let damage = frame
