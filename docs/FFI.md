@@ -350,9 +350,42 @@ as a method on a handle; it needs the source, and it needs to construct
 sessions itself. Worth knowing before the header says otherwise.
 
 Size, for the record: the release `.so` for arm64 with CBZ and PDF built in is
-**15.7 MB**, already stripped by the release profile. In the same country as
-the 18.8 MB fbdev binary, and the same answer applies — feature flags, and
-per-ABI splits so no device downloads two.
+**16.4 MB**, x86_64 **18.5 MB**, and the debug APK carrying both is 35.7 MB.
+In the same country as the 18.8 MB fbdev binary, and the same answer applies —
+feature flags, and per-ABI bundle splits so no device downloads two.
+
+### What rung 3 found
+
+**Everything the engine logs is invisible.** `chapbook-reader` makes eleven
+`eprintln!` calls and the workspace has no `log` or `tracing` facade at all —
+a deliberate scope choice that works fine for a desktop shell and stops
+working at the boundary. "library unavailable", "page N failed to load",
+"resuming at unit N": on Android stderr goes nowhere an app can read. The C
+ABI needs a log sink, and a callback is the cheap version of it.
+
+**Two failure classes that a green build cannot see.** A missing
+`#[link(name = ...)]` and a drifted `external fun` name both produce a
+complete, packaged, installable app that dies on the device — the first at
+`System.loadLibrary`, the second at the first call, because Kotlin and Rust
+never reference each other at compile time. `android/build-jni.sh` now checks
+both after every build. Any real binding wants the same two checks, and a C
+ABI wants a third: that the header and the exported symbols agree.
+
+**The 16 KB page worry comes off the list.** Both `.so` files come out with
+`LOAD` alignment `0x4000` without being asked, so NDK 30 satisfies Android
+15's requirement by default.
+
+**The environment is most of the work.** For the record, since between them
+they cost more than the code did: Gradle needs a JDK and a machine may have
+only a JRE, in which case Gradle's toolchain auto-detection selects an
+installation with no compiler in it and fails before compiling anything;
+Android Studio's bundled JBR does have `javac` but is Java 25, which Gradle
+8.14 refuses; and cargo-ndk 4 changed `-p` from platform to package, so the
+API level is `-P` now. None of this is chapbook's problem, and all of it is
+in the way.
+
+Rung 4 — the conformance harness running on a device — has not been run yet;
+it is waiting on an emulator image.
 
 ### Shape on disk
 
