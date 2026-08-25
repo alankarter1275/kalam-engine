@@ -1,0 +1,170 @@
+chapbook — third-party notices
+==============================
+
+chapbook itself is licensed under either of Apache License 2.0
+(LICENSE-APACHE) or the MIT license (LICENSE-MIT), at your option.
+
+This file is about the *other* code a chapbook binary contains. A source
+checkout of this repository contains none of it — the crates below are
+fetched from crates.io at build time — so this matters when you distribute
+a built binary, not when you clone the repo.
+
+The list is the Linux dependency graph with every feature enabled, which is
+the largest a chapbook build gets: 414 third-party crates, of which 355 are
+plain MIT, plain Apache-2.0, or offer a choice including one of them. The
+remaining 59 are named below, because each carries a term the MIT/Apache
+pair does not.
+
+Nothing here conflicts with releasing chapbook under MIT OR Apache-2.0.
+There is no GPL-, AGPL-, or LGPL-only dependency in the graph.
+
+Regenerating this list, and the caveat
+--------------------------------------
+
+    cargo deny check licenses          # the CI gate; policy in deny.toml
+    cargo tree -e normal --target x86_64-unknown-linux-gnu \
+        --prefix none --format '{l}|{p}' | sort -u
+
+This file is a human-scale summary, not a substitute for shipping license
+texts. MIT and the BSD licenses require the copyright notice and permission
+text to travel with a binary, and reproducing 414 of those here would go
+stale on the first `cargo update`. Generate the full bundle at release time:
+
+    cargo about generate about.hbs > THIRD-PARTY-LICENSES.html
+
+
+Mozilla Public License 2.0
+--------------------------
+
+    app_units            https://github.com/servo/app_units
+    cssparser            https://github.com/servo/rust-cssparser
+    cssparser-macros     https://github.com/servo/rust-cssparser
+    dtoa-short           https://github.com/upsuper/dtoa-short
+    selectors            https://github.com/servo/stylo
+    stylo                https://github.com/servo/stylo
+    stylo_atoms          https://github.com/servo/stylo
+    stylo_derive         https://github.com/servo/stylo
+    stylo_dom            https://github.com/servo/stylo
+    stylo_static_prefs   https://github.com/servo/stylo
+    stylo_traits         https://github.com/servo/stylo
+    to_shmem             https://github.com/servo/stylo
+    to_shmem_derive      https://github.com/servo/stylo
+    uluru                https://github.com/servo/uluru
+
+These are the CSS engine. They are present in *every* chapbook
+configuration, including `chapbook-reader --no-default-features` — stylo is
+not an optional part of the design.
+
+MPL-2.0 is file-level copyleft, and §3.3 explicitly permits combining these
+files into a Larger Work distributed under other terms, which is what
+chapbook does. The obligation that does follow you is §3.2: distributing in
+Executable Form requires that the Source Code Form of the MPL-covered files
+be made available at no charge, with recipients informed of how to get it.
+
+chapbook uses all of the above unmodified, exactly as published on
+crates.io. Their Source Code Form is available from the repositories listed
+above and from crates.io, at no charge, and this notice is where recipients
+of a chapbook binary are informed of that. If you fork chapbook and modify
+any of these crates, that exemption stops applying to your build and you
+must publish your modified files under MPL-2.0.
+
+
+Apache License 2.0 only
+-----------------------
+
+    rbook                EPUB parsing — every configuration
+    unicode-linebreak    line breaking — every configuration
+    ab_glyph             desktop viewer only
+    ab_glyph_rasterizer  desktop viewer only
+    codespan-reporting   desktop viewer only
+    gethostname          desktop viewer only
+    owned_ttf_parser     desktop viewer only
+    spirv                desktop viewer only
+    winit                desktop viewer only
+
+Worth stating plainly, because dual licensing usually reads as "pick MIT and
+you are done": these crates offer no MIT option, so a binary carries
+Apache-2.0's terms — NOTICE preservation (§4.4), the patent grant (§3), and
+the statement-of-changes requirement (§4.2) — regardless of which half of
+chapbook's own dual license you took.
+
+    target-lexicon       Apache-2.0 WITH LLVM-exception (build-time only)
+
+
+BSD licenses
+------------
+
+    tiny-skia            BSD-3-Clause  — the CPU rasterizer
+    tiny-skia-path       BSD-3-Clause
+    subtle               BSD-3-Clause  — with the `opds` feature
+    alloc-no-stdlib      BSD-3-Clause  — with the `opds` feature
+    alloc-stdlib         BSD-3-Clause  — with the `opds` feature
+    brotli               BSD-3-Clause AND MIT — with the `opds` feature
+    brotli-decompressor  BSD-3-Clause OR MIT
+    arrayref             BSD-2-Clause
+    encoding_rs          (Apache-2.0 OR MIT) AND BSD-3-Clause
+    moxcms               BSD-3-Clause OR Apache-2.0
+    pic-scale            BSD-3-Clause OR Apache-2.0
+    pxfm                 BSD-3-Clause OR Apache-2.0
+    zerocopy             BSD-2-Clause OR Apache-2.0 OR MIT
+    zerocopy-derive      BSD-2-Clause OR Apache-2.0 OR MIT
+
+All permissive. The BSD-3-Clause ones add a no-endorsement clause on top of
+the usual attribution: chapbook must not use their authors' names to promote
+itself. Where the expression is an `OR`, chapbook takes the Apache-2.0 or
+MIT option and only the `AND` entries bind additionally.
+
+
+Everything else that needed naming
+----------------------------------
+
+    ICU4X (22 crates)    Unicode-3.0. Permissive; the Unicode data files
+                         carry their own notice, reproduced in each crate.
+
+    ring                 Apache-2.0 AND ISC. Present only with the `opds`
+                         feature (ureq -> rustls). Its LICENSE file is more
+                         precise than the SPDX field: ISC for new code,
+                         Apache-2.0 for the parts derived from BoringSSL,
+                         MIT/Apache-2.0 for a vendored once_cell polyfill.
+                         All permissive.
+
+    webpki-roots         CDLA-Permissive-2.0. Mozilla's CA certificate
+                         bundle, licensed as data rather than as code.
+                         Permissive, with no attribution requirement in 2.0.
+                         Present only with the `opds` feature.
+
+    hexf-parse           CC0-1.0. Desktop viewer only, via wgpu's shader
+                         compiler. A public-domain dedication — note that
+                         CC0 expressly does not grant patent rights, which
+                         some corporate policies treat as a flag.
+
+    self_cell            Apache-2.0 OR GPL-2.0-only, via cosmic-text.
+                         chapbook takes the Apache-2.0 option. This is the
+                         only occurrence of the string "GPL" in the graph
+                         and it is a choice, not an obligation.
+
+    dpi                  Apache-2.0 AND MIT. Desktop viewer only.
+    unicode-ident        (MIT OR Apache-2.0) AND Unicode-3.0.
+    Zlib, ISC, 0BSD      Permissive, attribution only.
+
+
+What is in which build
+----------------------
+
+The obligations scale with what you compile in, which is why
+`chapbook-reader`'s format features are separable:
+
+    chapbook-panel-fbdev alone
+        nothing beyond MIT/Apache-2.0.
+
+    chapbook-reader --no-default-features
+        + MPL-2.0 (stylo), Apache-2.0 (rbook, unicode-linebreak),
+          BSD-3-Clause (tiny-skia), Unicode-3.0 (ICU4X).
+
+    chapbook-reader (default: cbz, pdf, opds)
+        + ring, webpki-roots, brotli, subtle, alloc-*.
+
+    chapbook-viewer / chapbook-viewer-gtk
+        + the winit and wgpu Apache-2.0 set, dpi, hexf-parse.
+
+This is a dependency audit, not legal advice.

@@ -80,6 +80,12 @@ Licensed under either of
 
 at your option.
 
+Dependencies are not uniformly either — the CSS engine is MPL-2.0, the
+rasterizer BSD-3-Clause, the EPUB parser Apache-2.0 only — so distributing
+a **binary** carries terms beyond those two. [NOTICE](NOTICE) says which,
+which builds they apply to, and what each obligates; `deny.toml` is the
+allow-list CI enforces so the set cannot widen unnoticed.
+
 Unless you explicitly state otherwise, any contribution intentionally
 submitted for inclusion in the work by you, as defined in the Apache-2.0
 license, shall be dual licensed as above, without any additional terms or

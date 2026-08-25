@@ -67,6 +67,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
 
+  licenses:
+    # chapbook is MIT OR Apache-2.0, but the graph is not uniformly either —
+    # stylo is MPL-2.0, tiny-skia is BSD-3-Clause, rbook is Apache-2.0 only.
+    # NOTICE records where and why. This job exists so a dependency bump
+    # cannot widen that set without somebody deciding to; the allow-list in
+    # deny.toml is the decision record.
+    name: licenses (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+
   msrv:
     name: build (MSRV 1.92)
     runs-on: ubuntu-latest
