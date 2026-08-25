@@ -444,7 +444,12 @@ PocketBook have *physical page-turn buttons*, which desktop shells never
 exercise.
 
 **Lifecycle and power.** No suspend/resume, no "save state now, you are being
-killed." Mandatory on mobile and e-ink.
+killed." Mandatory on mobile and e-ink. On Apple platforms it also has to
+release file locks, not merely persist — see FFI.md.
+
+**The boundary is not the only thing that assumes a desktop.** Designing it
+surfaced the same assumption in the OPDS transport, the credential store and
+the library's file custody. Those are §7.
 
 **Cross-compilation is proven, except GTK.** CI checks `chapbook-core` and
 `chapbook-panel-fbdev` against armv7 and aarch64, which is what makes the
@@ -505,7 +510,10 @@ them itself. Hyphenation is the proof the category is real: dictionary-based
 - **Bidi correctness** for Arabic/Hebrew — cosmic-text can do it; confirm it
   is exercised and tested rather than assumed.
 - **Accessibility** — no a11y tree export, no screen-reader path. Also a
-  legal requirement in some markets.
+  legal requirement in some markets. §7 turns this from a feature into a
+  scheduling constraint: the display list is the material an a11y tree is
+  built from, so keeping it out of the first C ABI decides that v1 cannot
+  have one.
 
 ## 5. Breadth and sync
 
@@ -529,6 +537,10 @@ cheap given the existing locator design:
 
 For annotation interchange, serialize the W3C EPUB Annotations 1.0 /
 Readium profile (import/export); no sync transport is standardized yet.
+
+The local half is already built, which is easy to miss: `positions` carries
+`updated_at` and the other user tables carry `deleted` soft-delete flags, so
+the schema can answer "what changed since" without migration. See §7.
 
 ## 6. Platform hygiene (closed)
 
@@ -600,14 +612,161 @@ last two record a failure that motivated one.
   left is only what every shell must get right. Its six numbered comments
   are `SHELLS.md`'s five steps plus the loader rule.
 
+## 7. The edges assume a desktop
+
+The iOS assessment in [docs/FFI.md](FFI.md) asked a larger question than the
+FFI: is this engine the right shape to build an Apple app on, or should an
+iOS app lean on Apple's frameworks instead? The answer splits cleanly, and
+the split is the same one §2 found in the constructor.
+
+**The engine is right. The edges are wrong.** Keep the pipeline, the locator
+design, the schema and the format parsers. Push transport, credentials, file
+custody, fonts and accessibility metadata out to the platform. Every item
+below is the same defect §2 named — an environment assumption baked into a
+constructor — and the list there is two entries short.
+
+### The render pipeline earns its place, measured
+
+The obvious substitution is a `WKWebView`, which is what most iOS readers
+are. It loses on the numbers, and it loses worse on locators.
+
+A synthetic twelve-chapter book of dense body text, release build, Apple M2:
+
+| target | device px | first page | repaint | page turn | bitmap |
+|---|---|---|---|---|---|
+| e-ink 800×480 @1x | 800×480 | 56 ms | 0.26 ms | 0.28 ms | 1.5 MB |
+| iPhone 393×852 @2x | 786×1704 | 38 ms | 0.83 ms | 0.84 ms | 5.1 MB |
+| iPhone 393×852 @3x | 1179×2556 | 39 ms | 1.76 ms | 1.79 ms | 11.5 MB |
+| iPad 834×1194 @2x | 1668×2388 | 40 ms | 2.51 ms | 4.33 ms | 15.2 MB |
+
+"First page" is open, parse, cascade, paginate and rasterize together. A page
+turn inside an already-paginated chapter is under 2 ms at iPhone @3x. Assume
+a phone core is three times slower than this one and it is still ~5 ms, for
+work that happens once per gesture rather than once per frame. CPU
+rasterization is not the constraint, and no performance argument for a web
+view survives contact with these numbers.
+
+The argument that actually matters is `LayeredLocator`. A web view's notion
+of where you are is a function of its own line breaking, which moves under
+you when the OS updates. The quote-context, spine-fraction and progression
+record — versioned by `LOCATOR_VERSION`, and the reason §5's sync targets
+are cheap — is what makes a position survive a font change, a rotation and a
+different device. It cannot be rebuilt above a web view; a reader built that
+way spends its life fighting one.
+
+**The honest counterweight,** because this is a ceiling and belongs with the
+others: `chapbook-style` is 421 lines of source over stylo and
+`chapbook-layout` is 3,873. That is a real subset of what publishers ship,
+and a web view gets the long tail — MathML, ruby, broken markup — for free.
+The pipeline is right *for a controlled-typography reader*. It is the wrong
+tool for an app whose job is rendering arbitrary publisher EPUBs faithfully,
+and no amount of FFI work changes that.
+
+### Transport belongs to the host, and it is 273 lines
+
+`chapbook-opds` reaches the network through `ureq` with its own rustls stack
+and `webpki-roots`. On iOS that means bypassing `URLSession`, and the losses
+are not cosmetic:
+
+- **Background transfer.** A large download dies when the app suspends. A
+  background `URLSession` is the only thing that finishes it, and there is no
+  Rust equivalent — the OS continues the transfer, not the process.
+- **System trust.** A bundled root store ignores MDM-installed roots and
+  Apple's revocation policy.
+- **App Transport Security, proxies, per-app VPN, Wi-Fi-only and the
+  cellular-data toggle.** ATS governs `NSURLSession` and CFNetwork, not raw
+  sockets, so the app's declared network posture silently does not cover this
+  traffic.
+
+The same argument gives Android background downloads through WorkManager and
+gives WASM `fetch`, which it has no choice about.
+
+The shape of the fix is already visible in the crate: of 1,727 lines of
+source, `client.rs` is **273**. Everything else — `atom.rs`, `opds2.rs`,
+`pse.rs`, `href.rs` — is format knowledge that should never move. Split the
+client into a parser half and an injected transport trait, and the desktop
+keeps `ureq` as one implementation of it.
+
+**Credentials go with it.** `opds_sources.auth_secret` is plaintext in
+SQLite, and `Session::open` reads `CHAPBOOK_OPDS_USER` and
+`CHAPBOOK_OPDS_PASSWORD` from environment variables that do not exist on a
+phone. Both belong behind an injected credential store, which is Keychain on
+Apple platforms and the same shape as the font source everywhere else.
+
+### Custody: bookmarks, not copies
+
+`Library::import` does `std::fs::read` on the whole file to SHA-1 it, and so
+does `fingerprint_of_file`. For a large CBZ or PDF that is a hundreds-of-
+megabyte spike against a mobile memory limit, for a hash that should stream.
+Small, concrete, and worth fixing on every platform.
+
+The deeper mismatch is that a private directory owning copies of books is a
+desktop idea. iOS users expect books to live in Files or iCloud Drive,
+reached through the document browser and security-scoped bookmarks — visible
+to them, not sealed inside a container, and not duplicated.
+
+The schema already anticipates this: `books` carries `file_path` *and*
+`source_path`, and `import` already writes an empty `file_path` for a book it
+does not copy. So "we hold a record but not the file" is expressible today.
+What is missing is somewhere to persist the bookmark, so a cold launch can
+re-resolve access *before* the session is constructed — see FFI.md on why
+that ordering is not optional.
+
+### Storage stays SQLite, and is already sync-shaped
+
+Bundled SQLite compiles and links for `aarch64-apple-ios`. Replacing it with
+Core Data or SwiftData would make the storage layer unshareable with Linux
+and Android, which is the whole point of having one. Keep it.
+
+Three adjustments, all shell-visible rather than schema-visible: the database
+belongs in `Library/Application Support` rather than the `$HOME` fallback it
+lands in by accident, it needs an explicit backup-exclusion decision, and it
+must not hold file locks across suspension once a share extension or widget
+puts it in a shared container.
+
+Worth recording as a thing that went right: `positions` carries `updated_at`,
+and `books`, `annotations` and `opds_sources` all carry `deleted` soft-delete
+flags. That is the local half of §5's sync story already in place — an iOS
+shell can mirror those tables into CloudKit with no schema change, and sync
+stays a shell concern rather than an engine one.
+
+### Accessibility constrains the FFI's first version
+
+§4 lists accessibility as a feature shells cannot add from outside. iOS
+sharpens it into a scheduling constraint. A rasterized page is opaque to
+VoiceOver: a reader that is a *picture* of text is unusable with a screen
+reader, and a web view would have given that away for free.
+
+Chapbook can do it — `frame()` already returns a display list whose text
+fragments carry locators, which is exactly the material a
+`UIAccessibilityElement` tree needs. But FFI.md's boundary deliberately keeps
+the display list out of the first C ABI. On Android that was defensible. On
+iOS it makes accessibility unimplementable in v1, and adding it after a
+Contract-tier header exists is the expensive order. The selection loupe and
+the edit menu want the same fragment geometry.
+
+**Text identity, two smaller ones.** Nothing reads `UIContentSizeCategory`,
+so Dynamic Type — the accessibility setting Apple users actually change —
+does not reach `adjust_font`. And if the sandbox turns out to block
+`/System/Library/Fonts`, note that the bundled-faces fallback cannot include
+San Francisco: it is licensed for use *on* Apple platforms through the
+system, not for redistribution in an app bundle. The reader would ship an OFL
+face and would not look like an Apple app. That is a product decision, not a
+bug.
+
 ## Priorities
 
 1. **FFI boundary (§3)** — gate on the largest device markets; forces the
    session API into SDK shape, which is also what §2's remaining piece
    (typed sources and injectable I/O instead of `open(&str)`) needs.
-2. **Sync clients (§5)** — belongs to the platform, not to each app, and
+2. **The edges (§7)** — the injected transport, credential store and file
+   custody that the iOS assessment turned up. Sequenced here because it is
+   the same shape work as §2's remaining piece and lands in the same pass,
+   and because the accessibility finding constrains what the first C ABI
+   may leave out.
+3. **Sync clients (§5)** — belongs to the platform, not to each app, and
    annotation interchange rides along.
-3. **Hygiene (§6)** — continuous, never urgent, decides whether any of this
+4. **Hygiene (§6)** — continuous, never urgent, decides whether any of this
    is usable by anyone else.
 
 The render seam (§1) came first and is closed, including the damage

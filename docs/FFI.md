@@ -476,6 +476,15 @@ Rung 1 done, rungs 2-5 not started. This section is the handoff: what a
 session on a Mac can take as settled, what is different from Android, and what
 only a device can answer.
 
+The larger question this raised — whether the engine is the right shape to
+build an Apple app on at all, against leaning on Apple's own frameworks — is
+answered in [PLATFORM.md §7](PLATFORM.md). Short version: the pipeline earns
+its place on measured numbers and on locators, and the *edges* — OPDS
+transport, credentials, file custody — do not. One finding there reaches back
+into this document: accessibility is built from the display list, so keeping
+the display list out of the first C ABI decides that v1 cannot have a
+screen-reader path.
+
 **Most of the defect list is not Android's.** The font source being
 unreachable, the missing generic-family mappings, the absent log seam, the
 unbounded caches, and conformance needing an opener rather than a handle are
