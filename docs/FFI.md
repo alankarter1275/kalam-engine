@@ -240,6 +240,11 @@ Android is where it becomes an OOM kill rather than a slow day.
 
 ## The Android spike
 
+**Where the code is.** `crates/chapbook-jni` and `android/` live on the
+`ffi-spike` branch, not on main, until the spike is worth landing. What
+follows is the findings, which are the part worth keeping either way.
+
+
 Purpose: **discover the API's defects against a real platform before the C
 header freezes them in.** A header designed without having run on the device
 will be wrong, and the Contract tier means it will be wrong for a long time.
