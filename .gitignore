@@ -5,3 +5,12 @@
 # Local tooling config: kept on disk, not published.
 /CLAUDE.md
 /.claude/
+
+# Android spike: machine paths, build output, and the Rust .so cargo-ndk
+# writes into the library module.
+/android/local.properties
+/android/.gradle/
+/android/build/
+/android/*/build/
+/android/chapbook/src/main/jniLibs/
+/android/demo/src/main/assets/
