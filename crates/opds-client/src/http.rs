@@ -17,6 +17,7 @@
 use std::fmt;
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 
 /// One outgoing request. GET is the only method OPDS browsing needs.
 ///
@@ -141,5 +142,24 @@ pub trait HttpClient: Send + Sync {
             HttpError::new(format!("rename to {}: {e}", dest.display()))
         })?;
         Ok(response.status)
+    }
+}
+
+/// A shared transport is a transport.
+///
+/// The reason this exists rather than being an inconvenience the caller
+/// works around: a host that owns its networking owns *one* of it. An iOS
+/// app has a single background `URLSession` whose whole value is that
+/// transfers outlive the process; handing out clones of it is wrong and
+/// handing out a second one is worse. Meanwhile chapbook builds a fresh
+/// `OpdsClient` per authentication attempt, so without this the retry path
+/// would have to construct a second transport to re-send one request.
+impl<T: HttpClient + ?Sized> HttpClient for Arc<T> {
+    fn get(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        (**self).get(request)
+    }
+
+    fn download(&self, request: HttpRequest, dest: &Path) -> Result<u16, HttpError> {
+        (**self).download(request, dest)
     }
 }

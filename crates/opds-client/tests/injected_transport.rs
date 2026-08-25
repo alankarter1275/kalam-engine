@@ -233,6 +233,34 @@ fn a_scheme_this_crate_has_never_heard_of_rides_through_verbatim() {
 }
 
 #[test]
+fn one_transport_serves_several_clients() {
+    // What a host with a single background URLSession needs: two clients
+    // (chapbook builds a fresh one per auth attempt) over one transport,
+    // not two transports.
+    let fake = catalog().requiring_auth();
+    let http: Arc<dyn HttpClient> = Arc::new(fake.clone());
+
+    let anonymous = OpdsClient::new(http.clone());
+    assert!(matches!(
+        anonymous.fetch(&format!("{HOST}/opds/")),
+        Err(OpdsError::AuthRequired(_))
+    ));
+
+    let mut authorized = OpdsClient::new(http.clone());
+    authorized.set_basic_auth("user", "pw");
+    assert_eq!(
+        authorized.fetch(&format!("{HOST}/opds/")).unwrap().title,
+        "Private Shelf"
+    );
+
+    // One recorder saw both requests, so both clients shared one transport.
+    let sent = fake.requests();
+    assert_eq!(sent.len(), 2);
+    assert!(header_of(&sent[0].1, "Authorization").is_none());
+    assert!(header_of(&sent[1].1, "Authorization").is_some());
+}
+
+#[test]
 fn the_default_download_lands_complete_and_leaves_no_temp_file() {
     let dir = scratch("inject");
     let dest = dir.join("b1.epub");

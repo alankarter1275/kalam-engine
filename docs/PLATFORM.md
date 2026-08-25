@@ -705,13 +705,21 @@ a default that streams to a temp file and renames, and it exists to be
 overridden, so a host that owns a background download facility takes the
 whole operation rather than handing back a stream that dies on suspend.
 
-**What is left is one level up.** `chapbook-reader`'s `Session::open` still
-calls `OpdsClient::with_ureq()` outright, so a shell has nowhere to hand its
-own transport down. The seam exists and is tested; reaching it from the
-session needs an injection point, and that is the same argument as the font
-source and the credential store below — a constructor that takes the host's
-capabilities rather than assuming a desktop. Worth doing as one piece rather
-than three.
+**The level up is now done too.** `Session::open_with` takes the transport
+through `SessionConfig`, and `chapbook-reader` grew a `ureq` feature so the
+bundled one can actually be dropped: `--no-default-features --features opds`
+keeps every byte of OPDS parsing and takes ureq, rustls, ring and webpki out
+of the graph — 313 dependency edges to 264. That is the device shape, and
+CI checks it. A build that drops the transport and forgets to supply one
+gets a sentence naming `with_transport`, not a compile error.
+
+Two smaller things fell out of it. `HttpClient` is now implemented for
+`Arc<T>`, because a host owns *one* transport — a single background
+`URLSession` whose whole value is that transfers outlive the process — while
+the session builds a client per authentication attempt. And the credential
+retry finally has a test: a fake transport that rejects the cached token and
+accepts the renewed one drives cached-rejected → `Freshness::Renewed` → one
+retry → success with no socket open, in the no-TLS configuration.
 
 **Credentials have now gone with it — done.** They were the worse half of
 the problem: `opds_sources.auth_secret` was plaintext in SQLite, and
@@ -821,9 +829,10 @@ bug.
 1. **FFI boundary (§3)** — gate on the largest device markets; forces the
    session API into SDK shape, which is also what §2's remaining piece
    (typed sources and injectable I/O instead of `open(&str)`) needs.
-2. **The edges (§7)** — the injected transport and file custody that the
-   iOS assessment turned up. The credential store is done; the transport
-   still needs to reach `Session`, which is the same constructor argument. Sequenced here because it is
+2. **The edges (§7)** — file custody is what remains. The credential store
+   and the transport are both done and both arrive through `SessionConfig`;
+   typed sources and the library directory are the last two capabilities
+   still reached for behind the caller's back. Sequenced here because it is
    the same shape work as §2's remaining piece and lands in the same pass,
    and because the accessibility finding constrains what the first C ABI
    may leave out.

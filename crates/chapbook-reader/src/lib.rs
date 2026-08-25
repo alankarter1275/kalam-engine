@@ -54,6 +54,10 @@ pub use chapbook_paint;
 pub use chapbook_render_tinyskia;
 pub use chapbook_render_tinyskia::tiny_skia;
 pub use cosmic_text;
+// A shell that owns its networking implements this, so it has to be
+// nameable from here — the same rule as the display-list vocabulary above.
+#[cfg(feature = "opds")]
+pub use chapbook_opds::http::{HttpClient, HttpError, HttpRequest, HttpResponse};
 
 /// The open publication. Text units need the concrete EPUB surface
 /// (relative resource resolution, stylesheets) that deliberately isn't on
@@ -300,6 +304,21 @@ pub struct SessionConfig {
     /// a Keychain, or anything at all — a shell says. Desktop shells and
     /// the CLI pass `EnvCredentials`; see `chapbook_core::credential`.
     pub credentials: Arc<dyn CredentialStore>,
+    /// How bytes are fetched. `None` uses `opds-client`'s bundled `ureq`
+    /// transport, which is right for a desktop process and wrong
+    /// everywhere else: a host that reaches the network outside
+    /// `URLSession` gives up background transfer, the system trust store
+    /// and App Transport Security, and a browser has no sockets at all.
+    ///
+    /// Shared rather than owned because a host has *one* of these — a
+    /// single background `URLSession` whose value is that transfers
+    /// outlive the process — and the session builds a client per
+    /// authentication attempt.
+    ///
+    /// Present only with the `opds` feature: without it there is nothing
+    /// to fetch, and the whole TLS stack is out of the build.
+    #[cfg(feature = "opds")]
+    pub transport: Option<Arc<dyn HttpClient>>,
 }
 
 impl SessionConfig {
@@ -307,6 +326,8 @@ impl SessionConfig {
         SessionConfig {
             fonts,
             credentials: Arc::new(NoCredentials),
+            #[cfg(feature = "opds")]
+            transport: None,
         }
     }
 
@@ -314,14 +335,29 @@ impl SessionConfig {
         self.credentials = credentials;
         self
     }
+
+    /// Fetch through the host's networking instead of the bundled `ureq`.
+    #[cfg(feature = "opds")]
+    pub fn with_transport(mut self, transport: Arc<dyn HttpClient>) -> SessionConfig {
+        self.transport = Some(transport);
+        self
+    }
 }
 
 impl std::fmt::Debug for SessionConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionConfig")
-            .field("fonts", &self.fonts)
-            .field("credentials", &"<dyn CredentialStore>")
-            .finish()
+        let mut out = f.debug_struct("SessionConfig");
+        out.field("fonts", &self.fonts)
+            .field("credentials", &"<dyn CredentialStore>");
+        #[cfg(feature = "opds")]
+        out.field(
+            "transport",
+            match &self.transport {
+                Some(_) => &"<dyn HttpClient>",
+                None => &"bundled ureq",
+            },
+        );
+        out.finish()
     }
 }
 
@@ -396,6 +432,8 @@ impl Session {
             // code does not change with the feature set.
             #[cfg_attr(not(feature = "opds"), allow(unused_variables))]
             credentials,
+            #[cfg(feature = "opds")]
+            transport,
         } = config;
         let mut library =
             chapbook_library::Library::open(&chapbook_library::Library::default_dir())
@@ -422,7 +460,22 @@ impl Session {
                 let cache = chapbook_library::Library::default_dir().join("pse-cache");
                 let store = credentials.as_ref();
 
-                let mut client = chapbook_opds::OpdsClient::with_ureq();
+                // One transport, however many clients the auth flow needs.
+                let http: Arc<dyn HttpClient> = match transport {
+                    Some(host) => host,
+                    #[cfg(feature = "ureq")]
+                    None => Arc::new(chapbook_opds::UreqHttp::new()),
+                    #[cfg(not(feature = "ureq"))]
+                    None => {
+                        return Err(chapbook_core::ChapbookError::Network(
+                            "this build has no bundled HTTP transport; pass one with \
+                             SessionConfig::with_transport"
+                                .into(),
+                        ))
+                    }
+                };
+
+                let mut client = chapbook_opds::OpdsClient::new(http.clone());
                 authorize(&mut client, store, key.as_ref(), Freshness::Cached);
                 let opened = chapbook_opds::StreamedComic::open(client, source, &cache);
 
@@ -435,7 +488,7 @@ impl Session {
                 // Document so the shell can do it.
                 let comic = match opened {
                     Err(chapbook_opds::OpdsError::AuthRequired(doc)) => {
-                        let mut retry = chapbook_opds::OpdsClient::with_ureq();
+                        let mut retry = chapbook_opds::OpdsClient::new(http.clone());
                         if !authorize(&mut retry, store, key.as_ref(), Freshness::Renewed) {
                             return Err(chapbook_opds::to_chapbook_error(
                                 chapbook_opds::OpdsError::AuthRequired(doc),

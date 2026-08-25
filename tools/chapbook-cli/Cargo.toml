@@ -25,7 +25,8 @@ image = { workspace = true }
 chapbook-layout = { workspace = true }
 chapbook-paint = { workspace = true }
 chapbook-render-tinyskia = { workspace = true }
-chapbook-opds = { workspace = true }
+# The dev CLI is a desktop process: it wants the bundled transport.
+chapbook-opds = { workspace = true, features = ["ureq"] }
 chapbook-library = { workspace = true }
 clap = { workspace = true }
 cosmic-text = { workspace = true }

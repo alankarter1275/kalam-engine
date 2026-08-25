@@ -62,6 +62,10 @@ jobs:
     # silently between releases. `check` catches it, since what breaks is
     # a `cfg` that stops compiling, and `-D warnings` catches the other
     # half: code that goes dead when a format leaves.
+    #
+    # `opds` without `ureq` is the device shape — OPDS parsing with the
+    # host's own transport and no TLS stack in the build — so it is listed
+    # alongside `opds,ureq` rather than only implied by the default build.
     name: check (chapbook-reader feature matrix)
     runs-on: ubuntu-latest
     strategy:
@@ -71,6 +75,7 @@ jobs:
           - "cbz"
           - "pdf"
           - "opds"
+          - "opds,ureq"
           - "cbz,pdf"
           - "cbz,opds"
           - "pdf,opds"

@@ -37,7 +37,12 @@ chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
 chapbook-render-vello = { path = "crates/chapbook-render-vello" }
 chapbook-panel-fbdev = { path = "crates/chapbook-panel-fbdev" }
-chapbook-opds = { path = "crates/chapbook-opds" }
+# `default-features = false` here so a member can drop the bundled ureq
+# transport: without it on the workspace entry, a member's own
+# `default-features = false` is silently ignored. Members that want the
+# desktop transport enable `chapbook-opds/ureq` through a feature of
+# their own.
+chapbook-opds = { path = "crates/chapbook-opds", default-features = false }
 # Not chapbook-prefixed on purpose: no chapbook dependency, and headed for
 # its own repo. chapbook-opds is the thin binding that keeps it here.
 # Defaults off for the same reason chapbook-reader's are: the bundled ureq

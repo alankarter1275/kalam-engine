@@ -110,10 +110,9 @@ Everything else the constructor implicitly reaches for should come in the
 same way, because each is an environment assumption that only holds on a
 desktop: the library directory (today `CHAPBOOK_LIBRARY_DIR`, or XDG, or
 `$HOME`), the font source, and OPDS credentials. A builder, not eleven
-arguments. Two of those have landed — `FontSource` and
-`chapbook_core::CredentialStore`, the latter reaching `Session` through
-`SessionConfig`, which is that builder in its first form and the thing the
-remaining capabilities get added to rather than a new argument each.
+arguments. `SessionConfig` is that builder, and it already carries the font
+source, `chapbook_core::CredentialStore` and the `HttpClient`; the library
+directory and typed sources are the two fields it still wants.
 
 **Errors.** `ChapbookError` becomes a stable numbered enum, returned as a
 negative `int32_t`, with a per-session "last error message" the host can
@@ -1195,13 +1194,15 @@ cleanup. That is right about the dependency and wrong about the order:
 1. **Spike (throwaway).** Rungs 1–4 above. Output is a list of API defects,
    not code worth keeping.
 2. **Fix the shape, in safe Rust.** Typed sources and a builder, a font
-   source (done), a credential store (done — `SessionConfig` is the builder
-   in its first form), an HTTP transport (`opds-client` takes one; the
-   session still does not pass one down, which is why the credential retry
-   path in `Session::open_with` has no test), `render_into`, a cache budget and
-   `release_caches`, `suspend()`, and the optional `library` feature. The
-   first four are one constructor argument between them, and doing them
-   separately means changing that signature four times. All of it tested in the workspace,
+   source (done), a credential store (done), an HTTP transport (done — and
+   `chapbook-reader`'s new `ureq` feature is what makes dropping rustls and
+   ring reachable from the session rather than only from `opds-client`,
+   which is this document's second NDK prerequisite), typed sources and the
+   library directory (still reached for behind the caller's back),
+   `render_into`, a cache budget and `release_caches`, `suspend()`, and the
+   optional `library` feature. The constructor items are one argument
+   between them — `SessionConfig` is that argument, and the two remaining
+   ones are fields added to it rather than a signature change each. All of it tested in the workspace,
    none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
    by evidence instead of by guessing. The wasm32 CI check lands here, once
    there is something for it to prove.

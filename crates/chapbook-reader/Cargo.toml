@@ -16,7 +16,7 @@ authors.workspace = true
 # third-party crates to 196, and takes the entire TLS stack (rustls, ring,
 # webpki) and the entire PDF stack (hayro plus its JBIG2, JPEG2000, CCITT
 # and PostScript decoders) out of the build.
-default = ["cbz", "pdf", "opds"]
+default = ["cbz", "pdf", "opds", "ureq"]
 # Local CBZ comic archives.
 cbz = ["dep:chapbook-cbz", "_comic", "_image-book"]
 # PDF, rasterized by hayro, with its extracted text layer.
@@ -24,6 +24,14 @@ pdf = ["dep:chapbook-pdf", "_image-book"]
 # OPDS catalogs and OPDS-PSE streamed comics. This is the only feature
 # that brings in networking.
 opds = ["dep:chapbook-opds", "_comic", "_image-book"]
+# The bundled desktop transport, and the only thing that pulls in a TLS
+# stack. `opds` without this is the configuration a host with its own
+# networking wants — iOS `URLSession`, Android `WorkManager`, WASM `fetch` —
+# and it keeps every byte of OPDS parsing while dropping ureq, rustls and
+# ring. Such a build must supply `SessionConfig::with_transport`; there is
+# no bundled fallback left for it to fall back to, and `Session::open_with`
+# says so rather than failing to compile.
+ureq = ["chapbook-opds/ureq"]
 
 # Internal, set by the features above; do not enable directly. They name
 # the two capabilities the session gains, so the `cfg`s below say what they
@@ -41,7 +49,7 @@ chapbook-core = { workspace = true }
 chapbook-epub = { workspace = true }
 chapbook-cbz = { workspace = true, optional = true }
 chapbook-pdf = { workspace = true, optional = true }
-chapbook-opds = { workspace = true, optional = true }
+chapbook-opds = { workspace = true, optional = true, default-features = false }
 chapbook-layout = { workspace = true }
 chapbook-paint = { workspace = true }
 chapbook-library = { workspace = true }
