@@ -83,3 +83,18 @@ fn cover_is_first_page() {
     assert_eq!(cover.media_type, "image/png");
     assert_eq!(cover.data, book.unit_bytes(0).unwrap());
 }
+
+/// Pages named `001` with nothing after them: the extension classifies
+/// nothing, so the media type has to come from the member's own bytes.
+/// Before this the archive opened as "contains no page images" — every
+/// page was a valid PNG and every one was discarded.
+#[test]
+fn pages_without_an_extension_are_found_by_their_bytes() {
+    let book = open("unnamed.cbz");
+    let hrefs: Vec<&str> = book.spine().iter().map(|s| s.href.as_str()).collect();
+    assert_eq!(hrefs, ["001", "002", "003"]);
+    assert!(book.spine().iter().all(|s| s.media_type == "image/png"));
+    // `notes` sniffs to nothing and stays out of the spine.
+    assert_eq!(book.spine().len(), 3);
+    assert!(book.unit_bytes(0).is_ok());
+}

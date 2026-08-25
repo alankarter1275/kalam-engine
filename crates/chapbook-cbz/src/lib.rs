@@ -2,9 +2,9 @@
 //!
 //! A CBZ is a zip of page images with no manifest: reading order is the
 //! natural sort of member names (the ComicRack convention — numeric runs
-//! compare as numbers, so `page2` < `page10`), the media type is guessed
-//! from the extension, and non-image members (macOS resource forks, hidden
-//! files) are skipped. Each image is one spine item; there is no
+//! compare as numbers, so `page2` < `page10`), the media type comes from
+//! the extension or, failing that, from the first bytes of the member, and
+//! non-image members (macOS resource forks, hidden files) are skipped. Each image is one spine item; there is no
 //! within-page text, so locators for comics carry `char_offset = 0` and
 //! live in `spine_index`/progression (see `chapbook_core::locator` on
 //! per-format progression units).
@@ -52,6 +52,25 @@ fn page_media_type(name: &str) -> Option<&'static str> {
         .map(|(_, mt)| *mt)
 }
 
+/// Magic numbers for the same formats, for members the extension cannot
+/// classify. Some archives name their pages `001` with nothing after it,
+/// and a few give an image the wrong extension outright — a zip has no
+/// manifest to correct either, which is why `SpineItem::media_type` has
+/// always said an archive format may have to sniff the bytes.
+fn sniff_media_type(head: &[u8]) -> Option<&'static str> {
+    match head {
+        [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, ..] => Some("image/png"),
+        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+        [b'G', b'I', b'F', b'8', ..] => Some("image/gif"),
+        // RIFF container, four bytes of length, then the form type.
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// The longest prefix any signature above needs.
+const SNIFF_BYTES: usize = 12;
+
 fn is_junk(name: &str) -> bool {
     name.split('/')
         .any(|part| part.starts_with('.') || part.eq_ignore_ascii_case("__MACOSX"))
@@ -83,6 +102,23 @@ fn read_entry(archive: &mut zip::ZipArchive<BufReader<File>>, name: &str) -> Res
     Ok(data)
 }
 
+/// The first [`SNIFF_BYTES`] of a member, decompressed. Cheap even for a
+/// deflated entry: the reader stops as soon as it has them.
+fn read_head(archive: &mut zip::ZipArchive<BufReader<File>>, name: &str) -> Option<Vec<u8>> {
+    let mut entry = archive.by_name(name).ok()?;
+    let mut head = vec![0u8; SNIFF_BYTES];
+    let mut filled = 0;
+    while filled < SNIFF_BYTES {
+        match entry.read(&mut head[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(_) => return None,
+        }
+    }
+    head.truncate(filled);
+    Some(head)
+}
+
 impl ComicBook {
     pub fn open(path: &Path) -> Result<ComicBook> {
         let open_err = |reason: String| ChapbookError::BookOpen {
@@ -93,8 +129,12 @@ impl ComicBook {
         let mut archive = zip::ZipArchive::new(BufReader::new(file))
             .map_err(|e| open_err(format!("not a zip archive: {e}")))?;
 
-        let mut pages: Vec<String> = Vec::new();
+        let mut pages: Vec<(String, &'static str)> = Vec::new();
         let mut sidecar: Option<String> = None;
+        // Members the extension could not classify. Sniffing them needs a
+        // second pass: the name comes from a borrow of the archive, and
+        // reading the bytes needs another.
+        let mut unclassified: Vec<String> = Vec::new();
         for i in 0..archive.len() {
             let entry = archive
                 .by_index_raw(i)
@@ -103,27 +143,35 @@ impl ComicBook {
             if entry.is_dir() || is_junk(&name) || entry.size() == 0 {
                 continue;
             }
-            if page_media_type(&name).is_some() {
-                pages.push(name);
-            } else if is_comic_info(&name)
-                && depth(&name) < sidecar.as_deref().map_or(usize::MAX, depth)
+            match page_media_type(&name) {
+                Some(media_type) => pages.push((name, media_type)),
+                None if is_comic_info(&name) => {
+                    if depth(&name) < sidecar.as_deref().map_or(usize::MAX, depth) {
+                        sidecar = Some(name);
+                    }
+                }
+                None => unclassified.push(name),
+            }
+        }
+        for name in unclassified {
+            if let Some(media_type) = read_head(&mut archive, &name)
+                .as_deref()
+                .and_then(sniff_media_type)
             {
-                sidecar = Some(name);
+                pages.push((name, media_type));
             }
         }
         if pages.is_empty() {
             return Err(open_err("archive contains no page images".into()));
         }
-        pages.sort_by(|a, b| natural_cmp(a, b));
+        pages.sort_by(|(a, _), (b, _)| natural_cmp(a, b));
 
         let spine: Vec<SpineItem> = pages
             .iter()
-            .map(|name| SpineItem {
+            .map(|(name, media_type)| SpineItem {
                 id: name.clone(),
                 href: name.clone(),
-                media_type: page_media_type(name)
-                    .unwrap_or("application/octet-stream")
-                    .into(),
+                media_type: (*media_type).into(),
                 linear: true,
             })
             .collect();
@@ -256,7 +304,7 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::natural_cmp;
+    use super::{natural_cmp, sniff_media_type};
     use std::cmp::Ordering;
 
     #[test]
@@ -266,5 +314,33 @@ mod tests {
         assert_eq!(natural_cmp("ch1/p9.jpg", "ch1/p10.jpg"), Ordering::Less);
         assert_eq!(natural_cmp("a10b2", "a10b10"), Ordering::Less);
         assert_eq!(natural_cmp("cover.png", "page1.png"), Ordering::Less);
+    }
+
+    #[test]
+    fn signatures_classify_the_formats_we_decode() {
+        assert_eq!(
+            sniff_media_type(b"\x89PNG\r\n\x1a\n\0\0\0\r"),
+            Some("image/png")
+        );
+        assert_eq!(
+            sniff_media_type(b"\xff\xd8\xff\xe0JFIF"),
+            Some("image/jpeg")
+        );
+        assert_eq!(sniff_media_type(b"GIF89a..."), Some("image/gif"));
+        assert_eq!(
+            sniff_media_type(b"RIFF\x24\0\0\0WEBPVP8 "),
+            Some("image/webp")
+        );
+    }
+
+    #[test]
+    fn signatures_reject_what_is_not_a_page() {
+        assert_eq!(sniff_media_type(b"just some text"), None);
+        assert_eq!(sniff_media_type(b"<ComicInfo/>"), None);
+        // A RIFF that is not a WebP — a .wav, say — is not a page either.
+        assert_eq!(sniff_media_type(b"RIFF\x24\0\0\0WAVEfmt "), None);
+        // Short reads must not panic or match on a prefix.
+        assert_eq!(sniff_media_type(b""), None);
+        assert_eq!(sniff_media_type(b"\x89PNG"), None);
     }
 }

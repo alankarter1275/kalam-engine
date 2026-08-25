@@ -6,7 +6,9 @@ minimal.cbz  three solid-color pages named to exercise natural sort, junk
              entries readers must skip, and a ComicInfo.xml carrying the
              metadata and page bookmarks a tagged archive has.
 bare.cbz     the same pages with no sidecar at all — the majority of comics
-             in the wild, and the fallback path."""
+             in the wild, and the fallback path.
+unnamed.cbz  pages with no extension to classify them by, plus a non-image
+             member, so page detection has to reach for the bytes."""
 import struct, zlib, zipfile, os
 
 def png(width, height, rgb):
@@ -62,3 +64,9 @@ def build(name, members):
 # Written out of order so reading order must come from sorting.
 build("minimal.cbz", [pages[2], pages[0], sidecar, pages[1], junk[0], junk[1]])
 build("bare.cbz", [pages[2], pages[0], pages[1]])
+build("unnamed.cbz", [
+    ("003", pages[2][1]),
+    ("001", pages[0][1]),
+    ("002", pages[1][1]),
+    ("notes", b"just some text, not a page"),
+])
