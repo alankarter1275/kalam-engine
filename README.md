@@ -17,25 +17,29 @@ not an afterthought bolted onto a scrolling browser.
 
 ## Workspace
 
-| Crate | Role |
-|---|---|
-| `chapbook-core` | Shared primitives: geometry, page metrics, locators, errors |
-| `chapbook-epub` | EPUB container/package/spine/TOC reading |
-| `chapbook-dom` | Arena DOM for XHTML content documents + stylo trait bindings |
-| `chapbook-style` | Cascade driver: stylist, UA sheet, media device |
-| `chapbook-layout` | Pagination-first block + inline layout via cosmic-text |
-| `chapbook-paint` | Format-neutral page model + paint-neutral display list |
-| `chapbook-render-tinyskia` | CPU rasterization backend |
-| `chapbook-render-vello` | GPU rasterization backend (vello + wgpu) |
-| `chapbook-panel-fbdev` | Linux framebuffer panel backend (`/dev/fb0`) |
-| `chapbook-opds` | OPDS 1.2/2.0 catalog client + OPDS-PSE streamed comics |
-| `chapbook-cbz` | CBZ comic-book archive reading |
-| `chapbook-pdf` | PDF reading, rasterized via hayro (pure Rust) |
-| `chapbook-library` | Local bookshelf: metadata, positions, annotations (SQLite) |
-| `chapbook-reader` | Shared reading session (open/layout/navigate/select/persist) |
-| `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) |
-| `chapbook-viewer-gtk` | GTK4 reference viewer |
-| `tools/chapbook-cli` | Dev/test CLI exercising each pipeline stage |
+The **tier** says how much the API is expected to hold still —
+[docs/STABILITY.md](docs/STABILITY.md) explains where the lines fall and
+why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
+
+| Crate | Role | Tier |
+|---|---|---|
+| `chapbook-core` | Shared primitives: geometry, page metrics, locators, errors | Contract |
+| `chapbook-epub` | EPUB container/package/spine/TOC reading | Producer |
+| `chapbook-dom` | Arena DOM for XHTML content documents + stylo trait bindings | Internal |
+| `chapbook-style` | Cascade driver: stylist, UA sheet, media device | Internal |
+| `chapbook-layout` | Pagination-first block + inline layout via cosmic-text | Internal |
+| `chapbook-paint` | Format-neutral page model + paint-neutral display list | Contract |
+| `chapbook-render-tinyskia` | CPU rasterization backend | Backend |
+| `chapbook-render-vello` | GPU rasterization backend (vello + wgpu) | Backend |
+| `chapbook-panel-fbdev` | Linux framebuffer panel backend (`/dev/fb0`) | Backend |
+| `chapbook-opds` | OPDS 1.2/2.0 catalog client + OPDS-PSE streamed comics | API |
+| `chapbook-cbz` | CBZ comic-book archive reading | Producer |
+| `chapbook-pdf` | PDF reading, rasterized via hayro (pure Rust) | Producer |
+| `chapbook-library` | Local bookshelf: metadata, positions, annotations (SQLite) | API |
+| `chapbook-reader` | Shared reading session (open/layout/navigate/select/persist) | API |
+| `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) | Not a library |
+| `chapbook-viewer-gtk` | GTK4 reference viewer | Not a library |
+| `tools/chapbook-cli` | Dev/test CLI exercising each pipeline stage | Not a library |
 
 ## Getting started
 
@@ -107,6 +111,7 @@ units resolved by approximation.
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design: crate boundaries and why they fall where they do |
 | [docs/SHELLS.md](docs/SHELLS.md) | Writing a shell against `Session`: the loop, the loader rule, and the conformance harness |
+| [docs/STABILITY.md](docs/STABILITY.md) | Which crates carry semver discipline, which are internals, and why |
 | [docs/LOCATORS.md](docs/LOCATORS.md) | Reading positions that survive relayout, and EPUB CFI |
 | [docs/OPDS-INTEROP.md](docs/OPDS-INTEROP.md) | What the OPDS client must interoperate with, and how it was verified |
 | [docs/PLATFORM.md](docs/PLATFORM.md) | Porting to real devices: panels, e-ink, cross-compilation, what is proven and what is not |

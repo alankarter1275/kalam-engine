@@ -1,3 +1,6 @@
+//! **Internal to chapbook — no API stability.** Depend on
+//! `chapbook-reader`; see `docs/STABILITY.md`.
+//!
 //! The pagination-first layout engine — chapbook's differentiator.
 //!
 //! Pipeline: styled DOM → fragmentation sidecar cascade (servo-mode stylo

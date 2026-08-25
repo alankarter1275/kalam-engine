@@ -478,14 +478,24 @@ cheap given the existing locator design:
 For annotation interchange, serialize the W3C EPUB Annotations 1.0 /
 Readium profile (import/export); no sync transport is standardized yet.
 
-## 6. Platform hygiene
+## 6. Platform hygiene (closed)
 
 The unglamorous half, and the real distance between "modular codebase" and
-"platform someone else can build on":
+"platform someone else can build on". All five bullets below are now done;
+they are kept rather than deleted because each records a decision, and the
+last two record a failure that motivated one.
 
-- **API stability policy** across fourteen crates: which are public surface
+- **API stability policy** — done: `STABILITY.md` sorts all seventeen
+  workspace members into six tiers. The proposal here was public
   (`core`, `reader`, `library`, `opds`, `paint`) versus internal
-  (`dom`, `style`, `layout`)? Only the former need semver discipline.
+  (`dom`, `style`, `layout`), leaving the render backends, the panel
+  backends and the viewers unplaced. What settled them was asking about
+  blast radius rather than call frequency: `core` and `paint` are
+  *Contract*, because a change to either breaks every shell and every
+  backend at once, including ones outside this repository; the backends
+  are stable in the direction that matters, which is the trait they
+  implement and not the crate implementing it. A test in the CLI crate
+  keeps the document from silently omitting a member.
 - **Feature flags.** Mostly done. `chapbook-reader` now gates `cbz`, `pdf`
   and `opds`, all on by default; a device build turns off what its hardware
   will never open. Measured on the `chapbook-panel-fbdev` `show` example,
@@ -551,6 +561,13 @@ The unglamorous half, and the real distance between "modular codebase" and
 The render seam (§1) came first and is closed; §2 followed and is closed
 apart from session lifecycle and font-family selection. What remains of §1
 — damage for intents other than selection — is an increment, not a gate.
+
+§6 is now closed too, which was the cheapest of the three to underrate:
+feature flags, the stability policy, the shell-author docs, the reference
+minimal shell, and the conformance harness. The harness is the one worth
+singling out — it exists because a shell defect got all the way to real
+hardware past a green suite, and it is the only test here that watches
+the seam from the outside.
 
 ## Ceilings to decide deliberately
 

@@ -1,3 +1,8 @@
+//! **Internal to chapbook — no API stability.** This crate is shaped by
+//! stylo's trait requirements rather than a design of its own, and the
+//! pinned stylo set upgrades all-at-once as a deliberate task that
+//! rewrites it. Depend on `chapbook-reader`; see `docs/STABILITY.md`.
+//!
 //! Arena-based DOM for EPUB XHTML content documents, and (from M2) the
 //! host-side implementations of stylo's DOM traits (`TNode`, `TDocument`,
 //! `TElement`, `selectors::Element`).
