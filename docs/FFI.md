@@ -274,6 +274,8 @@ Present on the dev machine: Android Studio, SDK platform 37.0, build-tools
 sdkmanager --install "ndk;28.2.13676358"
 rustup target add aarch64-linux-android x86_64-linux-android
 cargo install cargo-ndk
+# Gradle needs a compiler, and a JRE is not one — see below.
+sudo apt install openjdk-21-jdk
 ```
 
 NDK 28.2 rather than the newest: it is the current stable line, and it
@@ -377,14 +379,16 @@ ABI wants a third: that the header and the exported symbols agree.
 `LOAD` alignment `0x4000` without being asked, so NDK 30 satisfies Android
 15's requirement by default.
 
-**The environment is most of the work.** For the record, since between them
-they cost more than the code did: Gradle needs a JDK and a machine may have
-only a JRE, in which case Gradle's toolchain auto-detection selects an
-installation with no compiler in it and fails before compiling anything;
-Android Studio's bundled JBR does have `javac` but is Java 25, which Gradle
-8.14 refuses; and cargo-ndk 4 changed `-p` from platform to package, so the
-API level is `-P` now. None of this is chapbook's problem, and all of it is
-in the way.
+**The environment is most of the work.** None of it is chapbook's problem
+and all of it is in the way, so: **Gradle needs a JDK, not a JRE.** With only
+a JRE installed, Gradle's toolchain auto-detection selects an installation
+that has no compiler in it and fails before compiling anything, and the error
+names the toolchain rather than the missing package. Android Studio's bundled
+JBR does have `javac`, but it is Java 25, which Gradle 8.14 refuses — so it
+is not the escape hatch it looks like. Install a JDK (`openjdk-21-jdk` on
+Debian) and nothing else needs configuring: no `JAVA_HOME`, no toolchain
+settings, no entry in `gradle.properties`. Separately, cargo-ndk 4 changed
+`-p` from platform to package, so the API level is `-P` now.
 
 ### What rung 4 found: it conforms
 
