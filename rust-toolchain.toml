@@ -1,3 +1,7 @@
+# Pinned, not floating. `channel = "stable"` meant a Rust release could turn
+# the repo red with no commit — 1.98 added `clippy::chunks_exact_to_as_chunks`
+# and did exactly that. Bump this deliberately, the way the stylo pins work,
+# and keep `RUST_PIN` in .github/workflows/ci.yml in lockstep.
 [toolchain]
-channel = "stable"
+channel = "1.98.0"
 components = ["rustfmt", "clippy"]

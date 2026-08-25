@@ -8,10 +8,16 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # The toolchain is pinned, not floating: `@stable` let a Rust release turn
+  # the repo red with no commit, and 1.98 did. Keep in lockstep with
+  # rust-toolchain.toml, which is what cargo actually obeys here — the action
+  # only sets rustup's *default*, and a toolchain file outranks the default.
+  RUST_PIN: "1.98.0"
+  MSRV: "1.92"
 
 jobs:
   check:
-    name: fmt + clippy + test (stable)
+    name: fmt + clippy + test (pinned stable)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -20,8 +26,9 @@ jobs:
       # but no GTK. Everything else builds from source — sqlite is bundled,
       # fontconfig is the pure-Rust parser.
       - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_PIN }}
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
@@ -39,8 +46,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_PIN }}
           targets: armv7-unknown-linux-gnueabihf, aarch64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-core -p chapbook-panel-fbdev --target armv7-unknown-linux-gnueabihf
@@ -68,7 +76,9 @@ jobs:
           - "pdf,opds"
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
 
@@ -94,6 +104,11 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.92"
+          toolchain: ${{ env.MSRV }}
       - uses: Swatinem/rust-cache@v2
+      # RUSTUP_TOOLCHAIN, not just the installed default: rust-toolchain.toml
+      # outranks `rustup default`, so without this the job silently rebuilt on
+      # the pinned stable and proved nothing about the MSRV.
       - run: cargo build --workspace
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.MSRV }}

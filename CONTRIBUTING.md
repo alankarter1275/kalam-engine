@@ -20,6 +20,21 @@ cargo deny check licenses                # see NOTICE
 
 Prerequisites are in the [README](README.md#getting-started).
 
+The gate only means something on the pinned toolchain. `rust-toolchain.toml`
+names an exact version and CI installs the same one, so `cargo` in this
+directory picks it up with no action on your part — that is the point of
+pinning rather than tracking `stable`. Running these commands under some
+*other* compiler and reporting green is not running the gate: a clippy lint
+that ships in a later release fails CI on code your run called clean. Bumping
+the pin is a deliberate change, like the stylo pins, and the two places that
+carry the version (`rust-toolchain.toml` and `RUST_PIN` in
+`.github/workflows/ci.yml`) move together.
+
+One more trap worth naming: clippy stops at the first crate that fails, so
+the errors in a CI log are a prefix of the problem, not the whole of it. When
+a new lint lands, sweep the workspace with `grep` for the pattern instead of
+fixing what the log happened to reach.
+
 Two kinds of golden test, with different update paths. Render goldens are
 byte-exact PNGs; regenerate them deliberately with
 `UPDATE_RENDER_GOLDENS=1 cargo test -p <crate>` and eyeball the diff before
@@ -40,7 +55,10 @@ These are not style preferences. Each one has cost somebody a day.
   with `=` and upgrade all at once, as a deliberate task — Blitz's diff is
   the migration guide. `html5ever`/`markup5ever`/`xml5ever` must match the
   markup5ever minor that stylo's selector types use. Never bump one alone.
-- **MSRV 1.92, stable toolchain.** No nightly features.
+- **MSRV 1.92, pinned stable toolchain.** No nightly features. The MSRV
+  job builds under `RUSTUP_TOOLCHAIN`, not just an installed default,
+  because `rust-toolchain.toml` outranks `rustup default` — without it
+  the job rebuilds on the pinned stable and proves nothing.
 - **No async runtime.** OPDS is blocking `ureq`; the page loader is a plain
   thread.
 - **Core stays GPU-assumption-free**, so it can port to e-ink.
