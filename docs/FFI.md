@@ -450,6 +450,82 @@ all-formats fbdev `show` binary is 18.8 MB on aarch64 Linux, and the `.so`
 will not be smaller — but it is unmeasured here, and the answers when it
 matters are the existing feature flags and per-ABI bundle splits.
 
+## The iOS spike
+
+Not started. This section is the handoff: what a session on a Mac can take as
+settled, what is different from Android, and what only a device can answer.
+
+**Most of the defect list is not Android's.** The font source being
+unreachable, the missing generic-family mappings, the absent log seam, the
+unbounded caches, and conformance needing an opener rather than a handle are
+all properties of `chapbook-reader`, found on Android and true everywhere.
+iOS should confirm them in passing, not rediscover them.
+
+**The dependency graph is identical to Linux's.** `cargo tree --target
+aarch64-apple-ios` resolves to the same 200 crates as x86_64 Linux, with
+nothing added and nothing dropped, so there are no iOS-only dependencies and
+no new licence surface to weigh. (Android is 198: it loses `fontconfig-parser`
+and `roxmltree`, for the reason below.)
+
+**fontdb has no iOS branch at all, and that is worse than Android's problem.**
+There is not one `target_os = "ios"` in the crate. iOS is `unix` and is
+neither `macos` nor `android`, so it falls into the branch marked *Linux* and
+goes looking for `/usr/share/fonts/`, `/usr/local/share/fonts/`,
+`$HOME/.fonts` and `$HOME/.local/share/fonts` — and, with the `fontconfig`
+feature on as it is here, for `/etc/fonts/fonts.conf` first. None of that
+exists on iOS. The result is the same empty database Android gets, reached by
+a path that believes it is on a desktop, plus two crates of dead weight
+compiled in to parse a config file that cannot be there. Whether
+`/System/Library/Fonts` can be read from inside the sandbox is the first thing
+to check on a device; if it cannot, the answer is CoreText enumeration or
+bundled faces, and either way `FontSource` earns its place again.
+
+**The library directory accidentally works, in the wrong place.**
+`Library::default_dir()` falls back to `$HOME/.local/share/chapbook`, and iOS
+*does* set `HOME`, to the app's container. So unlike Android it needs no
+environment variable to function — it just puts the database somewhere Apple
+would not, outside `Library/Application Support`, with the backup and
+purgeability implications that carry. Working by accident is worth noticing
+precisely because it will not raise an error.
+
+**iOS is the more honest test of the C ABI.** Android went through JNI, which
+is a layer of its own with its own conventions; Swift consumes a C header
+directly, so there is no equivalent cushion. That makes this spike a better
+proof of the boundary and a worse place to be sloppy about it.
+
+The same discipline applies as on Android, and for the same reason: **do not
+call the spike crate the C ABI crate.** It will contain `extern "C"`
+functions because it has no choice, but a header generated and depended on
+before the shape is fixed is exactly the freeze this document exists to
+avoid. Name it a spike, keep cbindgen out of it, and throw it away.
+
+### What only a Mac can answer
+
+- Does bundled SQLite compile and run under the iOS sandbox, and does
+  `ring` build for `aarch64-apple-ios`? Both are Xcode-clang questions that
+  Android answered in its own terms and neither answer transfers.
+- Static or dynamic: a `staticlib` plus a module map is the simple path, an
+  XCFramework the packaged one. Android's `cdylib` shape does not decide it.
+- The pixel path. A `CGBitmapContext` with `kCGImageAlphaPremultipliedLast`
+  and `kCGBitmapByteOrder32Big` should be premultiplied RGBA and therefore a
+  straight `memcpy`, exactly as `AndroidBitmap_lockPixels` turned out to be —
+  but run the same test that settled it there, which is the sepia theme and
+  not black text, because black on white cannot tell RGBA from BGRA.
+- Whether `/System/Library/Fonts` is readable from a sandboxed app.
+- Simulator versus device. Android's rungs ran on an x86_64 emulator and
+  therefore proved nothing about arm64 silicon; a Mac can close that gap for
+  Apple and, with a physical Android device, for Android too.
+
+### The ladder, again
+
+1. It builds: `cargo build --target aarch64-apple-ios-sim` and `-ios`.
+2. It binds: a spike crate of `extern "C"` functions, hand-declared in Swift.
+3. It draws: `render_into` a `CGBitmapContext`, tap zones, sepia for the
+   channel check.
+4. It conforms: the harness, on a simulator and then on a device.
+5. It takes a security-scoped bookmark — the iOS twin of Android's content
+   URI, and the other half of the argument for typed sources.
+
 ## Sequencing
 
 PLATFORM's priority list puts the FFI first because it forces the §2
