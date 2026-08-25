@@ -398,10 +398,14 @@ pub fn opds_get(url: &str, out: &Path) -> Result<String> {
     Ok(format!("downloaded {} ({size} bytes)\n", out.display()))
 }
 
-pub fn lib_import(epub: &Path) -> Result<String> {
-    let book = Book::open(epub)?;
+/// Import any publication. The library was built format-agnostic — it
+/// takes a `BookMetadata` and keeps the source extension so the format can
+/// be sniffed on reopen — but this entry point opened everything as an
+/// EPUB, so importing a comic died inside the zip reader.
+pub fn lib_import(book_path: &Path) -> Result<String> {
+    let book = open_publication(book_path)?;
     let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
-    let id = lib.import(epub, book.metadata())?;
+    let id = lib.import(book_path, book.metadata())?;
     let record = lib.book(id)?.expect("just imported");
     Ok(format!(
         "imported #{} \"{}\" ({} authors, {} spine items)\n",
@@ -416,7 +420,7 @@ pub fn lib_ls() -> Result<String> {
     let lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
     let books = lib.books(None)?;
     if books.is_empty() {
-        return Ok("library is empty — chapbook lib import <book.epub>\n".into());
+        return Ok("library is empty — chapbook lib import <book>\n".into());
     }
     let mut out = String::new();
     for book in books {

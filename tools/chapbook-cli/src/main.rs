@@ -90,8 +90,8 @@ enum OpdsCommand {
 
 #[derive(Subcommand)]
 enum LibCommand {
-    /// Import an EPUB into the library
-    Import { epub: PathBuf },
+    /// Import a book into the library
+    Import { book: PathBuf },
     /// List library contents
     Ls,
 }
@@ -140,7 +140,7 @@ fn main() -> ExitCode {
             OpdsCommand::Get { url, out } => print(commands::opds_get(&url, &out)),
         },
         Command::Lib { command } => match command {
-            LibCommand::Import { epub } => print(commands::lib_import(&epub)),
+            LibCommand::Import { book } => print(commands::lib_import(&book)),
             LibCommand::Ls => print(commands::lib_ls()),
         },
     }
