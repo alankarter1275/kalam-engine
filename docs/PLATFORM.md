@@ -76,10 +76,27 @@ Damage accumulates *independently* of that ordering. Intent answers how
 disturbing a change is; damage answers where it is; and tying the second to
 the first meant a highlight discarded the region a live selection had
 already named, repainting the whole page to add a mark to two lines.
-Selections and highlights both state their region now, the frame reports
-the union, and `None` — the whole page, always correct and sometimes
-pessimistic — is reserved for changes that genuinely cannot say where they
-went.
+Selections, highlights and landed page images all state their region now,
+the frame reports the union, and `None` — the whole page, always correct
+and sometimes pessimistic — is reserved for changes that genuinely cannot
+say where they went. Three of them can't: a page turn, a unit change and a
+reflow each replace the page. The footer case this section used to
+imagine — a turn that moves only the running head — does not arise,
+because the engine paints no page furniture at all; there is no header,
+no footer and no page number in a `DisplayList`, so nothing survives a
+turn to be damaged around.
+
+The general answer would be to diff consecutive display lists and damage
+only the ops that differ. It is deliberately not taken: glyph ink extents
+are not in the list — a `GlyphRun` carries advances, not bounds — so a
+diff-derived rect could under-cover and leave stale pixels on a panel,
+which is the one failure mode damage must not have.
+
+The larger win was the opposite of stating a region: *not* reporting a
+change. A prefetched unit landing used to raise `ContentArrived`, which
+on e-ink spent a full-page Quality update to show a page that had not
+moved. `poll_loaded` now answers "did the page on screen change", and
+prefetches land silently.
 
 Panel colour is pipeline policy rather than per-shell improvisation:
 `PixelFormat::Grey { levels, dither }` quantizes luminance to a panel's
@@ -558,9 +575,9 @@ last two record a failure that motivated one.
 3. **Hygiene (§6)** — continuous, never urgent, decides whether any of this
    is usable by anyone else.
 
-The render seam (§1) came first and is closed; §2 followed and is closed
-apart from session lifecycle and font-family selection. What remains of §1
-— damage for intents other than selection — is an increment, not a gate.
+The render seam (§1) came first and is closed, including the damage
+increment that was its last remainder; §2 followed and is closed apart
+from session lifecycle and font-family selection.
 
 §6 is now closed too, which was the cheapest of the three to underrate:
 feature flags, the stability policy, the shell-author docs, the reference

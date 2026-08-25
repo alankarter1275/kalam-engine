@@ -153,7 +153,8 @@ already in panel orientation and the panel's colour depth.
 - `intent` — a `FrameIntent` saying what changed.
 - `damage` — `Option<Rect>`, the region the change disturbs, or `None`
   meaning "assume the whole page", which is always correct and sometimes
-  wasteful.
+  wasteful. Selections, highlights and a landed page image state a region;
+  a turn, a unit change and a reflow replace the page and say so.
 
 Glyph runs name faces in the session's font database and `Image` ops carry
 keys, not pixels, so a shell rasterizing for itself also needs
@@ -224,8 +225,11 @@ if session.poll_loaded() {
 ```
 
 `poll_loaded` drains finished loads into the caches and returns whether
-anything arrived. `has_pending_loads()` says whether any are still in
-flight, which is what a placeholder page is telling the reader about. A
+**the page on screen changed**. A prefetched unit landing does not count:
+nothing the reader can see moved, and treating it as a change costs a
+full-page panel update. `has_pending_loads()` says whether any loads are
+still in flight, which is what a placeholder page is telling the reader
+about. A
 shell with no thread-safe wakeup can poll `has_pending_loads` instead of
 installing a waker; a shell that does neither shows placeholders forever.
 

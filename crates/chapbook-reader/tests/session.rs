@@ -509,22 +509,79 @@ fn a_change_that_cannot_name_its_region_repaints_everything() {
 }
 
 #[test]
-fn a_landed_page_load_is_its_own_intent() {
+fn a_landed_page_load_is_its_own_intent_and_states_its_region() {
     use chapbook_reader::chapbook_paint::FrameIntent;
 
     let mut s = open_isolated("cbz-intent", &fixture("cbz/minimal.cbz"));
     s.set_metrics(metrics());
-    render_loaded(&mut s);
-    // Drive one more unit's load and catch the frame it produces.
-    s.next_unit();
-    s.frame();
+    // The first frame is the placeholder, and asking for it is what
+    // queues the unit.
+    s.frame().expect("placeholder frame");
     for _ in 0..200 {
         if s.poll_loaded() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
-    assert_eq!(s.frame().unwrap().intent, FrameIntent::ContentArrived);
+    let frame = s.frame().expect("frame once the page landed");
+    assert_eq!(frame.intent, FrameIntent::ContentArrived);
+
+    // A page image is letterboxed into the content box, so the pixels the
+    // placeholder painted around it did not change — and the frame says
+    // so instead of claiming the whole page.
+    let damage = frame
+        .damage
+        .expect("a landed image knows exactly where it went");
+    let m = metrics();
+    let page = chapbook_core::Rect::new(0.0, 0.0, m.size.w, m.size.h);
+    assert!(page.contains_rect(&damage), "{damage:?} escaped {page:?}");
+    assert!(
+        damage.size.w < m.size.w || damage.size.h < m.size.h,
+        "{damage:?} is the whole page, which is what stating a region was \
+         supposed to avoid"
+    );
+}
+
+/// The other half: a unit landing that the reader cannot see must not ask
+/// for anything at all. Prefetches land constantly, and treating each one
+/// as a change cost a full-page panel update — on e-ink, a visible flash
+/// of a page that had not moved.
+#[test]
+fn a_prefetch_that_lands_off_screen_asks_for_nothing() {
+    use chapbook_reader::chapbook_paint::FrameIntent;
+
+    let mut s = open_isolated("cbz-prefetch", &fixture("cbz/minimal.cbz"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+
+    // Move to a unit that is already decoded. Laying it out prefetches the
+    // one after it, which is the load this test watches.
+    s.next_unit();
+    let _ = s.page_count();
+    s.frame().expect("frame for the unit change");
+    assert!(
+        s.has_pending_loads(),
+        "expected the next unit to be prefetching"
+    );
+
+    let mut reported = false;
+    for _ in 0..400 {
+        reported |= s.poll_loaded();
+        if !s.has_pending_loads() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!s.has_pending_loads(), "the prefetch never landed");
+    assert!(
+        !reported,
+        "poll_loaded asked for a redraw for a unit that is not on screen"
+    );
+    assert_eq!(
+        s.frame().expect("frame").intent,
+        FrameIntent::Repaint,
+        "an off-screen prefetch left a change record behind"
+    );
 }
 
 #[test]

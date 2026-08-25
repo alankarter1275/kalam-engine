@@ -475,7 +475,7 @@ impl Session {
     }
 
     /// Drain finished background loads into the caches; returns true when
-    /// anything arrived (the shell should redraw).
+    /// the page on screen changed and the shell should redraw.
     ///
     /// Always false in a build with no format that loads units in the
     /// background — the signature stays put so shells compile unchanged.
@@ -485,16 +485,21 @@ impl Session {
     }
 
     /// Drain finished background loads into the caches; returns true when
-    /// anything arrived (the shell should redraw).
+    /// the page on screen changed and the shell should redraw.
+    ///
+    /// A prefetched unit landing is *not* that. It changes nothing the
+    /// reader can see, and saying otherwise cost a full-page panel update
+    /// per prefetch — on e-ink, a visible flash of a page that did not
+    /// move.
     #[cfg(feature = "_image-book")]
     pub fn poll_loaded(&mut self) -> bool {
         let Some(loader) = self.loader.as_mut() else {
             return false;
         };
         let results = loader.drain();
-        let mut any = false;
+        let mut visible = false;
         for (spine, result) in results {
-            any = true;
+            visible |= spine == self.spine;
             match result {
                 Ok(unit) => {
                     let DecodedUnit {
@@ -529,10 +534,24 @@ impl Session {
                 self.layouts.remove(&spine);
             }
         }
-        if any {
-            self.mark(FrameIntent::ContentArrived);
+        if visible {
+            // The region is exactly where the image was placed: a page
+            // image is letterboxed into the content box, so the ground
+            // around it is the same ground the placeholder painted. A unit
+            // that failed to load has no fragment to point at, and takes
+            // the whole page.
+            let spine = self.spine;
+            let placed = self
+                .layout_unit(spine)
+                .and_then(|layout| layout.pages.first())
+                .and_then(|page| page.fragments.first())
+                .map(|fragment| fragment.rect);
+            match placed {
+                Some(rect) => self.mark_rect(FrameIntent::ContentArrived, rect),
+                None => self.mark(FrameIntent::ContentArrived),
+            }
         }
-        any
+        visible
     }
 
     /// Whether background loads are in flight (placeholder pages showing).
@@ -1417,13 +1436,21 @@ impl Session {
     /// region just because `Annotation` outranks `Selection` — both name
     /// where they changed, so the frame reports the union of the two.
     fn mark_range(&mut self, intent: FrameIntent, start: u32, end: u32) {
+        match self.range_damage(start, end) {
+            Some(region) => self.mark_rect(intent, region),
+            // The range is on another page, so it disturbs nothing here —
+            // which is a stated region of nothing, not an unstated one.
+            None => self.pending = self.pending.max(intent),
+        }
+    }
+
+    /// Record a change confined to a region the engine already knows in
+    /// page coordinates, rather than one it has to derive from locators.
+    fn mark_rect(&mut self, intent: FrameIntent, region: Rect) {
         self.pending = self.pending.max(intent);
         if self.pending_damage.unstated {
             return;
         }
-        let Some(region) = self.range_damage(start, end) else {
-            return;
-        };
         self.pending_damage.region = Some(match self.pending_damage.region {
             Some(existing) => existing.union(&region),
             None => region,
