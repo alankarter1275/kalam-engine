@@ -195,7 +195,7 @@ fn draw_image(pixmap: &mut Pixmap, images: &ImageStore, resource: u64, dest: &Re
     };
     // Premultiply straight RGBA for tiny-skia.
     let mut data = stored.rgba.clone();
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0 {
         let a = u16::from(px[3]);
         px[0] = (u16::from(px[0]) * a / 255) as u8;
         px[1] = (u16::from(px[1]) * a / 255) as u8;

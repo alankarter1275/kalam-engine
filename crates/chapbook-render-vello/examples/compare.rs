@@ -104,7 +104,7 @@ fn main() {
 
         let bounds = |rgba: &[u8], w: u32| {
             let (mut first, mut last) = (None, None);
-            for (i, px) in rgba.chunks_exact(4).enumerate() {
+            for (i, px) in rgba.as_chunks::<4>().0.iter().enumerate() {
                 if px[0] < 200 {
                     let y = (i as u32 / w) as i32;
                     first.get_or_insert(y);
@@ -143,14 +143,20 @@ fn main() {
     pixmap.data_mut().copy_from_slice(&gpu.rgba);
     pixmap.save_png(format!("{out}/gpu.png")).unwrap();
 
-    let dark = |rgba: &[u8]| rgba.chunks_exact(4).filter(|px| px[0] < 128).count();
+    let dark = |rgba: &[u8]| {
+        rgba.as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|px| px[0] < 128)
+            .count()
+    };
     println!("ops {ops}, glyph runs {glyph_runs}, glyphs {glyphs}");
     println!("cpu dark pixels: {}", dark(cpu.data()));
     println!("gpu dark pixels: {}", dark(&gpu.rgba));
 
     let centroid = |rgba: &[u8], w: u32| {
         let (mut m, mut mx, mut my) = (0.0f64, 0.0f64, 0.0f64);
-        for (i, px) in rgba.chunks_exact(4).enumerate() {
+        for (i, px) in rgba.as_chunks::<4>().0.iter().enumerate() {
             let lum =
                 (0.2126 * f32::from(px[0]) + 0.7152 * f32::from(px[1]) + 0.0722 * f32::from(px[2]))
                     / 255.0;
@@ -171,7 +177,7 @@ fn main() {
     // Where do they disagree? Per-row darkness difference, worst first.
     let row_mass = |rgba: &[u8], w: u32, h: u32| {
         let mut rows = vec![0.0f64; h as usize];
-        for (i, px) in rgba.chunks_exact(4).enumerate() {
+        for (i, px) in rgba.as_chunks::<4>().0.iter().enumerate() {
             let lum =
                 (0.2126 * f32::from(px[0]) + 0.7152 * f32::from(px[1]) + 0.0722 * f32::from(px[2]))
                     / 255.0;

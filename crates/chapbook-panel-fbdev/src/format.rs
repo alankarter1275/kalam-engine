@@ -288,7 +288,7 @@ mod tests {
         let mut dst = vec![0u8; 4 * 2 * 2];
         let rgba = [0xFFu8, 0x00, 0x00, 0xFF].repeat(4 * 2);
         blit_into(&mut dst, &layout, &rgba, 4, PanelRect::new(0, 0, 4, 2));
-        for pixel in dst.chunks_exact(2) {
+        for pixel in dst.as_chunks::<2>().0 {
             assert_eq!(read_pixel(pixel), 0xF800);
         }
     }

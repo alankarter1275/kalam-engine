@@ -541,7 +541,7 @@ fn a_grey_panel_gets_grey_pages() {
     });
     let grey = s.render().expect("page renders");
     assert_ne!(color.data(), grey.data(), "the panel format reached render");
-    for px in grey.data().chunks_exact(4) {
+    for px in grey.data().as_chunks::<4>().0 {
         assert!(px[0] == 0 || px[0] == 255, "not 1-bit: {}", px[0]);
         assert_eq!((px[1], px[2]), (px[0], px[0]), "grey");
     }

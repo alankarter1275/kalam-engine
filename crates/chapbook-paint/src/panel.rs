@@ -46,7 +46,7 @@ pub fn quantize(rgba: &mut [u8], width: u32, height: u32, format: PixelFormat) {
         // two error rows, and in particular not the clear-per-row that
         // keeping them costs, which is a second full-width pass over every
         // row of the page to zero values nothing will read.
-        for px in rgba.chunks_exact_mut(4).take(w * h) {
+        for px in rgba.as_chunks_mut::<4>().0.iter_mut().take(w * h) {
             let value = ((luminance(px) / step).round().clamp(0.0, top) * step) as u8;
             px[0] = value;
             px[1] = value;
@@ -87,7 +87,7 @@ pub fn quantize(rgba: &mut [u8], width: u32, height: u32, format: PixelFormat) {
     let mut error = vec![0.0f32; w + 2];
     let mut next = vec![0.0f32; w + 2];
     for row in rgba.chunks_exact_mut(w * 4).take(h) {
-        for (x, px) in row.chunks_exact_mut(4).enumerate() {
+        for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let lum = luminance(px) + error[x + 1];
             let quantized = (lum / step).round().clamp(0.0, top) * step;
             let value = quantized as u8;
@@ -162,7 +162,12 @@ mod tests {
     }
 
     fn mean(rgba: &[u8]) -> f32 {
-        let total: f32 = rgba.chunks_exact(4).map(|px| f32::from(px[0])).sum();
+        let total: f32 = rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|px| f32::from(px[0]))
+            .sum();
         total / (rgba.len() / 4) as f32
     }
 
@@ -223,7 +228,7 @@ mod tests {
                 dither: true,
             },
         );
-        for px in page.chunks_exact(4) {
+        for px in page.as_chunks::<4>().0 {
             assert!(px[0] == 0 || px[0] == 255, "not 1-bit: {}", px[0]);
             assert_eq!((px[1], px[2]), (px[0], px[0]), "grey");
             assert_eq!(px[3], 255, "alpha survives");
@@ -283,7 +288,7 @@ mod tests {
             },
         );
         let step = 255.0 / 15.0;
-        for px in page.chunks_exact(4) {
+        for px in page.as_chunks::<4>().0 {
             let level = f32::from(px[0]) / step;
             assert!(
                 (level - level.round()).abs() < 0.01,
@@ -313,7 +318,7 @@ mod tests {
                     dither: false,
                 },
             );
-            let mut seen: Vec<u8> = page.chunks_exact(4).map(|px| px[0]).collect();
+            let mut seen: Vec<u8> = page.as_chunks::<4>().0.iter().map(|px| px[0]).collect();
             seen.sort_unstable();
             seen.dedup();
             seen.len()
@@ -338,7 +343,10 @@ mod tests {
                 },
             );
             assert!(
-                page.chunks_exact(4).all(|px| px[0] == 0 || px[0] == 255),
+                page.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|px| px[0] == 0 || px[0] == 255),
                 "levels {levels} produced something other than black and white"
             );
         }

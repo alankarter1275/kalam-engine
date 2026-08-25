@@ -16,8 +16,10 @@ pub(crate) fn text_string(bytes: &[u8]) -> String {
             // UTF-16BE. An odd trailing byte is malformed; drop it rather
             // than lose the whole title.
             char::decode_utf16(
-                rest.chunks_exact(2)
-                    .map(|p| u16::from_be_bytes([p[0], p[1]])),
+                rest.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|p| u16::from_be_bytes(*p)),
             )
             .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
             .collect()
