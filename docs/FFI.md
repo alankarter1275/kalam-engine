@@ -108,6 +108,15 @@ negative `int32_t`, with a per-session "last error message" the host can
 fetch for the human-readable half. Codes are the contract; strings are for
 logs and are explicitly not stable.
 
+**Panics are part of the error contract, and were missing from it.** A panic
+unwinding out of an `extern "C"` function is undefined behaviour, and under
+`panic = "abort"` it is a process kill the host cannot observe, report or
+attribute. So every entry point wraps its body in `catch_unwind` and maps a
+caught panic to a reserved code — one code, because a panic is a bug here and
+not a condition worth enumerating. This belongs with the shape rather than
+with the header: it constrains how each function is written, and retrofitting
+it after a Contract-tier header exists means touching every function at once.
+
 **Strings and buffers.** Caller allocates, callee fills, callee reports the
 length it needed:
 
@@ -122,7 +131,7 @@ the wrong allocator. Nothing crosses the boundary owned.
 
 **Pixels.** `Session::render()` allocates and returns a `Pixmap`. Every
 host platform already owns the buffer it wants drawn into: Android's
-`AndroidBitmap_lockPixels`, iOS's `CGContext`, the `Uint8ClampedArray`
+`AndroidBitmap_lockPixels`, iOS's `CGBitmapContext`, the `Uint8ClampedArray`
 behind a WASM `ImageData`. So the engine wants
 
 ```rust
@@ -130,8 +139,16 @@ pub fn render_into(&mut self, dst: &mut [u8], width: u32, height: u32, stride: u
 ```
 
 with today's `render()` kept as the wrapper that allocates. This is a real
-change to the engine, not a shim in the binding, and it is what makes the
-boundary zero-copy on all three targets.
+change to the engine, not a shim in the binding, and it is what removes the
+engine-side copy on all three targets.
+
+*Not* the same as making the whole path zero-copy, and iOS is where the
+difference bites — see **What Swift asks for that JNI did not** below.
+`AndroidBitmap_lockPixels` hands back the Bitmap's own backing store, so
+writing there is writing what gets composited. A `CGBitmapContext` is a
+buffer the caller owns and CoreAnimation has never heard of; the path from
+it to the screen is a second step, and the obvious form of that step
+copies.
 
 Shells that rasterize themselves still take `frame()` and the display list;
 that path is unchanged and is deliberately *not* in the first C ABI. Three
@@ -211,6 +228,9 @@ platform needs one call that means *you are about to be killed*: position,
 settings, and any dirty annotation, persisted now. Android's `onStop` is
 the only guaranteed callback there is, and it has a time budget. Call it
 `suspend()`; the reopen path already restores.
+
+iOS wants the same call for a second reason that Android never raises — not
+only *persist now* but *drop your file locks now*. See the iOS section.
 
 **Power and memory.** Two calls, both driven by the finding above:
 `set_cache_budget(bytes)` so caches evict by least-recently-used instead of
@@ -603,18 +623,117 @@ Moby-Dick, with no faces loaded at all. So conformance does not assert on text
 layout, and iOS conforming will not distinguish a working font path from an
 absent one. Rung 4 green means less there than it looks like it means.
 
+### What Swift asks for that JNI did not
+
+The boundary above was designed with Android in hand. Most of it transfers,
+and three parts of it turn out to be worth *more* here than the reasoning
+that produced them — see the end of this section. These are the places where
+Swift and the platform ask for something JNI never did.
+
+**Device and simulator cannot be one library. This is settled, not a
+choice.** The section below used to offer `staticlib` plus a module map as
+the simple path and an XCFramework as the packaged one. They are not
+alternatives. Both slices are `arm64`, and they differ only in a Mach-O load
+command — the device object carries `LC_VERSION_MIN_IPHONEOS`, the simulator
+object carries `LC_BUILD_VERSION` with `platform 7`. `lipo` refuses to put
+them in one file, in as many words:
+
+```
+have the same architectures (arm64) and can't be in the same fat output file
+```
+
+So an artifact that builds against a simulator *and* a device is an
+XCFramework by necessity, with a slice each — three, if Intel Macs are still
+a target, adding `x86_64-apple-ios`. Android's `cdylib` shape does not
+decide this; it has no analogue of it.
+
+**The pixel path costs one copy more than Android's, and the naive form
+costs two.** `AndroidBitmap_lockPixels` returns the Bitmap's own backing
+store: `render_into` there writes the pixels that get composited. iOS has no
+equivalent handle on a layer's storage. A `CGBitmapContext` built over a
+caller-supplied buffer takes `render_into` perfectly well, but it is a
+private buffer, and `CGBitmapContextCreateImage` copies on the way to
+anything that can be displayed.
+
+The zero-copy form exists and is worth naming before a spike writes the easy
+one: build a `CGImage` directly over the engine's buffer with a
+`CGDataProvider` and a release callback, and hand that to `CALayer.contents`.
+Then the engine's pixels are the layer's pixels, with the buffer's lifetime
+tied to the provider. Rung 3 should do it that way and say which it measured,
+because "the same as Android" is the one answer that is not available.
+
+**A source can be legal, named, and not yet readable.** No `content://` URI
+teaches this. A file picked from Files or iCloud Drive may be a placeholder
+that has not been downloaded, and opening it fails or blocks until it is.
+Security-scoped access is revocable and does not survive relaunch: the
+bookmark has to be re-resolved *before* the session is constructed. Since the
+library keys positions by book, a shell that stores the position but not the
+bookmark reopens to a book it can no longer find. `Source::Reader` is the
+right mechanism and none of this changes it — what changes is that on iOS,
+acquiring the reader is a step that can fail for reasons the engine must not
+try to interpret.
+
+**`suspend()` has to release locks, not just persist.** The lifecycle section
+justifies `suspend()` with Android's `onStop`. iOS adds a requirement of a
+different kind. Bundled SQLite uses POSIX advisory locking — `F_SETLK` and
+`flock` across 25 sites, with `fstat` at 21 — and an app holding a lock on a
+file in a *shared* container when it suspends is killed by the watchdog with
+`0xdead10cc`. Inside the app's own private container this does not arise. It
+arises the moment there is a share extension or a widget, because those mean
+an app group, and an app group means a shared container. That makes it a
+constraint on where the database lives, decided now, rather than a bug found
+later — and a second reason the accidental `$HOME/.local/share/chapbook`
+location is worth correcting to `Library/Application Support`.
+
+**CoreText enumeration is a narrower fallback than it sounds.** If
+`/System/Library/Fonts` proves unreadable from the sandbox, "CoreText
+enumeration or bundled faces" reads as two options. Enumeration yields names
+and descriptors. Getting *bytes* that fontdb can load means either
+`kCTFontURLAttribute` — a URL back into the directory that could not be read
+— or reassembling an sfnt table by table through `CTFontCopyTable`. If the
+directory is closed, bundled faces is effectively the only answer, and the
+font source has to carry them.
+
+**The privacy manifest has no Android counterpart.** An XCFramework
+distributed for others to embed wants a `PrivacyInfo.xcprivacy` inside it,
+and bundled SQLite's `fstat` and `statfs` calls fall under Apple's
+required-reason categories for file timestamps and disk space. This should be
+checked against Apple's current list at submission rather than taken from
+here, but it is a shipping requirement with no Android twin, and it is much
+cheaper to know before review than during it.
+
+**What Android taught that should not be carried over.** The
+`#[link(name = "jnigraphics")]` trap — a green build, a produced `.so`, and
+three `UND` symbols that fail only on a device — has no iOS twin. Static
+linking turns a missing framework into a link error at app build time. Do not
+port the link-time check; there is nothing here for it to catch.
+
+**Three decisions that are better here than the argument that made them.**
+The boundary chose `Send`-not-`Sync` handles from a Rust finding, and it maps
+exactly onto Swift 6's isolation model: "movable, not shareable" is what an
+`actor` or a `@MainActor`-confined wrapper expresses, so the handle's Rust
+property and its Swift type agree without persuasion. Caller-allocated
+strings were chosen to avoid cross-allocator frees; Swift has no natural way
+to free Rust's memory at all, so the absence of `cb_free_string` removes a
+defect class here rather than merely a common defect. And the waker's
+`void* user` is load-bearing rather than decorative, because a Swift C
+function pointer cannot capture context: the callback must be a global
+function that recovers its object through `Unmanaged.fromOpaque(user)` and
+hops to the main actor. Which is precisely why the header must say, as the
+boundary section insists, that **it fires on the loader thread**.
+
 ### What only a Mac can answer
 
 - Whether bundled SQLite *runs* under the iOS sandbox. It compiles, as does
   `ring` — see rung 1 above — but a database opening in a container is a
   different question from a database linking.
-- Static or dynamic: a `staticlib` plus a module map is the simple path, an
-  XCFramework the packaged one. Android's `cdylib` shape does not decide it.
-- The pixel path. A `CGBitmapContext` with `kCGImageAlphaPremultipliedLast`
-  and `kCGBitmapByteOrder32Big` should be premultiplied RGBA and therefore a
-  straight `memcpy`, exactly as `AndroidBitmap_lockPixels` turned out to be —
-  but run the same test that settled it there, which is the sepia theme and
-  not black text, because black on white cannot tell RGBA from BGRA.
+- The pixel path's *channel order*, which is still a device question even
+  though its shape is settled above. A `CGBitmapContext` with
+  `kCGImageAlphaPremultipliedLast` and `kCGBitmapByteOrder32Big` should be
+  premultiplied RGBA and therefore a straight copy, as
+  `AndroidBitmap_lockPixels` turned out to be — but run the same test that
+  settled it there, which is the sepia theme and not black text, because
+  black on white cannot tell RGBA from BGRA.
 - Whether `/System/Library/Fonts` is readable from a sandboxed app.
 - Simulator versus device. Android's rungs ran on an x86_64 emulator and
   therefore proved nothing about arm64 silicon; a Mac can close that gap for
@@ -623,12 +742,23 @@ absent one. Rung 4 green means less there than it looks like it means.
 ### The ladder, again
 
 1. It builds: `cargo build --target aarch64-apple-ios-sim` and `-ios`.
-2. It binds: a spike crate of `extern "C"` functions, hand-declared in Swift.
-3. It draws: `render_into` a `CGBitmapContext`, tap zones, sepia for the
-   channel check.
-4. It conforms: the harness, on a simulator and then on a device.
+   **Done** — see rung 1 above.
+2. It binds: a spike crate of `extern "C"` functions, hand-declared in Swift,
+   each wrapping its body in `catch_unwind`. An isolation decision for the
+   handle wrapper belongs here too, and it is `Send`-not-`Sync` spelled in
+   Swift.
+3. It draws: `render_into`, tap zones, sepia for the channel check. Do it
+   both ways and record the difference — `CGBitmapContext` then
+   `CGBitmapContextCreateImage`, against a `CGImage` built over the engine's
+   buffer with a `CGDataProvider` and handed to `CALayer.contents`. The
+   second is the one that matches what Android got for free.
+4. It conforms: the harness, on a simulator and then on a device. Remember
+   that Android conformed with an empty font database, so a green run here
+   proves less than it looks like it proves.
 5. It takes a security-scoped bookmark — the iOS twin of Android's content
-   URI, and the other half of the argument for typed sources.
+   URI, and the other half of the argument for typed sources. Resolve it
+   from cold at launch, not only from the picker, because that is the path
+   that fails.
 
 ## Fonts, on every platform
 
