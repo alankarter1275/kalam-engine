@@ -1030,3 +1030,15 @@ fn taps_find_highlights_recolor_them_and_list_every_mark() {
     assert_eq!(s.annotations().len(), 2);
     assert_eq!(s.highlights(0).len(), 1);
 }
+
+/// A session may cross threads but may not be shared across them, which is
+/// the shape every binding in `docs/FFI.md` is built on: a host holds one
+/// opaque handle, moves it freely, and needs no lock of its own. `Sync`
+/// fails today on the loader's receiver and on rusqlite's connection, so
+/// only the half we actually rely on is asserted here — if `Send` ever
+/// goes, the FFI's threading contract goes with it.
+#[test]
+fn a_session_can_move_between_threads() {
+    fn assert_send<T: Send>() {}
+    assert_send::<Session>();
+}

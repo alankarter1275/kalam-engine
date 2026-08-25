@@ -427,6 +427,10 @@ changed, book finished) should replace polling where shells need to react.
 
 ## 3. The portability layer
 
+Designed in [docs/FFI.md](FFI.md), which is where the boundary, the input
+model and the Android spike plan now live. What follows is the statement of
+the problem; that document is the proposed answer.
+
 **FFI is the gate.** "Different devices" mostly means different host
 languages, and there is no C API or bindings layer, so Android/Kotlin,
 iOS/Swift, and WASM apps cannot be built at all. Designing this boundary is
