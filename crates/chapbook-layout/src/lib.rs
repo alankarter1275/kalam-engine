@@ -3,7 +3,12 @@
 //!
 //! The pagination-first layout engine — chapbook's differentiator.
 //!
-//! Pipeline: styled DOM → fragmentation sidecar cascade (servo-mode stylo
+//! The whole stylo-facing half of chapbook lives here, because it moves as
+//! one: [`dom`] is the arena DOM and stylo's DOM-trait bindings, [`cascade`]
+//! drives stylo's `Stylist` over it, and the rest of the crate turns the
+//! result into pages. A stylo upgrade rewrites all three together.
+//!
+//! Pipeline: parse → cascade → fragmentation sidecar cascade (servo-mode stylo
 //! lacks the break properties) → box tree (CSS 2.1 §9.2 anonymous boxes) →
 //! cosmic-text inline layout per inline formatting context → streaming page
 //! cursor applying break rules and widows/orphans → [`ChapterLayout`].
@@ -17,6 +22,8 @@
 //! shrink-to-fit non-replaced floats, which stay in flow.
 
 mod boxtree;
+pub mod cascade;
+pub mod dom;
 mod fonts;
 mod fragmentation;
 mod hyphenate;
@@ -30,8 +37,9 @@ use std::collections::HashMap;
 use cosmic_text::FontSystem;
 
 use chapbook_core::PageMetrics;
-use chapbook_dom::Document;
 use chapbook_paint::{ImageStore, Page};
+
+use crate::dom::Document;
 
 pub use fonts::{fixture_font_system, system_font_system};
 pub use fragmentation::{BreakRule, FragRules, FragStyle};
@@ -65,7 +73,7 @@ fn page_of(char_map: &[u32], char_offset: u32) -> usize {
 }
 
 /// Paginate a styled document (the cascade must have run: see
-/// `chapbook_style::StyleEngine::style_document`).
+/// [`cascade::StyleEngine::style_document`]).
 ///
 /// `css_sources` are the same author sheets given to the style engine — the
 /// fragmentation sidecar re-reads them for the break properties stylo
@@ -78,7 +86,7 @@ pub fn paginate(
     images: &ImageStore,
 ) -> ChapterLayout {
     let frag = FragRules::parse(css_sources).resolve(doc);
-    let locator = chapbook_dom::locator_offsets(doc);
+    let locator = crate::dom::locator_offsets(doc);
     let input = boxtree::BoxTreeInput {
         doc,
         frag: &frag,
@@ -96,7 +104,7 @@ pub fn paginate(
     // Anchors: element id → page, via each element's locator offset.
     let mut anchors = HashMap::new();
     for id in doc.descendants(doc.root()) {
-        if let chapbook_dom::NodeData::Element(el) = &doc.node(id).data {
+        if let crate::dom::NodeData::Element(el) = &doc.node(id).data {
             if let (Some(id_attr), Some(offset)) = (&el.id, locator.get(&id)) {
                 anchors.insert(id_attr.to_string(), page_of(&char_map, *offset));
             }
@@ -121,7 +129,7 @@ pub fn collect_images(
 ) -> ImageStore {
     let mut store = ImageStore::default();
     for id in doc.descendants(doc.root()) {
-        let chapbook_dom::NodeData::Element(el) = &doc.node(id).data else {
+        let crate::dom::NodeData::Element(el) = &doc.node(id).data else {
             continue;
         };
         if *el.local_name() != markup5ever::local_name!("img") {
@@ -136,7 +144,7 @@ pub fn collect_images(
         };
         let rgba = decoded.to_rgba8();
         let (w, h) = (rgba.width(), rgba.height());
-        store.insert(chapbook_dom::node_tag(id), w, h, rgba.into_raw());
+        store.insert(crate::dom::node_tag(id), w, h, rgba.into_raw());
     }
     store
 }

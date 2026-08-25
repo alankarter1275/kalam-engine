@@ -1,5 +1,5 @@
 ---
-source: crates/chapbook-dom/tests/locator_text.rs
+source: crates/chapbook-layout/tests/locator_text.rs
 expression: "lines.join(\"\\n\")"
 ---
 locator_version: 1

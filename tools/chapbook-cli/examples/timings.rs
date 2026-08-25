@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use chapbook_core::{PageMetrics, PixelFormat, Publication, ReadingSettings, Size};
 use chapbook_epub::Book;
+use chapbook_layout::{cascade, dom};
 
 #[derive(Default)]
 struct Stage {
@@ -86,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         bytes_total += raw.len();
-        let Ok(mut doc) = parse.time(|| chapbook_dom::parse_xhtml(&raw, &href)) else {
+        let Ok(mut doc) = parse.time(|| dom::parse_xhtml(&raw, &href)) else {
             continue;
         };
 
@@ -94,10 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut css = Vec::new();
             for source in doc.stylesheet_sources() {
                 match source {
-                    chapbook_dom::StylesheetSource::Inline(text) => {
-                        css.push((text, href.to_string()))
-                    }
-                    chapbook_dom::StylesheetSource::External(rel) => {
+                    dom::StylesheetSource::Inline(text) => css.push((text, href.to_string())),
+                    dom::StylesheetSource::External(rel) => {
                         if let Ok(res) = book.resource(&href, &rel) {
                             css.push((
                                 String::from_utf8_lossy(&res.data).into_owned(),
@@ -112,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sheet_text: Vec<String> = css.iter().map(|(t, _)| t.clone()).collect();
 
         cascade.time(|| {
-            let mut engine = chapbook_style::StyleEngine::new(&metrics, &settings);
+            let mut engine = cascade::StyleEngine::new(&metrics, &settings);
             engine.set_author_sheets(&sheet_text);
             engine.style_document(&mut doc);
         });

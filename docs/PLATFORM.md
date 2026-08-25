@@ -655,8 +655,8 @@ different device. It cannot be rebuilt above a web view; a reader built that
 way spends its life fighting one.
 
 **The honest counterweight,** because this is a ceiling and belongs with the
-others: `chapbook-style` is 421 lines of source over stylo and
-`chapbook-layout` is 3,873. That is a real subset of what publishers ship,
+others: `chapbook-layout` is 3,873 lines of layout over 421 lines of
+cascade driver over stylo. That is a real subset of what publishers ship,
 and a web view gets the long tail — MathML, ruby, broken markup — for free.
 The pipeline is right *for a controlled-typography reader*. It is the wrong
 tool for an app whose job is rendering arbitrary publisher EPUBs faithfully,

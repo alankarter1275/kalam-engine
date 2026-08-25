@@ -6,14 +6,14 @@
 //! reading position and annotation — the golden offset-map test in
 //! `tests/locator_text.rs` makes that a conscious, version-bumped act.
 //!
-//! This is deliberately NOT [`crate::extract_text`]: that output is
+//! This is deliberately NOT [`extract_text`]: that output is
 //! display/snapshot text with collapsed whitespace and block separators,
 //! free to evolve. Locator text is raw text-node content, concatenated with
 //! nothing added, so offsets are independent of whitespace-collapsing rules.
 
 use markup5ever::local_name;
 
-use crate::tree::{Document, NodeData, NodeId};
+use super::tree::{Document, NodeData, NodeId};
 
 /// Extract the locator text of a document (see module docs).
 ///

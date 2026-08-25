@@ -1084,19 +1084,19 @@ whether or not a browser build ever ships.
 **stylo's own threading is already settled, and not by luck.** stylo is a
 parallel style engine, so the obvious worry is that a browser build would need
 `wasm-bindgen-rayon` and cross-origin isolation before it could style anything
-at all. It does not. `chapbook-style` has always passed `None` for
+at all. It does not. chapbook's cascade driver has always passed `None` for
 `traverse_dom`'s rayon pool, and `STYLE_THREAD_POOL` is a `LazyLock` that
 nothing on our path dereferences — the only two readers in stylo are its own
 shutdown path and a Gecko-facing `get_thread_handles`. No pool is ever built
 and no thread is ever spawned.
 
-That is not a portability convenience, it is load-bearing:
-`chapbook-dom`'s `unsafe impl Send`/`Sync for Node` justifies the
+That is not a portability convenience, it is load-bearing: the arena DOM's
+`unsafe impl Send`/`Sync for Node` justifies the
 `Cell`/`UnsafeCell` state a traversal mutates by there being exactly one
 traversal writing it. A pool passed to `traverse_dom` would race that state
 in a build that still compiles and mostly still works. Until now the
 invariant was held up by a code comment; it is now
-`chapbook-style/tests/sequential.rs` and an entry in CONTRIBUTING's list.
+`chapbook-layout/tests/sequential.rs` and an entry in CONTRIBUTING's list.
 
 What remains is dead weight rather than live threads: `rayon-core` is an
 unconditional dependency of stylo, so it links, and its panic strings are

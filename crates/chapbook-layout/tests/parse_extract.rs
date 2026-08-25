@@ -1,4 +1,4 @@
-use chapbook_dom::{extract_text, parse_xhtml, NodeData};
+use chapbook_layout::dom::{extract_text, parse_xhtml, NodeData};
 
 const DOC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -52,11 +52,11 @@ fn stylesheet_sources_in_document_order() {
     let sources = doc.stylesheet_sources();
     assert_eq!(sources.len(), 2);
     match &sources[0] {
-        chapbook_dom::StylesheetSource::Inline(css) => assert!(css.contains("color: red")),
+        chapbook_layout::dom::StylesheetSource::Inline(css) => assert!(css.contains("color: red")),
         _ => panic!("first source should be the <style> element"),
     }
     match &sources[1] {
-        chapbook_dom::StylesheetSource::External(href) => {
+        chapbook_layout::dom::StylesheetSource::External(href) => {
             assert_eq!(href, "../styles/main.css");
         }
         _ => panic!("second source should be the <link>"),

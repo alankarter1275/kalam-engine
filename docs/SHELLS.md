@@ -335,6 +335,6 @@ shell consumes — `chapbook_core`, `chapbook_paint`, `chapbook_library`,
 `chapbook_render_tinyskia`, `tiny_skia`, `cosmic_text` — specifically so a
 shell cannot skew versions with the engine it is driving.
 
-Model types come from `chapbook_core`. `chapbook_dom`, `chapbook_style`
-and `chapbook_layout` are internals; a shell that reaches for one has
+Model types come from `chapbook_core`. `chapbook_layout` — including its
+`dom` and `cascade` modules — is internal; a shell that reaches into it has
 found a gap in this document, and the gap is the bug.

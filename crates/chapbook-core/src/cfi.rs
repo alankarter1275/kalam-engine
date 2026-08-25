@@ -4,7 +4,7 @@
 //! `epubcfi(/6/4[chap01ref]!/4[body01]/10[para05]/3:10)`. This module
 //! parses and serializes the *string* form into a structured [`Cfi`];
 //! turning one into or out of a chapbook locator offset needs the DOM and
-//! lives in `chapbook_dom::cfi`.
+//! lives in `chapbook_layout::dom::cfi`.
 //!
 //! Persistence stays `LayeredLocator` (richer re-anchoring, see
 //! `docs/LOCATORS.md`) — CFI is import/export interop.

@@ -19,7 +19,7 @@ meaning something, and where it will not be treated as a cost at all.
 | **API** | `chapbook-reader`, `chapbook-library`, `chapbook-opds` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
 | **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
 | **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello`, `chapbook-panel-fbdev` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
-| **Internal** | `chapbook-dom`, `chapbook-style`, `chapbook-layout` | No stability of any kind. They exist to make the engine work, they follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
+| **Internal** | `chapbook-layout` | No stability of any kind. It exists to make the engine work, its DOM binding and cascade driver follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
 | **Not a library** | `chapbook-viewer`, `chapbook-viewer-gtk`, `tools/chapbook-cli` | Binaries. Their surface is their command line, not their Rust API; the reference shells exist to be read and copied, not linked. |
 
 ## Why the lines fall there

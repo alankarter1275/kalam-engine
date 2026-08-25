@@ -8,9 +8,9 @@ plus selected CSS3 modules) — with a purpose-built, pagination-first pipeline.
 
 ```
 .epub ──chapbook-epub──▶ XHTML bytes + CSS + resources
-      ──chapbook-dom───▶ arena Document (html5ever parse)
-      ──chapbook-style─▶ ComputedValues per element (stylo cascade)
-      ──chapbook-layout▶ ChapterLayout { pages, anchors, char_map }  (cosmic-text)
+      ──chapbook-layout▶ arena Document (html5ever parse)           [::dom]
+                       ▶ ComputedValues per element (stylo cascade) [::cascade]
+                       ▶ ChapterLayout { pages, anchors, char_map } (cosmic-text)
       ──chapbook-paint─▶ DisplayList per page
       ──render backend─▶ pixels (tiny-skia CPU today; e-ink/GPU later)
 ```
@@ -67,7 +67,8 @@ stays that way.
   versioned persistence record (`LayeredLocator`: quote context, spine
   fraction, whole-book progression) and its resolve chain — see
   `docs/LOCATORS.md`. `char_offset` indexes the *raw locator text*
-  (`chapbook_dom::locator_text`, versioned by `LOCATOR_VERSION`), not the
+  (`chapbook_layout::dom::locator_text`, versioned by `LOCATOR_VERSION`),
+  not the
   collapsed display text. Also the panel update seam: the `Panel` trait
   (`blit`/`submit`/`wait` — submit returns a token because an e-ink update
   takes 100ms to a second and blocking on it would make page turns feel
@@ -83,33 +84,39 @@ stays that way.
   resource resolution, fixed-layout detection (rejected), font
   de-obfuscation (M5). The wrapper boundary means rbook gaps can be patched
   with `zip` + `quick-xml` per-field without touching consumers.
-- **chapbook-dom** — slotmap arena `Document`; the copyable `DomNode<'a>`
-  handle carries all stylo trait impls (`TNode`/`TDocument`/`TElement`/
-  `selectors::Element`), structured after blitz-dom's proven binding. The
-  handle **must stay pointer-sized** (stylo's style sharing cache statically
-  asserts it), so `Document` heap-boxes a `DocumentInner` with a stable
-  address, every node carries a sealed back-pointer + self-id, and
-  `DomNode<'a>` is a `&'a Node` newtype. Documents are static after parse:
-  no incremental restyle, no snapshots, no shadow DOM, no animations, no
-  scripting — which deletes most of stylo's invalidation surface. Parsing is
-  lenient html5ever by default (real EPUBs contain HTML-isms); a
-  `strict-xml` feature runs xml5ever on the same tree
-  builder.
-- **chapbook-style** — owns the `Stylist` + media `Device` ("screen"), embeds
-  the UA stylesheet (`ua.css` — the profile boundary: what is not in the
-  EPUB 3 CSS profile gets no UA support), registers author sheets from the
-  chapter and user-origin override sheets (reader settings, themes), runs the
-  restyle traversal, and exposes `@font-face` rules for fontdb registration
-  (chapbook-layout does the registering). Its `FontMetricsProvider` returns
-  no metrics, so `ex`/`ch` resolve through stylo's own approximations — an
-  accepted gap, not a placeholder.
-  Themes (`chapbook_core::Theme`): `Light` is the identity theme; `Sepia`
-  recolors the defaults at user origin (publisher colors win); `Dark`
-  forces text/background colors with `!important` for night-mode
-  readability and flips the device's `prefers-color-scheme`. The page
-  ground is the display list's first op, chosen by the caller from the
-  theme.
-- **chapbook-layout** — the differentiator. Box tree per CSS 2.1 §9.2
+- **chapbook-layout** — the differentiator, and the whole stylo-facing half
+  of the engine. One crate rather than three, because it moves as one: the
+  DOM binding, the cascade driver, and layout are all shaped by the pinned
+  stylo set, and an upgrade rewrites them together. Two modules sit under
+  layout proper:
+  - `dom` — slotmap arena `Document`; the copyable `DomNode<'a>` handle
+    carries all stylo trait impls (`TNode`/`TDocument`/`TElement`/
+    `selectors::Element`), structured after blitz-dom's proven binding. The
+    handle **must stay pointer-sized** (stylo's style sharing cache
+    statically asserts it), so `Document` heap-boxes a `DocumentInner` with
+    a stable address, every node carries a sealed back-pointer + self-id,
+    and `DomNode<'a>` is a `&'a Node` newtype. Documents are static after
+    parse: no incremental restyle, no snapshots, no shadow DOM, no
+    animations, no scripting — which deletes most of stylo's invalidation
+    surface. Parsing is lenient html5ever by default (real EPUBs contain
+    HTML-isms); a `strict-xml` feature runs xml5ever on the same tree
+    builder.
+  - `cascade` — owns the `Stylist` + media `Device` ("screen"), embeds the
+    UA stylesheet (`ua.css` — the profile boundary: what is not in the EPUB
+    3 CSS profile gets no UA support), registers author sheets from the
+    chapter and user-origin override sheets (reader settings, themes), runs
+    the restyle traversal, and exposes `@font-face` rules for fontdb
+    registration (`crate::webfonts` does the registering). Its
+    `FontMetricsProvider` returns no metrics, so `ex`/`ch` resolve through
+    stylo's own approximations — an accepted gap, not a placeholder.
+    Themes (`chapbook_core::Theme`): `Light` is the identity theme; `Sepia`
+    recolors the defaults at user origin (publisher colors win); `Dark`
+    forces text/background colors with `!important` for night-mode
+    readability and flips the device's `prefers-color-scheme`. The page
+    ground is the display list's first op, chosen by the caller from the
+    theme.
+
+  Layout proper: box tree per CSS 2.1 §9.2
   (anonymous blocks, `::before`/`::after`), block flow, each inline formatting
   context laid out as one `cosmic_text::Buffer` (per-span `Attrs` from
   `ComputedValues`, `metadata` = span index for DOM mapping and locators).

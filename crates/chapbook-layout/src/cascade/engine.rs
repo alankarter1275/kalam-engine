@@ -27,10 +27,10 @@ use style::traversal::{recalc_style_at, DomTraversal, PerLevelTraversalData};
 use style::traversal_flags::TraversalFlags;
 use style::Atom;
 
+use crate::dom::Document;
 use chapbook_core::{PageMetrics, ReadingSettings};
-use chapbook_dom::Document;
 
-use crate::fonts::BookFontMetricsProvider;
+use super::fonts::BookFontMetricsProvider;
 
 /// The embedded UA stylesheet — the EPUB 3 CSS profile boundary.
 pub const UA_CSS: &str = include_str!("ua.css");
@@ -121,7 +121,7 @@ impl StyleEngine {
     }
 
     /// Run the cascade: every element in `doc` ends up with its
-    /// `ComputedValues`, readable via [`chapbook_dom::Document::primary_styles`].
+    /// `ComputedValues`, readable via [`crate::dom::Document::primary_styles`].
     pub fn style_document(&mut self, doc: &mut Document) {
         // All Locked<T> values (sheets, style attributes) must belong to the
         // lock our traversal guards come from.
@@ -270,6 +270,6 @@ impl<E: TElement> DomTraversal<E> for RecalcStyle<'_> {
 
 /// Convenience accessor mirroring [`Document::primary_styles`], so consumers
 /// only need this crate in scope.
-pub fn computed(doc: &Document, id: chapbook_dom::NodeId) -> Option<ServoArc<ComputedValues>> {
+pub fn computed(doc: &Document, id: crate::dom::NodeId) -> Option<ServoArc<ComputedValues>> {
     doc.primary_styles(id)
 }

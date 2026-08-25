@@ -16,7 +16,7 @@ use style::properties::ComputedValues;
 use style::servo_arc::Arc as ServoArc;
 use style::values::specified::box_::DisplayInside;
 
-use chapbook_dom::{NodeData, NodeId};
+use crate::dom::{NodeData, NodeId};
 
 use crate::boxtree::{append_collapsed_pub, display_of, BoxTreeInput, DisplayClass, InlineContent};
 

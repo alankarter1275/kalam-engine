@@ -13,7 +13,7 @@ use markup5ever::local_name;
 
 use chapbook_core::Result;
 
-use crate::tree::{Document, ElementData, Node, NodeData, NodeId};
+use super::tree::{Document, ElementData, Node, NodeData, NodeId};
 
 /// Parse the bytes of an XHTML content document.
 ///

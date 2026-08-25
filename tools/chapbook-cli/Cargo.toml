@@ -22,8 +22,6 @@ chapbook-epub = { workspace = true }
 chapbook-cbz = { workspace = true }
 chapbook-pdf = { workspace = true }
 image = { workspace = true }
-chapbook-dom = { workspace = true }
-chapbook-style = { workspace = true }
 chapbook-layout = { workspace = true }
 chapbook-paint = { workspace = true }
 chapbook-render-tinyskia = { workspace = true }

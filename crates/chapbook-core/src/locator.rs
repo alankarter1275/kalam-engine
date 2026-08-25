@@ -9,7 +9,7 @@
 //! # Normative: the locator text and `char_offset` (version 1)
 //!
 //! `char_offset` indexes into the **locator text** of a spine item, produced
-//! by `chapbook_dom::locator_text`:
+//! by `chapbook_layout::dom::locator_text`:
 //!
 //! - **Unit:** Unicode scalar values (Rust `char` count), not bytes, not
 //!   UTF-16 code units.
@@ -25,7 +25,7 @@
 //!
 //! Any change to the above — including the planned exclusion of
 //! `display:none` subtrees once the cascade exists — MUST bump
-//! [`LOCATOR_VERSION`]. The golden offset-map test in chapbook-dom exists so
+//! [`LOCATOR_VERSION`]. The golden offset-map test in chapbook-layout exists so
 //! the bump is a conscious act, not an accident.
 //!
 //! # Progression units are per-format

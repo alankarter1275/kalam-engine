@@ -101,18 +101,16 @@ fn the_stability_policy_names_no_crate_that_left() {
     );
 }
 
-/// The three Internal-tier crates say so in their own rustdoc, because
-/// that is where somebody about to depend on one is actually looking.
+/// The Internal-tier crate says so in its own rustdoc, because that is
+/// where somebody about to depend on it is actually looking.
 #[test]
-fn internal_crates_say_so_at_the_top_of_their_docs() {
-    for crate_dir in ["chapbook-dom", "chapbook-style", "chapbook-layout"] {
-        let lib = read(&format!("crates/{crate_dir}/src/lib.rs"));
-        let first = lib.lines().next().unwrap_or_default();
-        assert!(
-            first.contains("Internal to chapbook"),
-            "{crate_dir}/src/lib.rs should open with the internal-tier banner, got: {first:?}"
-        );
-    }
+fn the_internal_crate_says_so_at_the_top_of_its_docs() {
+    let lib = read("crates/chapbook-layout/src/lib.rs");
+    let first = lib.lines().next().unwrap_or_default();
+    assert!(
+        first.contains("Internal to chapbook"),
+        "chapbook-layout/src/lib.rs should open with the internal-tier banner, got: {first:?}"
+    );
 }
 
 /// Sanity: the doc lives where README points at it.

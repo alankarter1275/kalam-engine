@@ -10,7 +10,7 @@ use style::shared_lock::{Locked, SharedRwLock};
 use style::stylesheets::UrlExtraData;
 use style::Atom;
 
-use crate::stylo_data::StyloData;
+use super::stylo_data::StyloData;
 
 new_key_type! {
     /// Arena key for a [`Node`] within its [`Document`].

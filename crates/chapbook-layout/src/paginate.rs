@@ -347,7 +347,7 @@ impl<'f> Paginator<'f> {
                 } else {
                     text_indent_px(style, inner_w)
                 };
-                let tag = chapbook_dom::node_tag(block.node);
+                let tag = crate::dom::node_tag(block.node);
                 let y_flow = self.y
                     + if self.at_page_top() {
                         0.0
@@ -387,7 +387,7 @@ impl<'f> Paginator<'f> {
                 self.pages.last_mut().unwrap().fragments.push(Fragment {
                     rect,
                     kind: FragmentKind::Rule { color },
-                    tag: chapbook_dom::node_tag(block.node),
+                    tag: crate::dom::node_tag(block.node),
                 });
                 self.y += 1.0;
                 self.placed_on_page += 1;
@@ -410,7 +410,7 @@ impl<'f> Paginator<'f> {
                 start_y,
                 x + margin_left,
                 (width - margin_left - margin_right).max(1.0),
-                chapbook_dom::node_tag(block.node),
+                crate::dom::node_tag(block.node),
             );
         }
         self.pending_margin = self.pending_margin.max(margin_bottom);
@@ -546,9 +546,9 @@ impl<'f> Paginator<'f> {
         self.pages.last_mut().unwrap().fragments.push(Fragment {
             rect,
             kind: FragmentKind::Image {
-                resource: chapbook_dom::node_tag(block.node),
+                resource: crate::dom::node_tag(block.node),
             },
-            tag: chapbook_dom::node_tag(block.node),
+            tag: crate::dom::node_tag(block.node),
         });
         self.y += h;
         self.placed_on_page += 1;
@@ -617,9 +617,9 @@ impl<'f> Paginator<'f> {
         self.pages.last_mut().unwrap().fragments.push(Fragment {
             rect,
             kind: FragmentKind::Image {
-                resource: chapbook_dom::node_tag(block.node),
+                resource: crate::dom::node_tag(block.node),
             },
-            tag: chapbook_dom::node_tag(block.node),
+            tag: crate::dom::node_tag(block.node),
         });
         self.placed_on_page += 1;
         let band = FloatBand {
@@ -1497,7 +1497,7 @@ impl Paginator<'_> {
         // Caption first, as an ordinary block of lines.
         if let (Some(caption), Some(caption_style)) = (&table.caption, &table.caption_style) {
             let lines = self.shape_inline(caption, caption_style, width);
-            self.place_lines(lines, block, x, chapbook_dom::node_tag(block.node));
+            self.place_lines(lines, block, x, crate::dom::node_tag(block.node));
         }
 
         let columns = table.columns;
@@ -1624,7 +1624,7 @@ impl Paginator<'_> {
                     valign: cell_valign(&cell.style),
                     lines,
                     content_h,
-                    tag: chapbook_dom::node_tag(cell.node),
+                    tag: crate::dom::node_tag(cell.node),
                 });
             }
             let row_h = cells

@@ -39,7 +39,7 @@ use style::values::{AtomIdent, AtomString, GenericAtomIdent};
 use style::{Atom, CaseSensitivityExt};
 use style_dom::ElementState;
 
-use crate::tree::{DocumentInner, ElementData, Node, NodeData, NodeId};
+use super::tree::{DocumentInner, ElementData, Node, NodeData, NodeId};
 
 /// A copyable, **pointer-sized** handle to one node of a [`Document`] — the
 /// type stylo's DOM traits are implemented on.

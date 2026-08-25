@@ -78,10 +78,10 @@ These are not style preferences. Each one has cost somebody a day.
   statically asserts it.
 - **stylo runs sequentially, and that is a soundness precondition.**
   `traverse_dom` always gets `None` for its rayon pool, because
-  `chapbook-dom`'s `unsafe impl Send`/`Sync for Node` justify the
-  `Cell`/`UnsafeCell` node state by there being exactly one traversal
+  `chapbook-layout`'s `dom::tree` `unsafe impl Send`/`Sync for Node` justify
+  the `Cell`/`UnsafeCell` node state by there being exactly one traversal
   writing it. Handing it a pool would invalidate that argument in a build
-  that still compiles. Guarded by `chapbook-style/tests/sequential.rs`,
+  that still compiles. Guarded by `chapbook-layout/tests/sequential.rs`,
   which also keeps `STYLE_THREAD_POOL` unnamed — it is a `LazyLock`, so it
   costs nothing until something dereferences it, and threads are spawned by
   the act of looking.

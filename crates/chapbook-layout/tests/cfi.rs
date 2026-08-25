@@ -2,9 +2,9 @@
 //! resolution, ID-assertion correction, and full round-trips.
 
 use chapbook_core::Cfi;
-use chapbook_dom::{cfi_for_offset, locator_text, offset_for_cfi, parse_xhtml};
+use chapbook_layout::dom::{cfi_for_offset, locator_text, offset_for_cfi, parse_xhtml};
 
-fn doc(html: &str) -> chapbook_dom::Document {
+fn doc(html: &str) -> chapbook_layout::dom::Document {
     parse_xhtml(html.as_bytes(), "test.xhtml").unwrap()
 }
 

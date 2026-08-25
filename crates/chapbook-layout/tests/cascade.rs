@@ -2,10 +2,10 @@
 //! reader settings. Golden dumps over the fixture EPUB live in the CLI crate.
 
 use chapbook_core::{PageMetrics, ReadingSettings};
-use chapbook_dom::parse_xhtml;
-use chapbook_style::StyleEngine;
+use chapbook_layout::cascade::StyleEngine;
+use chapbook_layout::dom::parse_xhtml;
 
-fn styled(html: &str, author_css: &[&str]) -> (chapbook_dom::Document, StyleEngine) {
+fn styled(html: &str, author_css: &[&str]) -> (chapbook_layout::dom::Document, StyleEngine) {
     let mut doc = parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
     let mut engine = StyleEngine::new(&PageMetrics::default(), &ReadingSettings::default());
     let css: Vec<String> = author_css.iter().map(|s| s.to_string()).collect();
@@ -14,8 +14,8 @@ fn styled(html: &str, author_css: &[&str]) -> (chapbook_dom::Document, StyleEngi
     (doc, engine)
 }
 
-fn dump_of(doc: &chapbook_dom::Document) -> String {
-    chapbook_style::dump_computed_styles(doc)
+fn dump_of(doc: &chapbook_layout::dom::Document) -> String {
+    chapbook_layout::cascade::dump_computed_styles(doc)
 }
 
 #[test]

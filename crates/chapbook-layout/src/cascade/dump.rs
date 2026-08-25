@@ -3,7 +3,7 @@
 
 use style::properties::{LonghandId, PropertyDeclarationId};
 
-use chapbook_dom::{Document, NodeData, NodeId};
+use crate::dom::{Document, NodeData, NodeId};
 
 /// Properties shown per element: the set that drives book layout.
 const DUMPED: &[(&str, LonghandId)] = &[

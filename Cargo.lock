@@ -482,7 +482,6 @@ version = "0.1.0"
 dependencies = [
  "chapbook-cbz",
  "chapbook-core",
- "chapbook-dom",
  "chapbook-epub",
  "chapbook-layout",
  "chapbook-library",
@@ -490,7 +489,6 @@ dependencies = [
  "chapbook-paint",
  "chapbook-pdf",
  "chapbook-render-tinyskia",
- "chapbook-style",
  "clap",
  "cosmic-text",
  "image",
@@ -502,27 +500,6 @@ name = "chapbook-core"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "chapbook-dom"
-version = "0.1.0"
-dependencies = [
- "app_units",
- "atomic_refcell",
- "chapbook-core",
- "euclid",
- "html5ever",
- "insta",
- "markup5ever",
- "selectors",
- "slotmap",
- "stylo",
- "stylo_dom",
- "stylo_static_prefs",
- "stylo_traits",
- "url",
- "xml5ever",
 ]
 
 [[package]]
@@ -543,20 +520,25 @@ version = "0.1.0"
 dependencies = [
  "app_units",
  "chapbook-core",
- "chapbook-dom",
  "chapbook-epub",
  "chapbook-paint",
- "chapbook-style",
  "cosmic-text",
  "cssparser",
+ "euclid",
+ "html5ever",
  "hyphenation",
  "image",
  "insta",
  "markup5ever",
  "proptest",
  "selectors",
+ "slotmap",
  "stylo",
+ "stylo_dom",
+ "stylo_static_prefs",
+ "stylo_traits",
  "url",
+ "xml5ever",
 ]
 
 [[package]]
@@ -615,7 +597,6 @@ version = "0.1.0"
 dependencies = [
  "chapbook-cbz",
  "chapbook-core",
- "chapbook-dom",
  "chapbook-epub",
  "chapbook-layout",
  "chapbook-library",
@@ -623,7 +604,6 @@ dependencies = [
  "chapbook-paint",
  "chapbook-pdf",
  "chapbook-render-tinyskia",
- "chapbook-style",
  "cosmic-text",
  "image",
 ]
@@ -651,24 +631,6 @@ dependencies = [
  "pollster",
  "tiny-skia 0.12.0",
  "vello",
-]
-
-[[package]]
-name = "chapbook-style"
-version = "0.1.0"
-dependencies = [
- "chapbook-core",
- "chapbook-dom",
- "cosmic-text",
- "cssparser",
- "euclid",
- "insta",
- "markup5ever",
- "selectors",
- "stylo",
- "stylo_static_prefs",
- "stylo_traits",
- "url",
 ]
 
 [[package]]

@@ -9,9 +9,9 @@
 use std::path::PathBuf;
 
 use chapbook_core::LOCATOR_VERSION;
-use chapbook_dom::{locator_text, parse_xhtml};
+use chapbook_layout::dom::{locator_text, parse_xhtml};
 
-fn fixture_chapter(name: &str) -> chapbook_dom::Document {
+fn fixture_chapter(name: &str) -> chapbook_layout::dom::Document {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/epub/src/minimal/OEBPS")
         .join(name);
@@ -85,7 +85,7 @@ fn offsets_count_scalars_not_bytes() {
     assert_eq!(text, "cafénext");
     let p2 = doc.element_by_id("x").unwrap();
     // "café" is 4 chars (5 bytes); the second paragraph starts at char 4.
-    assert_eq!(chapbook_dom::locator_offset_of(&doc, p2), Some(4));
+    assert_eq!(chapbook_layout::dom::locator_offset_of(&doc, p2), Some(4));
 }
 
 /// End-to-end: capture a layered locator in fixture text, drift the text,
@@ -130,11 +130,11 @@ fn links_carry_the_locator_range_of_their_text() {
         "OEBPS/ch1.xhtml",
     )
     .unwrap();
-    let text = chapbook_dom::locator_text(&doc);
-    let links = chapbook_dom::links(&doc);
+    let text = chapbook_layout::dom::locator_text(&doc);
+    let links = chapbook_layout::dom::links(&doc);
 
     assert_eq!(links.len(), 2, "the image link wraps no text: {links:?}");
-    let slice = |l: &chapbook_dom::Link| -> String {
+    let slice = |l: &chapbook_layout::dom::Link| -> String {
         text.chars()
             .skip(l.start as usize)
             .take((l.end - l.start) as usize)

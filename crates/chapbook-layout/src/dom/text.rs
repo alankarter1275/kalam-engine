@@ -2,13 +2,13 @@
 //! and the layout text-order property tests.
 //!
 //! NOT the offset space for `Locator::char_offset` — that is the raw,
-//! versioned locator text in [`crate::locator_text`] (see `docs/LOCATORS.md`).
+//! versioned locator text in [`super::locator_text`] (see `docs/LOCATORS.md`).
 //! This output collapses whitespace and adds block separators, and is free to
 //! evolve without shifting stored positions.
 
 use markup5ever::local_name;
 
-use crate::tree::{Document, NodeData, NodeId};
+use super::tree::{Document, NodeData, NodeId};
 
 /// Sentinel between block boxes; becomes a newline. Ordinary `\n` in source
 /// text is inline whitespace and collapses like a space.

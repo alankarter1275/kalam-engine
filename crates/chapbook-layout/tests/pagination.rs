@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use chapbook_core::{EdgeSizes, PageMetrics, ReadingSettings, Rotation, Size};
-use chapbook_dom::Document;
+use chapbook_layout::dom::Document;
 use chapbook_layout::ChapterLayout;
 use chapbook_paint::FragmentKind;
 
@@ -26,9 +26,9 @@ fn page_for_lines(lines: u32) -> PageMetrics {
 }
 
 fn layout_html(html: &str, css: &str, page: &PageMetrics) -> (ChapterLayout, Document) {
-    let mut doc = chapbook_dom::parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
+    let mut doc = chapbook_layout::dom::parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
     let css_sources = vec![css.to_string()];
-    let mut engine = chapbook_style::StyleEngine::new(page, &ReadingSettings::default());
+    let mut engine = chapbook_layout::cascade::StyleEngine::new(page, &ReadingSettings::default());
     engine.set_author_sheets(&css_sources);
     engine.style_document(&mut doc);
     let mut fonts = fonts();
@@ -185,20 +185,20 @@ fn fixture_book_layout(spine: usize) -> (ChapterLayout, Document, String) {
     let book = chapbook_epub::Book::open(&path).unwrap();
     let href = book.spine_item(spine).unwrap().href.clone();
     let bytes = book.unit_bytes(spine).unwrap();
-    let mut doc = chapbook_dom::parse_xhtml(&bytes, &href).unwrap();
+    let mut doc = chapbook_layout::dom::parse_xhtml(&bytes, &href).unwrap();
     let css: Vec<String> = doc
         .stylesheet_sources()
         .iter()
         .filter_map(|s| match s {
-            chapbook_dom::StylesheetSource::Inline(t) => Some(t.clone()),
-            chapbook_dom::StylesheetSource::External(rel) => book
+            chapbook_layout::dom::StylesheetSource::Inline(t) => Some(t.clone()),
+            chapbook_layout::dom::StylesheetSource::External(rel) => book
                 .resource(&href, rel)
                 .ok()
                 .map(|r| String::from_utf8_lossy(&r.data).into_owned()),
         })
         .collect();
     let page = PageMetrics::default();
-    let mut engine = chapbook_style::StyleEngine::new(&page, &ReadingSettings::default());
+    let mut engine = chapbook_layout::cascade::StyleEngine::new(&page, &ReadingSettings::default());
     engine.set_author_sheets(&css);
     engine.style_document(&mut doc);
     let mut fonts = fonts();
@@ -209,7 +209,7 @@ fn fixture_book_layout(spine: usize) -> (ChapterLayout, Document, String) {
         &mut fonts,
         &chapbook_paint::ImageStore::default(),
     );
-    let display_text = chapbook_dom::extract_text(&doc);
+    let display_text = chapbook_layout::dom::extract_text(&doc);
     (layout, doc, display_text)
 }
 
@@ -681,9 +681,9 @@ fn layout_html_with_image(
     page: &PageMetrics,
     dims: (u32, u32),
 ) -> (ChapterLayout, Document) {
-    let mut doc = chapbook_dom::parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
+    let mut doc = chapbook_layout::dom::parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
     let css_sources = vec![css.to_string()];
-    let mut engine = chapbook_style::StyleEngine::new(page, &ReadingSettings::default());
+    let mut engine = chapbook_layout::cascade::StyleEngine::new(page, &ReadingSettings::default());
     engine.set_author_sheets(&css_sources);
     engine.style_document(&mut doc);
     let mut images = chapbook_paint::ImageStore::default();
@@ -691,7 +691,7 @@ fn layout_html_with_image(
     while let Some(id) = stack.pop() {
         if doc.is_html_element(id, &markup5ever::local_name!("img")) {
             images.insert(
-                chapbook_dom::node_tag(id),
+                chapbook_layout::dom::node_tag(id),
                 dims.0,
                 dims.1,
                 vec![0u8; (dims.0 * dims.1 * 4) as usize],
@@ -1239,9 +1239,9 @@ fn layout_html_settings(
     page: &PageMetrics,
     settings: &ReadingSettings,
 ) -> ChapterLayout {
-    let mut doc = chapbook_dom::parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
+    let mut doc = chapbook_layout::dom::parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
     let css_sources = vec![css.to_string()];
-    let mut engine = chapbook_style::StyleEngine::new(page, settings);
+    let mut engine = chapbook_layout::cascade::StyleEngine::new(page, settings);
     engine.set_author_sheets(&css_sources);
     engine.style_document(&mut doc);
     let mut fonts = fonts();

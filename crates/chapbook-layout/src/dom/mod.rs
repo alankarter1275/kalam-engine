@@ -1,11 +1,10 @@
-//! **Internal to chapbook — no API stability.** This crate is shaped by
-//! stylo's trait requirements rather than a design of its own, and the
-//! pinned stylo set upgrades all-at-once as a deliberate task that
-//! rewrites it. Depend on `chapbook-reader`; see `docs/STABILITY.md`.
+//! Arena-based DOM for EPUB XHTML content documents, and the host-side
+//! implementations of stylo's DOM traits (`TNode`, `TDocument`, `TElement`,
+//! `selectors::Element`).
 //!
-//! Arena-based DOM for EPUB XHTML content documents, and (from M2) the
-//! host-side implementations of stylo's DOM traits (`TNode`, `TDocument`,
-//! `TElement`, `selectors::Element`).
+//! Shaped by stylo's trait requirements rather than a design of its own: the
+//! pinned stylo set upgrades all-at-once as a deliberate task that rewrites
+//! this module.
 //!
 //! Documents are static after parse: no incremental restyle, no snapshots, no
 //! shadow DOM, no animations, no scripting. That deletes most of stylo's
@@ -13,8 +12,8 @@
 //! trait impls follows blitz-dom's proven `stylo.rs` binding.
 //!
 //! Parsing is lenient html5ever by default — real-world EPUBs contain
-//! HTML-isms that strict XML parsing rejects. A `strict-xml` feature (M2+)
-//! runs xml5ever over the same tree builder.
+//! HTML-isms that strict XML parsing rejects. A `strict-xml` feature runs
+//! xml5ever over the same tree builder.
 
 mod cfi;
 mod offsets;
@@ -28,8 +27,5 @@ pub use cfi::{cfi_for_offset, offset_for_cfi};
 pub use offsets::{links, locator_offset_of, locator_offsets, locator_text, node_tag, Link};
 pub use parse::parse_xhtml;
 pub use stylo_impls::DomNode;
-// Re-exported so layout can name eager pseudo-elements without a direct
-// stylo dependency path of its own.
-pub use style::selector_parser::PseudoElement;
 pub use text::extract_text;
 pub use tree::{Document, ElementData, Node, NodeData, NodeId, StylesheetSource};

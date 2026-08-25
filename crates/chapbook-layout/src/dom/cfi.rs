@@ -20,8 +20,8 @@
 
 use chapbook_core::{Cfi, CfiStep};
 
-use crate::offsets::{excluded, locator_offset_of, locator_offsets};
-use crate::tree::{Document, NodeData, NodeId};
+use super::offsets::{excluded, locator_offset_of, locator_offsets};
+use super::tree::{Document, NodeData, NodeId};
 
 /// Generate a point CFI for a locator-text char offset. `None` when the
 /// document has no text at all.

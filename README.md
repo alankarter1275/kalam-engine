@@ -25,9 +25,7 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 |---|---|---|
 | `chapbook-core` | Shared primitives: geometry, page metrics, locators, errors | Contract |
 | `chapbook-epub` | EPUB container/package/spine/TOC reading | Producer |
-| `chapbook-dom` | Arena DOM for XHTML content documents + stylo trait bindings | Internal |
-| `chapbook-style` | Cascade driver: stylist, UA sheet, media device | Internal |
-| `chapbook-layout` | Pagination-first block + inline layout via cosmic-text | Internal |
+| `chapbook-layout` | Arena DOM + stylo trait bindings (`::dom`), cascade driver (`::cascade`), pagination-first block + inline layout via cosmic-text | Internal |
 | `chapbook-paint` | Format-neutral page model + paint-neutral display list | Contract |
 | `chapbook-render-tinyskia` | CPU rasterization backend | Backend |
 | `chapbook-render-vello` | GPU rasterization backend (vello + wgpu) | Backend |

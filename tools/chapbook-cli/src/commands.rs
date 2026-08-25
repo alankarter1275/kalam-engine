@@ -5,6 +5,7 @@ use std::path::Path;
 
 use chapbook_core::{PageMetrics, Publication, ReadingSettings, Result, TocEntry};
 use chapbook_epub::Book;
+use chapbook_layout::{cascade, dom};
 
 /// Open a local book by extension: `.cbz`/`.pdf` -> image-per-page
 /// producers, else EPUB.
@@ -87,11 +88,11 @@ pub fn text(epub: &Path, spine: Option<usize>) -> Result<String> {
     for i in indices {
         let href = book.spine_item(i)?.href.clone();
         let bytes = book.unit_bytes(i)?;
-        let doc = chapbook_dom::parse_xhtml(&bytes, &href)?;
+        let doc = dom::parse_xhtml(&bytes, &href)?;
         if spine.is_none() {
             out.push_str(&format!("==== spine {i} ({href}) ====\n"));
         }
-        out.push_str(&chapbook_dom::extract_text(&doc));
+        out.push_str(&dom::extract_text(&doc));
     }
     Ok(out)
 }
@@ -100,14 +101,14 @@ pub fn styles(epub: &Path, spine: usize) -> Result<String> {
     let book = Book::open(epub)?;
     let href = book.spine_item(spine)?.href.clone();
     let (doc, _css, notes) = styled_chapter(&book, spine, &href, &ReadingSettings::default())?;
-    Ok(notes + &chapbook_style::dump_computed_styles(&doc))
+    Ok(notes + &cascade::dump_computed_styles(&doc))
 }
 
 /// Register @font-face fonts into `fonts` and decode the chapter's images.
 fn load_chapter_assets(
     book: &Book,
     chapter_href: &str,
-    doc: &chapbook_dom::Document,
+    doc: &dom::Document,
     css_pairs: &[(String, String)],
     fonts: &mut cosmic_text::FontSystem,
 ) -> chapbook_paint::ImageStore {
@@ -237,9 +238,9 @@ fn styled_chapter(
     spine: usize,
     href: &str,
     settings: &ReadingSettings,
-) -> Result<(chapbook_dom::Document, CssSheets, String)> {
+) -> Result<(dom::Document, CssSheets, String)> {
     let bytes = book.unit_bytes(spine)?;
-    let mut doc = chapbook_dom::parse_xhtml(&bytes, href)?;
+    let mut doc = dom::parse_xhtml(&bytes, href)?;
 
     // Author stylesheets in document order as (text, container path of the
     // declaring sheet): <style> contents inline (base = the chapter),
@@ -251,10 +252,10 @@ fn styled_chapter(
     let mut notes = String::new();
     for source in doc.stylesheet_sources() {
         match source {
-            chapbook_dom::StylesheetSource::Inline(text) => {
+            dom::StylesheetSource::Inline(text) => {
                 css.push((text, href.to_string()));
             }
-            chapbook_dom::StylesheetSource::External(rel) => match book.resource(href, &rel) {
+            dom::StylesheetSource::External(rel) => match book.resource(href, &rel) {
                 Ok(res) => css.push((
                     String::from_utf8_lossy(&res.data).into_owned(),
                     chapbook_epub::resolve_href(href, &rel),
@@ -265,7 +266,7 @@ fn styled_chapter(
     }
 
     let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
-    let mut engine = chapbook_style::StyleEngine::new(&PageMetrics::default(), settings);
+    let mut engine = cascade::StyleEngine::new(&PageMetrics::default(), settings);
     engine.set_author_sheets(&sheets);
     engine.style_document(&mut doc);
     Ok((doc, css, notes))
@@ -449,16 +450,16 @@ pub fn cfi(
     cfi_str: Option<&str>,
 ) -> Result<String> {
     let book = Book::open(epub)?;
-    let chapter_doc = |spine: usize| -> Result<chapbook_dom::Document> {
+    let chapter_doc = |spine: usize| -> Result<dom::Document> {
         let href = book.spine_item(spine)?.href.clone();
         let bytes = book.unit_bytes(spine)?;
-        let doc = chapbook_dom::parse_xhtml(&bytes, &href)?;
+        let doc = dom::parse_xhtml(&bytes, &href)?;
         Ok(doc)
     };
     match (spine, offset, cfi_str) {
         (Some(spine), Some(offset), None) => {
             let doc = chapter_doc(spine)?;
-            let cfi = chapbook_dom::cfi_for_offset(&doc, spine, offset)
+            let cfi = dom::cfi_for_offset(&doc, spine, offset)
                 .ok_or_else(|| chapbook_core::ChapbookError::Cfi("chapter has no text".into()))?;
             Ok(format!("{cfi}\n"))
         }
@@ -470,10 +471,10 @@ pub fn cfi(
                 )
             })?;
             let doc = chapter_doc(spine)?;
-            let offset = chapbook_dom::offset_for_cfi(&doc, &cfi).ok_or_else(|| {
+            let offset = dom::offset_for_cfi(&doc, &cfi).ok_or_else(|| {
                 chapbook_core::ChapbookError::Cfi("CFI does not resolve in this chapter".into())
             })?;
-            let text = chapbook_dom::locator_text(&doc);
+            let text = dom::locator_text(&doc);
             let chars: Vec<char> = text.chars().collect();
             let start = (offset as usize).saturating_sub(30);
             let end = (offset as usize + 30).min(chars.len());

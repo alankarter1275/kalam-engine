@@ -12,9 +12,10 @@
 use std::collections::HashMap;
 
 use style::properties::ComputedValues;
+use style::selector_parser::PseudoElement;
 use style::servo_arc::Arc as ServoArc;
 
-use chapbook_dom::{Document, NodeData, NodeId};
+use crate::dom::{Document, NodeData, NodeId};
 use chapbook_paint::ImageStore;
 
 use crate::fragmentation::FragStyle;
@@ -116,7 +117,7 @@ impl InlineContent {
 pub struct BoxTreeInput<'a> {
     pub doc: &'a Document,
     pub frag: &'a HashMap<NodeId, FragStyle>,
-    /// Node → locator-text offset (from `chapbook_dom::locator_offsets`).
+    /// Node → locator-text offset (from `crate::dom::locator_offsets`).
     pub locator: &'a HashMap<NodeId, u32>,
     /// Decoded images keyed by node tag (from `crate::collect_images`).
     pub images: &'a ImageStore,
@@ -232,14 +233,9 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
         if display_of(&style) == DisplayClass::ListItem {
             push_marker(&mut inline, input, node, &style);
         }
-        push_generated(
-            &mut inline,
-            input,
-            node,
-            chapbook_dom::PseudoElement::Before,
-        );
+        push_generated(&mut inline, input, node, PseudoElement::Before);
         collect_inline(input, node, &style, &mut inline);
-        push_generated(&mut inline, input, node, chapbook_dom::PseudoElement::After);
+        push_generated(&mut inline, input, node, PseudoElement::After);
         inline.trim_trailing_space();
         if frag.hyphens_auto {
             crate::hyphenate::apply(&mut inline);
@@ -398,9 +394,9 @@ fn collect_inline_element(
         });
         return;
     }
-    push_generated(out, input, node, chapbook_dom::PseudoElement::Before);
+    push_generated(out, input, node, PseudoElement::Before);
     collect_inline(input, node, &style, out);
-    push_generated(out, input, node, chapbook_dom::PseudoElement::After);
+    push_generated(out, input, node, PseudoElement::After);
 }
 
 /// `::before`/`::after` generated content: string, `attr()`, and quote
@@ -413,7 +409,7 @@ fn push_generated(
     out: &mut InlineContent,
     input: &BoxTreeInput,
     node: NodeId,
-    pseudo: chapbook_dom::PseudoElement,
+    pseudo: PseudoElement,
 ) {
     let Some(style) = input.doc.pseudo_styles(node, pseudo) else {
         return;
@@ -604,7 +600,7 @@ fn replaced_block(
     let kind = match replaced_kind(input.doc, node)? {
         ReplacedKind::Rule => BlockKind::Rule,
         ReplacedKind::Image => {
-            let (width, height) = input.images.dims(chapbook_dom::node_tag(node))?;
+            let (width, height) = input.images.dims(crate::dom::node_tag(node))?;
             BlockKind::Image { width, height }
         }
     };

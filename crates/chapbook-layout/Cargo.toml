@@ -1,6 +1,6 @@
 [package]
 name = "chapbook-layout"
-description = "Pagination-first block + inline layout for chapbook, via cosmic-text"
+description = "Arena DOM, stylo cascade driver, and pagination-first layout for chapbook"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,15 +10,19 @@ authors.workspace = true
 
 [dependencies]
 chapbook-core = { workspace = true }
-chapbook-dom = { workspace = true }
 chapbook-paint = { workspace = true }
-chapbook-style = { workspace = true }
 style = { workspace = true }
+style_traits = { workspace = true }
+style_dom = { workspace = true }
+style_config = { workspace = true }
 selectors = { workspace = true }
 cssparser = { workspace = true }
 cosmic-text = { workspace = true }
 hyphenation = { workspace = true }
+html5ever = { workspace = true }
 markup5ever = { workspace = true }
+slotmap = { workspace = true }
+euclid = { workspace = true }
 app_units = { workspace = true }
 url = { workspace = true }
 image = { workspace = true }
@@ -27,3 +31,12 @@ image = { workspace = true }
 insta = { workspace = true }
 proptest = { workspace = true }
 chapbook-epub = { workspace = true }
+
+[features]
+# Strict well-formed-XML parsing of content documents via xml5ever on the same
+# tree builder; the default html5ever path is lenient about real-world EPUBs.
+strict-xml = ["dep:xml5ever"]
+
+[dependencies.xml5ever]
+workspace = true
+optional = true

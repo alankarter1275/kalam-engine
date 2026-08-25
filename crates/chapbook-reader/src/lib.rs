@@ -38,7 +38,7 @@ use chapbook_core::{
     resolve_in_text, BookKind, ChapbookError, LayeredLocator, Locator, PageMetrics, PixelFormat,
     Point, Publication, ReadingSettings, Rect, Result, Rgba, Rotation, SpineItem, TocEntry,
 };
-use chapbook_layout::ChapterLayout;
+use chapbook_layout::{cascade, dom, ChapterLayout};
 use chapbook_library::AnnotationKind;
 use chapbook_paint::{Frame, FrameIntent, ImageStore, Selection};
 
@@ -270,7 +270,7 @@ pub struct Session {
     /// What the target panel can show; applied to rendered pixels.
     pixel_format: PixelFormat,
     /// Per-unit hyperlinks in locator space, filled as units lay out.
-    links: HashMap<usize, Vec<chapbook_dom::Link>>,
+    links: HashMap<usize, Vec<dom::Link>>,
     /// Where jumps came from, so a footnote can be returned from. Only
     /// jumps push; ordinary page turns don't.
     back_stack: Vec<Locator>,
@@ -1809,20 +1809,18 @@ impl Session {
         };
         let href = epub.spine_item(spine).ok()?.href.clone();
         let bytes = epub.unit_bytes(spine).ok()?;
-        let mut doc = chapbook_dom::parse_xhtml(&bytes, &href).ok()?;
+        let mut doc = dom::parse_xhtml(&bytes, &href).ok()?;
         let css: Vec<(String, String)> = doc
             .stylesheet_sources()
             .iter()
             .filter_map(|s| match s {
-                chapbook_dom::StylesheetSource::Inline(t) => Some((t.clone(), href.clone())),
-                chapbook_dom::StylesheetSource::External(rel) => {
-                    epub.resource(&href, rel).ok().map(|r| {
-                        (
-                            String::from_utf8_lossy(&r.data).into_owned(),
-                            chapbook_epub::resolve_href(&href, rel),
-                        )
-                    })
-                }
+                dom::StylesheetSource::Inline(t) => Some((t.clone(), href.clone())),
+                dom::StylesheetSource::External(rel) => epub.resource(&href, rel).ok().map(|r| {
+                    (
+                        String::from_utf8_lossy(&r.data).into_owned(),
+                        chapbook_epub::resolve_href(&href, rel),
+                    )
+                }),
             })
             .collect();
 
@@ -1843,12 +1841,12 @@ impl Session {
         });
 
         let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
-        let mut engine = chapbook_style::StyleEngine::new(metrics, &self.settings);
+        let mut engine = cascade::StyleEngine::new(metrics, &self.settings);
         engine.set_author_sheets(&sheets);
         engine.style_document(&mut doc);
         // The document is parsed here and nowhere else; take its links
         // while we have it.
-        self.links.insert(spine, chapbook_dom::links(&doc));
+        self.links.insert(spine, dom::links(&doc));
         let layout = chapbook_layout::paginate(&doc, &sheets, metrics, &mut self.fonts, &images);
         Some((layout, images))
     }
@@ -1862,8 +1860,8 @@ fn unit_locator_text(book: &dyn Publication, spine: usize) -> Option<String> {
     }
     let href = book.spine_item(spine).ok()?.href.clone();
     let bytes = book.unit_bytes(spine).ok()?;
-    let doc = chapbook_dom::parse_xhtml(&bytes, &href).ok()?;
-    Some(chapbook_dom::locator_text(&doc))
+    let doc = dom::parse_xhtml(&bytes, &href).ok()?;
+    Some(dom::locator_text(&doc))
 }
 
 /// Map a PDF unit's extracted text lines into hidden-text fragments over

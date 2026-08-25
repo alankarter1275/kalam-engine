@@ -4,7 +4,7 @@
 //! (`break-before/after/inside`, the legacy `page-break-*` aliases,
 //! `widows`, `orphans` — all Gecko-only), so pagination gets them from this
 //! mini-cascade: cssparser pulls just these declarations out of the same
-//! stylesheets, and their selectors match through chapbook-dom's
+//! stylesheets, and their selectors match through the DOM module's
 //! `selectors::Element` impl with standard specificity/source-order rules.
 //! `hyphens` (also Gecko-only, inherited) rides along for the same reason.
 //!
@@ -25,7 +25,7 @@ use selectors::parser::Selector;
 use style::selector_parser::{SelectorImpl, SelectorParser};
 use style::stylesheets::UrlExtraData;
 
-use chapbook_dom::{Document, NodeData, NodeId};
+use crate::dom::{Document, NodeData, NodeId};
 
 /// Forced/avoided break on a box edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
