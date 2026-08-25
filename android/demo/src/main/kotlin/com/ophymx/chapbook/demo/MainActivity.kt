@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.Window
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -24,14 +25,25 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The default theme's action bar overlays the content, which put the
+        // status line underneath it and made it look absent. A reader wants
+        // the whole window anyway.
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val book = copyAssetToFiles("book.epub")
         val opened = Session.open(book.absolutePath, filesDir.absolutePath)
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // Explicit colours: the platform theme decides the default text
+        // colour and the reader paints its own paper, so on a dark-themed
+        // device the status line was white on white and simply gone.
         status = TextView(this).apply {
             textSize = 11f
-            setPadding(16, 16, 16, 16)
+            // Top padding clears the system status bar: with no action
+            // bar the window starts at y=0.
+            setPadding(16, 72, 16, 16)
+            setBackgroundColor(0xFF202020.toInt())
+            setTextColor(0xFFE0E0E0.toInt())
         }
         root.addView(status, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
 
@@ -52,12 +64,9 @@ class MainActivity : Activity() {
             ).apply { weight = 1f },
         )
 
-        // Long-press anywhere on the status line runs the conformance
-        // harness — rung 4. It opens its own sessions, so it takes the path.
-        status.setOnLongClickListener {
-            showConformance(book.absolutePath)
-            true
-        }
+        // A long press on the page runs the conformance harness — rung 4.
+        // It opens its own sessions, so it takes the path, not the handle.
+        reader.onLongPress = { showConformance(book.absolutePath) }
 
         setContentView(root)
         refreshStatus(reader)

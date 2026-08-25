@@ -60,6 +60,9 @@ class Session private constructor(private var handle: Long) : AutoCloseable {
     /** Returns whether the position moved. */
     fun prevPage(): Boolean = Native.prevPage(handle)
 
+    /** Next theme. Repaints; the position does not move. */
+    fun cycleTheme() = Native.cycleTheme(handle)
+
     /**
      * Draws the current page into [bitmap], which must be `ARGB_8888` and
      * exactly the size the metrics asked for. Returns 0, or a negative code

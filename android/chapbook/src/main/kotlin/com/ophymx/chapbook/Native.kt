@@ -19,6 +19,7 @@ internal object Native {
     external fun setMetrics(handle: Long, width: Float, height: Float, margin: Float, scale: Float)
     external fun nextPage(handle: Long): Boolean
     external fun prevPage(handle: Long): Boolean
+    external fun cycleTheme(handle: Long)
     external fun position(handle: Long): Long
     external fun title(handle: Long): String
     external fun renderInto(handle: Long, bitmap: android.graphics.Bitmap): Int

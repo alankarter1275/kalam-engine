@@ -22,6 +22,11 @@ class ReaderView(context: Context, private val session: Session) : View(context)
     /** Called after every turn so the activity can update its status line. */
     var onMoved: (() -> Unit)? = null
 
+    /** Called on a long press — the demo runs conformance from here. */
+    var onLongPress: (() -> Unit)? = null
+
+    private var downAt: Long = 0
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         if (w <= 0 || h <= 0) return
         val density = resources.displayMetrics.density
@@ -42,10 +47,38 @@ class ReaderView(context: Context, private val session: Session) : View(context)
         if (lastRender == 0) canvas.drawBitmap(target, 0f, 0f, null)
     }
 
-    /** The tap-zone policy `docs/FFI.md` argues belongs in the engine. */
+    /**
+     * The tap-zone policy `docs/FFI.md` argues belongs in the engine:
+     * left third back, right third forward, middle band something else.
+     * Here the middle cycles the theme, because sepia is the only colour
+     * this demo can put on screen and it is what tests the channel order.
+     *
+     * A long press runs the conformance harness.
+     */
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.action != MotionEvent.ACTION_UP) return true
-        val moved = if (event.x < width / 3f) session.prevPage() else session.nextPage()
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                downAt = event.eventTime
+                return true
+            }
+            MotionEvent.ACTION_UP -> {}
+            else -> return true
+        }
+        if (event.eventTime - downAt > 600) {
+            onLongPress?.invoke()
+            return true
+        }
+        val third = width / 3f
+        val moved = when {
+            event.x < third -> session.prevPage()
+            event.x > third * 2 -> session.nextPage()
+            else -> {
+                session.cycleTheme()
+                invalidate()
+                onMoved?.invoke()
+                return true
+            }
+        }
         // Use the return value. Do not compare page numbers across a turn.
         if (moved) {
             invalidate()

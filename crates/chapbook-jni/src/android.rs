@@ -165,6 +165,23 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_prevPage(
     unsafe { session(handle) }.is_some_and(Session::prev_page) as jboolean
 }
 
+/// Cycle the reading theme.
+///
+/// In the demo this is the middle tap zone, and it is there for a reason:
+/// sepia is the only thing on screen whose red and blue channels differ, so
+/// it is the one test that can tell premultiplied RGBA from BGRA. Black
+/// text on white paper looks identical either way.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_cycleTheme(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if let Some(s) = unsafe { session(handle) } {
+        s.cycle_theme();
+    }
+}
+
 /// `(spine, page)` packed into one `jlong`, because they are one value and
 /// handing them over separately invites exactly the bug the conformance
 /// harness exists to catch.
