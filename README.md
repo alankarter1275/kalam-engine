@@ -38,7 +38,7 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 | `chapbook-library` | Local bookshelf: metadata, positions, annotations (SQLite) | API |
 | `chapbook-reader` | Shared reading session (open/layout/navigate/select/persist) | API |
 | `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) | Not a library |
-| `chapbook-viewer-gtk` | GTK4 reference viewer | Not a library |
+| `chapbook-viewer-gtk` | GTK4 reference viewer (Linux only) | Not a library |
 | `tools/chapbook-cli` | Dev/test CLI exercising each pipeline stage | Not a library |
 
 ## Getting started
@@ -52,12 +52,15 @@ sudo apt install libgtk-4-dev          # Debian/Ubuntu; gtk4-sys wants gtk4.pc
 
 Everything else builds from source — SQLite is bundled, fontconfig is a
 pure-Rust parser — so skipping `chapbook-viewer-gtk` needs no system
-packages at all.
+packages at all. Off Linux you skip it whether you meant to or not: `gtk4`
+is a target-gated dependency, the crate compiles to a stub `main`, and
+`cargo test --workspace` runs on macOS and Windows without GTK or
+pkg-config installed.
 
 ```sh
 cargo run -p chapbook-viewer -- <book.epub|comic.cbz|doc.pdf|opds-url>
 cargo run -p chapbook-viewer -- --gpu <book.epub>   # vello + wgpu
-cargo run -p chapbook-viewer-gtk -- <book.epub>     # GTK4
+cargo run -p chapbook-viewer-gtk -- <book.epub>     # GTK4, Linux only
 cargo run -p chapbook-cli -- --help                 # the `chapbook` dev CLI
 ```
 

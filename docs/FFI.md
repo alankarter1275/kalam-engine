@@ -525,11 +525,16 @@ does not, on Apple's own silicon, through Apple's own SDK.
 Three things about the host, none of them iOS-specific, all of them waiting
 for whoever opens this repo on a Mac.
 
-**`cargo test --workspace` does not run on macOS at all.** `chapbook-viewer-gtk`
-needs `pkg-config` and glib, and the build fails before a single test does.
-`--exclude chapbook-viewer-gtk` is the whole workaround, but the published gate
-in CONTRIBUTING is a workspace command, so the first thing a Mac session does
-is watch the documented gate fail for a reason that has nothing to do with it.
+**`cargo test --workspace` did not run on macOS at all** — fixed here.
+`chapbook-viewer-gtk` reaches GTK4 through `gtk4-sys`, which probes for
+`gtk4.pc` with `pkg-config`, and the build failed before a single test ran. So
+the first thing a Mac session did was watch the gate CONTRIBUTING publishes
+fail for a reason that had nothing to do with it. The crate is now Linux-only
+by construction: every dependency sits under
+`[target.'cfg(target_os = "linux")'.dependencies]`, the viewer proper moved to
+`src/linux.rs`, and off Linux `main.rs` is a stub that explains itself. Linux
+resolves all four dependencies as before; macOS resolves none. The published
+gate now runs unmodified on a Mac.
 
 **Two reader tests fail on macOS, and they were failing before this branch
 existed.** `epub_session_renders_navigates_and_selects` and

@@ -17,7 +17,7 @@ There are four shells in the workspace to read alongside it:
 |---|---|---|
 | smallest | `chapbook-viewer/examples/minimal.rs` | the whole contract, nothing else |
 | desktop | `chapbook-viewer` | selection, links, clipboard, touch, GPU |
-| toolkit | `chapbook-viewer-gtk` | the same session under someone else's main loop |
+| toolkit | `chapbook-viewer-gtk` (Linux only) | the same session under someone else's main loop |
 | device | `chapbook-panel-fbdev/examples/show.rs` | rasterizing yourself, panel policy, damage |
 
 Start from `minimal.rs`. It exists to be copied.
