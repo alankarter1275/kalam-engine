@@ -109,6 +109,7 @@ units resolved by approximation.
 | [docs/LOCATORS.md](docs/LOCATORS.md) | Reading positions that survive relayout, and EPUB CFI |
 | [docs/OPDS-INTEROP.md](docs/OPDS-INTEROP.md) | What the OPDS client must interoperate with, and how it was verified |
 | [docs/PLATFORM.md](docs/PLATFORM.md) | Porting to real devices: panels, e-ink, cross-compilation, what is proven and what is not |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | The verification gate, the invariants, and the things that fail quietly |
 | [NOTICE](NOTICE) | Third-party licences a binary carries |
 
 ## License

@@ -1,3 +1,7 @@
 /target
 /fixtures/corpus/
 **/*.pending-snap
+
+# Local tooling config: kept on disk, not published.
+/CLAUDE.md
+/.claude/

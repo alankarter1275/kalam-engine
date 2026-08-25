@@ -1,0 +1,93 @@
+# Contributing
+
+Design lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), reading
+positions in [docs/LOCATORS.md](docs/LOCATORS.md), the OPDS wire contract in
+[docs/OPDS-INTEROP.md](docs/OPDS-INTEROP.md), and device porting in
+[docs/PLATFORM.md](docs/PLATFORM.md). Read the relevant one before changing
+that subsystem — several of the constraints below are load-bearing in ways
+the code alone does not explain.
+
+## Verifying
+
+Every change must pass the same gate CI runs, in this order:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets   # CI sets RUSTFLAGS=-D warnings
+cargo test --workspace
+cargo deny check licenses                # see NOTICE
+```
+
+Prerequisites are in the [README](README.md#getting-started).
+
+Two kinds of golden test, with different update paths. Render goldens are
+byte-exact PNGs; regenerate them deliberately with
+`UPDATE_RENDER_GOLDENS=1 cargo test -p <crate>` and eyeball the diff before
+committing — a golden that changed for a reason you cannot name is a bug you
+are about to bless. Layout and style goldens use `insta`, so
+`cargo insta review`.
+
+The real-world corpus sweep is ignored by default because it needs a
+download: `fixtures/fetch-corpus.sh`, then
+`cargo test -p chapbook-cli --test corpus -- --ignored`.
+
+## Invariants
+
+These are not style preferences. Each one has cost somebody a day.
+
+- **stylo lockstep pins.** `stylo`, `stylo_traits`, `stylo_atoms`,
+  `stylo_static_prefs`, `stylo_dom`, `selectors` and `cssparser` are pinned
+  with `=` and upgrade all at once, as a deliberate task — Blitz's diff is
+  the migration guide. `html5ever`/`markup5ever`/`xml5ever` must match the
+  markup5ever minor that stylo's selector types use. Never bump one alone.
+- **MSRV 1.92, stable toolchain.** No nightly features.
+- **No async runtime.** OPDS is blocking `ureq`; the page loader is a plain
+  thread.
+- **Core stays GPU-assumption-free**, so it can port to e-ink.
+- **`DomNode` must stay pointer-sized** — stylo's style sharing cache
+  statically asserts it.
+- **Never compact the spine.** A dangling idref keeps its slot with an empty
+  href, because indices are locator identity and persisted positions are
+  keyed by them.
+- **Viewers never call `unit_bytes`/`resource` on the UI thread.** Both may
+  block for seconds — a remote comic page, a cold PDF rasterization. That is
+  what `chapbook-reader/src/loader.rs` is for.
+- **Model types come from `chapbook_core` only**, never via an EPUB
+  re-export, so `grep chapbook_epub` stays an honest coupling map. Fragments
+  reference their source by opaque `u64` tag, never by DOM type.
+- **Fragmentation properties live in chapbook-layout's sidecar cascade.**
+  servo-mode stylo does not carry `break-*`, `page-break-*`, `widows`,
+  `orphans` or `hyphens`, so adding one means adding it there.
+
+## Out of scope
+
+Fixed-layout EPUB, JavaScript, MathML, vertical writing modes, absolute
+positioning, media overlays, DRM.
+
+## Gotchas
+
+Things that fail quietly rather than loudly.
+
+- **Scripted edits against rustfmt-reflowed code silently no-op.** A `sed`
+  or Python string replacement matches nothing when rustfmt has rewrapped
+  the lines since you copied them, and reports success either way. Grep to
+  confirm the edit landed.
+- **quick-xml 0.42 reports `&amp;` and friends as `Event::GeneralRef`,**
+  splitting the surrounding text into separate events. A `_ => {}` arm
+  deletes every entity, and `trim_text(true)` then eats the spaces on either
+  side — `Science &amp; Nature` becomes `ScienceNature`. Handle
+  `GeneralRef`, leave `trim_text` off, and trim assembled values instead.
+- **cosmic-text 0.19:** `Buffer` methods do not take a `FontSystem` except
+  `new` and `shape_until_scroll`. Clamp `line_height` above zero — real
+  books ship `line-height: 0`.
+- **Library tests set process-global environment,** so they serialize behind
+  `ENV_LOCK` and use per-test directories. Follow the existing
+  `open_isolated` / `reopen_isolated` helpers in
+  `chapbook-reader/tests/session.rs`.
+
+## Licensing
+
+Contributions are dual licensed MIT OR Apache-2.0, matching the project. New
+dependencies must resolve to a license already in `deny.toml`, or the CI
+license job fails and the addition becomes a decision somebody makes on
+purpose. [NOTICE](NOTICE) explains what a binary already carries and why.

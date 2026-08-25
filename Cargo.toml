@@ -26,6 +26,8 @@ edition = "2021"
 rust-version = "1.92" # floor: hayro (stylo needs 1.89)
 license = "MIT OR Apache-2.0"
 authors = ["Jeffrey T. Peckham <abic@ophymx.com>"]
+repository = "https://github.com/ophymx/chapbook"
+readme = "README.md"
 
 [workspace.dependencies]
 # Internal crates
