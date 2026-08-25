@@ -60,10 +60,14 @@
 //!   substring). Pagination back-rel is `previous`; totals via OpenSearch
 //!   elements (1.2) or `numberOfItems`/`currentPage` (2.0). Both RFC 3339
 //!   and date-only date shapes parse everywhere.
-//! - Auth: HTTP Basic on 401 at *any* point in a flow, plus the OPDS
-//!   Authentication Document (`application/opds-authentication+json`) for a
-//!   native login dialog. Catalog URLs may embed per-user API keys: opaque,
-//!   never logged or normalized.
+//! - Auth: an opaque `Authorization` header value the caller sets, with
+//!   HTTP Basic as the convenience form, on 401 at *any* point in a flow,
+//!   plus the OPDS Authentication Document
+//!   (`application/opds-authentication+json`) for a native login dialog.
+//!   The scheme is deliberately not modelled here — a bearer token is the
+//!   same field — and anything that cannot be one header belongs in the
+//!   injected [`HttpClient`]. Catalog URLs may embed per-user API keys:
+//!   opaque, never logged or normalized.
 //! - No conditional requests and no Range resume are counted on: a download
 //!   lands complete or not at all, and redirects (incl. cross-host) are
 //!   followed.

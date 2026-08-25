@@ -35,9 +35,9 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    resolve_in_text, BookKind, FontReport, FontSource, LayeredLocator, Locator, PageMetrics,
-    PixelFormat, Point, Publication, ReadingSettings, Rect, Result, Rgba, Rotation, SpineItem,
-    TocEntry,
+    resolve_in_text, BookKind, CredentialStore, FontReport, FontSource, LayeredLocator, Locator,
+    NoCredentials, PageMetrics, PixelFormat, Point, Publication, ReadingSettings, Rect, Result,
+    Rgba, Rotation, SpineItem, TocEntry,
 };
 use chapbook_layout::{cascade, dom, ChapterLayout};
 use chapbook_library::AnnotationKind;
@@ -282,6 +282,85 @@ pub struct Session {
     pending_anchor: Option<String>,
 }
 
+/// What a session needs from its host, instead of assuming a desktop.
+///
+/// Every field here replaces something the session used to reach for on its
+/// own — installed fonts, environment variables — and each of those
+/// assumptions holds on exactly one of the platforms chapbook targets.
+/// Adding to this struct is how the next one arrives (`docs/FFI.md` lists
+/// the transport, the library directory and a cache budget as the ones
+/// still outstanding), which is the point of it being a struct: the
+/// alternative is changing `open`'s signature once per capability.
+pub struct SessionConfig {
+    /// Where fonts come from. Required, and required for the reasons in
+    /// [`Session::open`].
+    pub fonts: FontSource,
+    /// Where secrets come from. Defaults to [`NoCredentials`], because the
+    /// engine has no business guessing that a machine has an environment,
+    /// a Keychain, or anything at all — a shell says. Desktop shells and
+    /// the CLI pass `EnvCredentials`; see `chapbook_core::credential`.
+    pub credentials: Arc<dyn CredentialStore>,
+}
+
+impl SessionConfig {
+    pub fn new(fonts: FontSource) -> SessionConfig {
+        SessionConfig {
+            fonts,
+            credentials: Arc::new(NoCredentials),
+        }
+    }
+
+    pub fn with_credentials(mut self, credentials: Arc<dyn CredentialStore>) -> SessionConfig {
+        self.credentials = credentials;
+        self
+    }
+}
+
+impl std::fmt::Debug for SessionConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionConfig")
+            .field("fonts", &self.fonts)
+            .field("credentials", &"<dyn CredentialStore>")
+            .finish()
+    }
+}
+
+/// Ask the host's store for this catalog's credential and apply it.
+///
+/// Returns whether the client came away with one. Nothing here learns the
+/// scheme: the store hands back a complete `Authorization` header value and
+/// `opds-client` sends it verbatim, which is what lets a bearer token
+/// arrive later without touching this code or the C ABI that will wrap it.
+#[cfg(feature = "opds")]
+fn authorize(
+    client: &mut chapbook_opds::OpdsClient,
+    store: &dyn CredentialStore,
+    key: Option<&chapbook_core::CredentialKey>,
+    freshness: chapbook_core::Freshness,
+) -> bool {
+    use chapbook_core::CredentialLookup;
+    let Some(key) = key else {
+        return false;
+    };
+    // The key is safe to print: it is an origin or a row id, never the
+    // secret-bearing path a catalog URL may carry.
+    match store.get(key, freshness) {
+        CredentialLookup::Found(credential) => {
+            client.set_authorization(credential.authorization);
+            true
+        }
+        CredentialLookup::Missing => false,
+        CredentialLookup::Locked => {
+            eprintln!("chapbook: credentials for {key} are stored but locked right now");
+            false
+        }
+        CredentialLookup::Failed(reason) => {
+            eprintln!("chapbook: credential store failed for {key}: {reason}");
+            false
+        }
+    }
+}
+
 impl Session {
     /// Open a book from a path (`.epub`, `.cbz`) or an `http(s)://` OPDS
     /// URL (resolved to a PSE page stream). Local books are matched into
@@ -297,7 +376,27 @@ impl Session {
     /// platforms. Desktop shells want [`FontSource::host`]; anything whose
     /// output is compared against a golden wants
     /// [`FontSource::embedded`]. See `chapbook_core::font`.
+    ///
+    /// Credentials default to none; a shell that can reach a host store —
+    /// or just an environment — passes one through
+    /// [`Session::open_with`].
     pub fn open(source: &str, fonts: FontSource) -> Result<Session> {
+        Session::open_with(source, SessionConfig::new(fonts))
+    }
+
+    /// [`Session::open`], with the host's capabilities supplied explicitly.
+    ///
+    /// The form every non-desktop shell wants, and the one the FFI will
+    /// wrap: nothing in here is reached for behind the caller's back.
+    pub fn open_with(source: &str, config: SessionConfig) -> Result<Session> {
+        let SessionConfig {
+            fonts,
+            // Only the OPDS path has anything to authenticate; a build
+            // without it still takes the store, so a shell's construction
+            // code does not change with the feature set.
+            #[cfg_attr(not(feature = "opds"), allow(unused_variables))]
+            credentials,
+        } = config;
         let mut library =
             chapbook_library::Library::open(&chapbook_library::Library::default_dir())
                 .map_err(|e| eprintln!("chapbook: library unavailable: {e}"))
@@ -314,16 +413,39 @@ impl Session {
             return Err(chapbook_core::ChapbookError::FormatNotBuilt("OPDS"));
             #[cfg(feature = "opds")]
             {
-                let mut client = chapbook_opds::OpdsClient::with_ureq();
-                if let (Ok(user), Ok(pass)) = (
-                    std::env::var("CHAPBOOK_OPDS_USER"),
-                    std::env::var("CHAPBOOK_OPDS_PASSWORD"),
-                ) {
-                    client.set_basic_auth(&user, &pass);
-                }
+                use chapbook_core::Freshness;
+
+                // Keyed by origin, not by the URL: the path may carry a
+                // per-user API key, and a catalog that moves its path must
+                // not lose its login. See `chapbook_core::credential`.
+                let key = chapbook_core::CredentialKey::http_origin(source);
                 let cache = chapbook_library::Library::default_dir().join("pse-cache");
-                let comic = chapbook_opds::StreamedComic::open(client, source, &cache)
-                    .map_err(chapbook_opds::to_chapbook_error)?;
+                let store = credentials.as_ref();
+
+                let mut client = chapbook_opds::OpdsClient::with_ureq();
+                authorize(&mut client, store, key.as_ref(), Freshness::Cached);
+                let opened = chapbook_opds::StreamedComic::open(client, source, &cache);
+
+                // One retry, and only on a 401. `Freshness::Renewed` is
+                // what makes an expiring secret work: a store backed by a
+                // refreshable token can produce a new one here, and a
+                // store that cannot says so by returning nothing, which
+                // costs exactly one skipped retry. Prompting is not our
+                // job — the error carries the server's Authentication
+                // Document so the shell can do it.
+                let comic = match opened {
+                    Err(chapbook_opds::OpdsError::AuthRequired(doc)) => {
+                        let mut retry = chapbook_opds::OpdsClient::with_ureq();
+                        if !authorize(&mut retry, store, key.as_ref(), Freshness::Renewed) {
+                            return Err(chapbook_opds::to_chapbook_error(
+                                chapbook_opds::OpdsError::AuthRequired(doc),
+                            ));
+                        }
+                        chapbook_opds::StreamedComic::open(retry, source, &cache)
+                            .map_err(chapbook_opds::to_chapbook_error)?
+                    }
+                    other => other.map_err(chapbook_opds::to_chapbook_error)?,
+                };
                 let resume = comic.resume_page().unwrap_or(0);
                 (OpenBook::Comic(Arc::new(comic)), None, resume, None, true)
             }

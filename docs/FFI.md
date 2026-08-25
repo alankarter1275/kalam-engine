@@ -109,8 +109,11 @@ currently a parse error rather than a CBZ.
 Everything else the constructor implicitly reaches for should come in the
 same way, because each is an environment assumption that only holds on a
 desktop: the library directory (today `CHAPBOOK_LIBRARY_DIR`, or XDG, or
-`$HOME`), the font source, and OPDS credentials (today two environment
-variables). A builder, not eleven arguments.
+`$HOME`), the font source, and OPDS credentials. A builder, not eleven
+arguments. Two of those have landed — `FontSource` and
+`chapbook_core::CredentialStore`, the latter reaching `Session` through
+`SessionConfig`, which is that builder in its first form and the thing the
+remaining capabilities get added to rather than a new argument each.
 
 **Errors.** `ChapbookError` becomes a stable numbered enum, returned as a
 negative `int32_t`, with a per-session "last error message" the host can
@@ -495,7 +498,9 @@ The larger question this raised — whether the engine is the right shape to
 build an Apple app on at all, against leaning on Apple's own frameworks — is
 answered in [PLATFORM.md §7](PLATFORM.md). Short version: the pipeline earns
 its place on measured numbers and on locators, and the *edges* — OPDS
-transport, credentials, file custody — do not. One finding there reaches back
+transport, credentials, file custody — do not. (Credentials have since
+been extracted; see PLATFORM §7 for the three decisions that shaped it, all
+of them made for this document's boundary rather than for today's caller.) One finding there reaches back
 into this document: accessibility is built from the display list, so keeping
 the display list out of the first C ABI decides that v1 cannot have a
 screen-reader path.
@@ -1190,8 +1195,10 @@ cleanup. That is right about the dependency and wrong about the order:
 1. **Spike (throwaway).** Rungs 1–4 above. Output is a list of API defects,
    not code worth keeping.
 2. **Fix the shape, in safe Rust.** Typed sources and a builder, a font
-   source, an HTTP transport (`opds-client` now takes one; the session does
-   not pass one down), a credential store, `render_into`, a cache budget and
+   source (done), a credential store (done — `SessionConfig` is the builder
+   in its first form), an HTTP transport (`opds-client` takes one; the
+   session still does not pass one down, which is why the credential retry
+   path in `Session::open_with` has no test), `render_into`, a cache budget and
    `release_caches`, `suspend()`, and the optional `library` feature. The
    first four are one constructor argument between them, and doing them
    separately means changing that signature four times. All of it tested in the workspace,

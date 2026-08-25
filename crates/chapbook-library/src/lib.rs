@@ -81,14 +81,18 @@ pub struct Annotation {
     pub updated_at: i64,
 }
 
+/// A catalog the library knows about. Deliberately holds no secret: the
+/// password or token for this source lives in the host's credential store,
+/// keyed by `chapbook_core::CredentialKey::opds_source(id)`.
 #[derive(Debug, Clone)]
 pub struct OpdsSource {
     pub id: i64,
     /// Opaque, possibly secret-bearing — never log or normalize.
     pub url: String,
     pub title: Option<String>,
+    /// Account label for display. Not a secret and not sent anywhere; the
+    /// credential that goes with it is in the credential store.
     pub auth_user: Option<String>,
-    pub auth_secret: Option<String>,
 }
 
 pub struct Library {
@@ -610,18 +614,19 @@ impl Library {
         Ok(())
     }
 
+    /// Record a catalog. Takes no secret by design — store the credential
+    /// under `CredentialKey::opds_source(id)` with the returned id.
     pub fn add_opds_source(
         &mut self,
         url: &str,
         title: Option<&str>,
         auth_user: Option<&str>,
-        auth_secret: Option<&str>,
     ) -> Result<i64> {
         self.conn
             .execute(
-                "INSERT INTO opds_sources (url, title, auth_user, auth_secret, added_at)
-                 VALUES (?1, ?2, ?3, ?4, strftime('%s','now'))",
-                params![url, title, auth_user, auth_secret],
+                "INSERT INTO opds_sources (url, title, auth_user, added_at)
+                 VALUES (?1, ?2, ?3, strftime('%s','now'))",
+                params![url, title, auth_user],
             )
             .map_err(db_err)?;
         Ok(self.conn.last_insert_rowid())
@@ -631,7 +636,7 @@ impl Library {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, url, title, auth_user, auth_secret
+                "SELECT id, url, title, auth_user
                  FROM opds_sources WHERE deleted = 0 ORDER BY id",
             )
             .map_err(db_err)?;
@@ -642,7 +647,6 @@ impl Library {
                     url: row.get(1)?,
                     title: row.get(2)?,
                     auth_user: row.get(3)?,
-                    auth_secret: row.get(4)?,
                 })
             })
             .map_err(db_err)?;

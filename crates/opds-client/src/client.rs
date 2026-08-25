@@ -16,8 +16,14 @@ use crate::OpdsError;
 
 pub struct OpdsClient {
     http: Box<dyn HttpClient>,
-    /// Precomputed `Authorization: Basic ...` header value.
-    basic_auth: Option<String>,
+    /// Precomputed `Authorization` header value, scheme word included.
+    ///
+    /// Opaque on purpose: `Basic ...` today, and a `Bearer ...` token or a
+    /// per-user API key is the same field. Nothing here branches on the
+    /// scheme, so adding one is a caller-side change and not a change to
+    /// this type — which is what keeps the scheme out of the eventual C
+    /// ABI. See `chapbook_core::credential`.
+    authorization: Option<String>,
 }
 
 impl OpdsClient {
@@ -25,7 +31,7 @@ impl OpdsClient {
     pub fn new(http: impl HttpClient + 'static) -> Self {
         OpdsClient {
             http: Box::new(http),
-            basic_auth: None,
+            authorization: None,
         }
     }
 
@@ -34,7 +40,7 @@ impl OpdsClient {
     pub fn with_boxed_http(http: Box<dyn HttpClient>) -> Self {
         OpdsClient {
             http,
-            basic_auth: None,
+            authorization: None,
         }
     }
 
@@ -45,12 +51,32 @@ impl OpdsClient {
         Self::new(crate::UreqHttp::new())
     }
 
-    /// Set credentials for this catalog. Any request may 401 mid-flow; the
-    /// caller prompts (using the Authentication Document when present) and
-    /// retries after calling this.
+    /// Set the `Authorization` header value sent with every request —
+    /// `Basic dXNlcjpwdw==`, `Bearer eyJ...`, whatever the host's scheme
+    /// produced. Sent verbatim; this crate never inspects it.
+    ///
+    /// This is the primitive, and [`set_basic_auth`](Self::set_basic_auth)
+    /// is a convenience over it. A scheme that cannot be reduced to one
+    /// header — per-request signing, a cookie session — belongs in the
+    /// injected [`HttpClient`](crate::HttpClient) instead, which sees the
+    /// whole request.
+    ///
+    /// Any request may 401 mid-flow; the caller prompts (using the
+    /// Authentication Document when present) and retries after calling
+    /// this.
+    pub fn set_authorization(&mut self, value: impl Into<String>) {
+        self.authorization = Some(value.into());
+    }
+
+    /// Set HTTP Basic credentials for this catalog.
     pub fn set_basic_auth(&mut self, username: &str, password: &str) {
         let raw = format!("{username}:{password}");
-        self.basic_auth = Some(format!("Basic {}", base64(raw.as_bytes())));
+        self.set_authorization(format!("Basic {}", base64(raw.as_bytes())));
+    }
+
+    /// Drop any credentials, so the next request goes out unauthenticated.
+    pub fn clear_authorization(&mut self) {
+        self.authorization = None;
     }
 
     /// Fetch and parse a catalog feed (or standalone entry/publication).
@@ -133,7 +159,7 @@ impl OpdsClient {
     /// §1), plus credentials when the caller has set them.
     fn request(&self, url: &str, accept: &str) -> HttpRequest {
         let request = HttpRequest::new(url).header("Accept", accept);
-        match &self.basic_auth {
+        match &self.authorization {
             Some(auth) => request.header("Authorization", auth),
             None => request,
         }

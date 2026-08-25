@@ -61,6 +61,12 @@ pub enum ChapbookError {
     #[error("library database error: {0}")]
     Library(String),
 
+    /// A host credential store refused or failed. Distinct from
+    /// [`Self::Opds`]: the server was never asked, or asked and answered
+    /// 401 with nothing to retry with. See `chapbook_core::credential`.
+    #[error("credential error: {0}")]
+    Credential(String),
+
     /// A display panel rejected an update, or could not be reached.
     #[error("panel error: {0}")]
     Panel(String),

@@ -36,7 +36,13 @@ fn main() {
         eprintln!("usage: chapbook-viewer [--gpu] <book.epub|comic.cbz|doc.pdf|opds-url>");
         std::process::exit(2);
     };
-    let session = match Session::open(&source, chapbook_core::FontSource::host()) {
+    // The host's fonts and, for OPDS catalogs, the host's environment —
+    // said out loud rather than reached for inside the session. A shell on
+    // a platform with real secret storage swaps the store here and changes
+    // nothing else.
+    let config = chapbook_reader::SessionConfig::new(chapbook_core::FontSource::host())
+        .with_credentials(std::sync::Arc::new(chapbook_core::EnvCredentials));
+    let session = match Session::open_with(&source, config) {
         Ok(session) => session,
         Err(e) => {
             eprintln!("chapbook-viewer: {e}");

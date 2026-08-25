@@ -7,6 +7,7 @@
 
 mod book;
 mod cfi;
+mod credential;
 mod error;
 mod font;
 mod geometry;
@@ -18,6 +19,10 @@ pub use book::{
     BookKind, BookMetadata, Publication, Resource, SpineItem, TextGlyph, TextLine, TocEntry,
 };
 pub use cfi::{Cfi, CfiStep};
+pub use credential::{
+    basic_authorization, Credential, CredentialKey, CredentialLookup, CredentialStore,
+    EnvCredentials, Freshness, MemoryCredentials, NoCredentials,
+};
 pub use error::ChapbookError;
 pub use font::{
     Faces, FallbackFamilies, Fallbacks, FontReport, FontSource, GenericFamilies, Generics,

@@ -205,6 +205,34 @@ fn a_401_surfaces_the_authentication_document_then_credentials_retry() {
 }
 
 #[test]
+fn a_scheme_this_crate_has_never_heard_of_rides_through_verbatim() {
+    // The credential is an opaque header value, so a bearer token — or
+    // anything else a host's store produces — needs no code here. This is
+    // the test that keeps it that way: if the crate ever starts parsing
+    // the scheme, this is what breaks.
+    let http = catalog().requiring_auth();
+    let mut client = OpdsClient::new(http.clone());
+
+    client.set_authorization("Bearer eyJhbGciOiJub25lIn0.e30.");
+    let feed = client.fetch(&format!("{HOST}/opds/")).unwrap();
+    assert_eq!(feed.title, "Private Shelf");
+
+    let sent = http.requests();
+    assert_eq!(
+        header_of(&sent[0].1, "Authorization").as_deref(),
+        Some("Bearer eyJhbGciOiJub25lIn0.e30."),
+        "sent unaltered, scheme word and all"
+    );
+
+    // And clearing it puts the flow back where it started.
+    client.clear_authorization();
+    assert!(matches!(
+        client.fetch(&format!("{HOST}/opds/")),
+        Err(OpdsError::AuthRequired(_))
+    ));
+}
+
+#[test]
 fn the_default_download_lands_complete_and_leaves_no_temp_file() {
     let dir = scratch("inject");
     let dest = dir.join("b1.epub");

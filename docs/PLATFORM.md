@@ -713,11 +713,47 @@ source and the credential store below — a constructor that takes the host's
 capabilities rather than assuming a desktop. Worth doing as one piece rather
 than three.
 
-**Credentials have not gone with it.** `opds_sources.auth_secret` is plaintext in
-SQLite, and `Session::open` reads `CHAPBOOK_OPDS_USER` and
-`CHAPBOOK_OPDS_PASSWORD` from environment variables that do not exist on a
-phone. Both belong behind an injected credential store, which is Keychain on
-Apple platforms and the same shape as the font source everywhere else.
+**Credentials have now gone with it — done.** They were the worse half of
+the problem: `opds_sources.auth_secret` was plaintext in SQLite, and
+`Session::open` read `CHAPBOOK_OPDS_USER` and `CHAPBOOK_OPDS_PASSWORD` from
+environment variables that do not exist on a phone. Both are gone. A
+`chapbook_core::CredentialStore` is injected through `SessionConfig`
+(Keychain, Keystore, Secret Service, `EnvCredentials` for the CLI and a
+headless box, `NoCredentials` in a browser), and the schema's secret column
+is dropped by migration v3 rather than merely left unread, so a future
+writer cannot quietly reintroduce a plaintext store.
+
+Three decisions in that seam were made for the C ABI's sake rather than for
+today's, because they are the expensive ones to change once a Contract-tier
+header exists:
+
+- **The value is an opaque `Authorization` header**, not a username and a
+  password. `opds-client` already stored a precomputed header string, so
+  `set_authorization` is the primitive and `set_basic_auth` a convenience
+  over it. HTTP Basic today; an OAuth bearer token is the same field and
+  reaches the engine without touching engine code. What genuinely cannot be
+  one constant header — per-request signing, cookie sessions — belongs to
+  the injected `HttpClient`, which sees the whole request; that division is
+  written into `http.rs`.
+- **The key is stable and not a secret.** A catalog URL may carry a
+  per-user API key in its path, so `CredentialKey` is an origin or a
+  library row id. This is the highest-risk item and the one that looks
+  lowest: a key change orphans entries already written to a device's
+  Keychain, and no compiler catches it.
+- **Lookups repeat, and say why they failed.** `Freshness::Renewed` is how
+  a caller reports that the last value was rejected, which is the whole
+  difference between a constant secret and an expiring one;
+  `CredentialLookup` separates *nothing stored* from *locked right now*, so
+  a shell does not re-prompt for a password the user already gave a
+  Keychain that has not been unlocked yet.
+
+Prompting stays in the shell, deliberately and as a hard rule. Android's
+user-authentication-bound keys prompt on the UI thread and chapbook reaches
+credentials from the loader thread, so a store that can block on a person is
+a deadlock. `opds-client` already declines to retry and hands back the
+server's Authentication Document, which is what a native login dialog is
+built from. That keeps OAuth's browser round-trip entirely outside the
+boundary.
 
 ### Custody: bookmarks, not copies
 
@@ -785,8 +821,9 @@ bug.
 1. **FFI boundary (§3)** — gate on the largest device markets; forces the
    session API into SDK shape, which is also what §2's remaining piece
    (typed sources and injectable I/O instead of `open(&str)`) needs.
-2. **The edges (§7)** — the injected transport, credential store and file
-   custody that the iOS assessment turned up. Sequenced here because it is
+2. **The edges (§7)** — the injected transport and file custody that the
+   iOS assessment turned up. The credential store is done; the transport
+   still needs to reach `Session`, which is the same constructor argument. Sequenced here because it is
    the same shape work as §2's remaining piece and lands in the same pass,
    and because the accessibility finding constrains what the first C ABI
    may leave out.

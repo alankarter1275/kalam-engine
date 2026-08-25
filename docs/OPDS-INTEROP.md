@@ -102,7 +102,13 @@ Two tiers, both required:
 1. **HTTP Basic**, including mid-flow: any request — feed, search,
    acquisition, page image — may return 401. Re-prompt/retry with
    credentials; persist per-catalog. (This is all several popular reader
-   clients support, and all many servers offer.)
+   clients support, and all many servers offer.) The client holds an
+   opaque `Authorization` header value rather than a username and
+   password, so a bearer token or a per-user API key is the same field and
+   needs no protocol work here; persistence is the host's, behind
+   `chapbook_core::CredentialStore`. Anything that cannot be one constant
+   header — per-request signing, cookie sessions — is the injected
+   `HttpClient`'s job instead.
 2. **OPDS Authentication Document** (`application/opds-authentication+json`):
    well-behaved servers return this JSON alongside 401. Parse it
    (fixture: `authentication.opds-auth.json`): `title`, `description`,

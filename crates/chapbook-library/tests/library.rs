@@ -138,18 +138,25 @@ fn annotations_roundtrip_and_soft_delete() {
 }
 
 #[test]
-fn opds_sources_roundtrip() {
+fn opds_sources_roundtrip_and_hold_no_secret() {
     let (mut lib, dir) = temp_library();
-    lib.add_opds_source(
-        "https://cat.example.com/opds/abc123secret/",
-        Some("Example"),
-        Some("user"),
-        Some("pw"),
-    )
-    .unwrap();
+    let id = lib
+        .add_opds_source(
+            "https://cat.example.com/opds/abc123secret/",
+            Some("Example"),
+            Some("user"),
+        )
+        .unwrap();
     let sources = lib.opds_sources().unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].title.as_deref(), Some("Example"));
+    assert_eq!(sources[0].auth_user.as_deref(), Some("user"));
+
+    // The id is the credential key, and it must not be secret-bearing.
+    // (That the secret column is gone from the schema is db.rs's test.)
+    let key = chapbook_core::CredentialKey::opds_source(id);
+    assert!(!key.as_str().contains("abc123secret"));
+
     std::fs::remove_dir_all(&dir).ok();
 }
 

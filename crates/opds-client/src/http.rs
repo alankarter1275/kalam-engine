@@ -95,6 +95,17 @@ impl std::error::Error for HttpError {}
 ///   acquisitions onto CDNs.
 /// - **Send the given headers unaltered**, per [`HttpRequest::headers`].
 /// - **Not retry on its own.** Auth retry is the caller's flow.
+///
+/// ## What belongs here rather than in the credential
+///
+/// [`OpdsClient::set_authorization`](crate::OpdsClient::set_authorization)
+/// covers every scheme that reduces to one constant header — Basic, bearer
+/// tokens, per-user API keys. The two that do not are **per-request
+/// signing**, where the value depends on the method, path or body, and
+/// **cookie sessions**, where the state is a jar rather than a header. Both
+/// need to see the whole request, so both are this trait's job, not the
+/// credential store's. Keeping that line means the credential stays opaque
+/// bytes all the way out to a host.
 pub trait HttpClient: Send + Sync {
     fn get(&self, request: HttpRequest) -> Result<HttpResponse, HttpError>;
 

@@ -1130,3 +1130,44 @@ fn the_session_can_enumerate_the_families_it_was_given() {
     );
     assert_eq!(session.font_report().faces, 4);
 }
+
+/// The host capabilities a session used to reach for on its own now arrive
+/// through `SessionConfig`. This covers the plumbing; the OPDS credential
+/// flow itself is not reachable from a test yet, because `Session` still
+/// builds its own `ureq` transport rather than taking one (docs/FFI.md,
+/// step 2). When the transport becomes injectable, the retry path in
+/// `open_with` is the thing to test here.
+#[test]
+fn a_session_takes_its_host_capabilities_explicitly() {
+    use chapbook_core::{Credential, CredentialKey, CredentialStore, Freshness, MemoryCredentials};
+    use chapbook_reader::SessionConfig;
+
+    let guard = ENV_LOCK.lock().unwrap();
+    let dir = std::env::temp_dir().join(format!(
+        "chapbook-session-test-{}-config",
+        std::process::id()
+    ));
+    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
+
+    let store = std::sync::Arc::new(MemoryCredentials::new());
+    let key = CredentialKey::http_origin("https://cat.example.com/opds/abc123secret/").unwrap();
+    store
+        .store(&key, &Credential::basic("reader", "pw"))
+        .unwrap();
+
+    let config = SessionConfig::new(fixture_fonts()).with_credentials(store.clone());
+    // A store in the config is not a store the local path consults.
+    let session = Session::open_with(&fixture("epub/minimal.epub"), config).unwrap();
+    assert!(session.spine_len() > 0);
+    drop(guard);
+
+    // And the config's Debug is safe to log: no secret in it.
+    let shown = format!("{:?}", SessionConfig::new(fixture_fonts()));
+    assert!(!shown.contains("pw"), "{shown}");
+
+    assert!(matches!(
+        store.get(&key, Freshness::Cached),
+        chapbook_core::CredentialLookup::Found(_)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -284,15 +284,19 @@ fn push_field(out: &mut String, name: &str, value: Option<&str>) {
     }
 }
 
-fn opds_client() -> chapbook_opds::OpdsClient {
+fn opds_client(url: &str) -> chapbook_opds::OpdsClient {
+    use chapbook_core::{CredentialLookup, CredentialStore, Freshness};
+
     let mut client = chapbook_opds::OpdsClient::with_ureq();
-    // Credentials via environment for the dev CLI; the viewer will prompt
-    // using the Authentication Document instead.
-    if let (Ok(user), Ok(pass)) = (
-        std::env::var("CHAPBOOK_OPDS_USER"),
-        std::env::var("CHAPBOOK_OPDS_PASSWORD"),
-    ) {
-        client.set_basic_auth(&user, &pass);
+    // The dev CLI's store is the environment; a viewer on a platform with
+    // real secret storage injects a different one and this code is the
+    // same shape. Keyed by origin so a catalog URL's secret-bearing path
+    // never becomes part of a key.
+    let store = chapbook_core::EnvCredentials;
+    if let Some(key) = chapbook_core::CredentialKey::http_origin(url) {
+        if let CredentialLookup::Found(credential) = store.get(&key, Freshness::Cached) {
+            client.set_authorization(credential.authorization);
+        }
     }
     client
 }
@@ -301,9 +305,11 @@ fn describe_opds_error(e: chapbook_opds::OpdsError) -> chapbook_core::ChapbookEr
     if let chapbook_opds::OpdsError::AuthRequired(Some(doc)) = &e {
         let flows: Vec<&str> = doc.authentication.iter().map(|f| f.kind.as_str()).collect();
         return chapbook_core::ChapbookError::Opds(format!(
-            "authentication required by \"{}\" (flows: {}) — set CHAPBOOK_OPDS_USER / CHAPBOOK_OPDS_PASSWORD",
+            "authentication required by \"{}\" (flows: {}) — set {} / {}",
             doc.title,
-            flows.join(", ")
+            flows.join(", "),
+            chapbook_core::EnvCredentials::USER_VAR,
+            chapbook_core::EnvCredentials::PASSWORD_VAR,
         ));
     }
     chapbook_opds::to_chapbook_error(e)
@@ -384,12 +390,12 @@ fn dump_feed(feed: &chapbook_opds::Feed) -> String {
 }
 
 pub fn opds_ls(url: &str) -> Result<String> {
-    let feed = opds_client().fetch(url).map_err(describe_opds_error)?;
+    let feed = opds_client(url).fetch(url).map_err(describe_opds_error)?;
     Ok(dump_feed(&feed))
 }
 
 pub fn opds_search(url: &str, query: &str) -> Result<String> {
-    let client = opds_client();
+    let client = opds_client(url);
     let feed = client.fetch(url).map_err(describe_opds_error)?;
     let results = client
         .search(&feed, url, query)
@@ -398,7 +404,7 @@ pub fn opds_search(url: &str, query: &str) -> Result<String> {
 }
 
 pub fn opds_get(url: &str, out: &Path) -> Result<String> {
-    opds_client()
+    opds_client(url)
         .download(url, out)
         .map_err(describe_opds_error)?;
     let size = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);

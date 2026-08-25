@@ -113,6 +113,18 @@ const MIGRATIONS: &[&str] = &[
         updated_at INTEGER NOT NULL
     );
     ",
+    // v3
+    "
+    -- Secrets leave the library. A password sitting in plaintext in a
+    -- SQLite file is a desktop habit that does not survive a phone, and
+    -- keeping the column would mean two stores with the insecure one
+    -- winning by accident. Credentials now live behind an injected
+    -- `chapbook_core::CredentialStore` — Keychain, Keystore, Secret
+    -- Service — keyed by this row's id. `auth_user` stays: an account name
+    -- is a label, not a secret, and a settings screen needs it without
+    -- unlocking anything.
+    ALTER TABLE opds_sources DROP COLUMN auth_secret;
+    ",
 ];
 
 pub(crate) fn open_and_migrate(path: &std::path::Path) -> Result<Connection> {
@@ -144,4 +156,90 @@ pub(crate) fn open_and_migrate(path: &std::path::Path) -> Result<Connection> {
 
 pub(crate) fn db_err(e: rusqlite::Error) -> ChapbookError {
     ChapbookError::Library(e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        use std::hash::{BuildHasher, Hasher};
+        let suffix = std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish();
+        let dir = std::env::temp_dir().join(format!(
+            "chapbook-db-test-{}-{name}-{suffix}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn columns(conn: &Connection, table: &str) -> Vec<String> {
+        conn.prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_fresh_database_has_nowhere_to_put_a_secret() {
+        let dir = scratch("fresh");
+        let conn = open_and_migrate(&dir.join("library.db")).unwrap();
+        let names = columns(&conn, "opds_sources");
+        assert!(
+            !names.iter().any(|c| c == "auth_secret"),
+            "secrets belong in the credential store: {names:?}"
+        );
+        assert!(names.iter().any(|c| c == "auth_user"), "{names:?}");
+        drop(conn);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn upgrading_an_old_database_takes_the_plaintext_password_with_it() {
+        // A v1 file written before the credential store existed, with a
+        // password sitting in it. The migration has to remove the value,
+        // not just stop reading it.
+        let dir = scratch("upgrade");
+        let path = dir.join("library.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "BEGIN;\n{}\nPRAGMA user_version = 1;\nCOMMIT;",
+                MIGRATIONS[0]
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO opds_sources (url, title, auth_user, auth_secret, added_at)
+                 VALUES ('https://cat.example.com/opds/', 'Old', 'user', 'hunter2', 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_and_migrate(&path).unwrap();
+        let names = columns(&conn, "opds_sources");
+        assert!(!names.iter().any(|c| c == "auth_secret"), "{names:?}");
+
+        // The row survives; the account label survives; the password does
+        // not exist anywhere in the file's page contents.
+        let (url, user): (String, String) = conn
+            .query_row("SELECT url, auth_user FROM opds_sources", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(url, "https://cat.example.com/opds/");
+        assert_eq!(user, "user");
+        conn.execute_batch("VACUUM").unwrap();
+        drop(conn);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !bytes.windows(7).any(|w| w == b"hunter2"),
+            "the old plaintext password is still in the database file"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
