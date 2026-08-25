@@ -535,6 +535,24 @@ functions because it has no choice, but a header generated and depended on
 before the shape is fixed is exactly the freeze this document exists to
 avoid. Name it a spike, keep cbindgen out of it, and throw it away.
 
+### Checked back from Linux
+
+The Mac session changed three things that belong to every platform, so they
+were re-run on the Linux box that the Android rungs were done on. All three
+hold from this side:
+
+- **The two recalibrated session tests pass here.** That is the claim worth
+  checking, because those assertions were originally calibrated against *this
+  machine's* installed fonts — so a repair that merely re-pinned them to a Mac
+  would have shown up as a failure here. Deriving the offsets from
+  `search_unit` instead of writing them down makes them portable in both
+  directions, not just the new one.
+- **The GTK viewer is unaffected on Linux.** `cargo tree` resolves 280 crates
+  for `x86_64-unknown-linux-gnu` and exactly one — itself — for
+  `aarch64-apple-darwin`, and the crate still builds here.
+- **The full gate is green on Linux:** 57 test binaries, `fmt` and
+  `clippy -D warnings` clean, exit 0.
+
 ### What rung 1 found: it builds, and the workspace around it does not
 
 Rung 1 is done, and it needed no persuasion. `cargo build -p chapbook-reader`
@@ -855,6 +873,34 @@ by accident. The faces are in `/system/fonts`, which nothing scans, and the
 families there are `Noto Serif` and `Roboto`, which no Microsoft default
 names. It is also the only target where the platform will not meet us
 halfway, and so it is the one that sets the shape of the API.
+
+### The cost, reproduced on a second platform
+
+The seven-of-thirty measurement was taken on a Mac. It reproduces exactly on
+Linux: patch `system_font_system` to hand back an empty `fontdb::Database` —
+Android's condition — and `chapbook-reader`'s session suite goes 23 passed, 7
+failed, the same seven. So it is a property of the engine and not of anyone's
+host, which is what makes it a number worth quoting.
+
+The names say more than the count:
+
+```
+a_jump_remembers_the_offset_it_left
+a_settings_change_relayouts_and_keeps_the_place
+external_links_are_not_a_reading_position
+frames_report_what_changed
+links_and_the_toc_both_navigate_and_the_trail_comes_back
+search_finds_hits_that_navigate_and_select
+settings_survive_a_restart_and_can_be_overridden_per_book
+```
+
+Not one of them is about selection, and not one is about how the page looks.
+They are navigation, links, the table of contents, search, and settings
+persistence. A book with no faces paginates to a single page, and everything
+that depends on there being somewhere to go fails behind it. That is the
+argument for treating the font source as load-bearing rather than as a
+rendering nicety: on a platform with no fonts, chapbook is not an ereader
+that looks wrong, it is an ereader that cannot move.
 
 ### The shape
 
