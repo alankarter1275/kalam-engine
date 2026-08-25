@@ -562,9 +562,35 @@ different answers: the Mac's host collection, Crimson Text, and an empty
 database each select a slightly different run of text, and none is the run the
 assertion wants. What `starts_with("e Illustrated Chapter")` records is the
 metrics of whatever happened to be installed on the Linux box where it was
-written. That is not a fixture, it is a fingerprint, and it means the fix is
-two things and not one: give the session a font source, and recalibrate these
-two assertions against the faces that source names.
+written. That is not a fixture, it is a fingerprint.
+
+**Fixed by deleting the fingerprint rather than re-taking it.** Recalibrating
+against one font set would only move the pin. So the two assertions were split
+by what they actually prove. Hit-testing is a function of the fonts, and its
+half now asserts only the shape of the result — the selection runs from the
+heading into the paragraph below, ordered, with no line break. The exact-text
+claim moved onto `select_range`, whose offsets come from `search_unit` rather
+than being written down: search and selection share the unit's locator space,
+and neither has any idea which fonts laid the page out. That makes the
+strongest assertion in the test the portable one — a range spanning the source
+line break between `underlined link` and `and some` comes back as exactly
+`"underlined link and some"`, which is precisely the whitespace collapse the
+old prose claimed and the old offsets only implied. The intent test walks
+back to the first page before asking for a turn, because how many pages this
+book has is a font question, and whether page 1 had a successor was the thing
+that broke.
+
+Both pass under the Mac's host collection and under Crimson Text, and the
+whole workspace gate is now green on this machine: 57 test binaries, fmt and
+`clippy -D warnings` clean.
+
+**What that does not fix, measured.** Point the session at an empty database —
+the Android and iOS condition — and **seven** of the thirty session tests
+fail, these two among them. Not selection alone: the jump-offset test, the
+search-and-navigate test, the link-and-TOC trail test and both settings tests
+go with them, because a book with no faces has one page and nothing to
+navigate. That is the number to beat, and no test change can beat
+it. It is what the font source is for.
 
 **The toolchain pin does not carry the targets.** `rust-toolchain.toml` pins
 the channel and its components but declares no `targets`, so both iOS targets

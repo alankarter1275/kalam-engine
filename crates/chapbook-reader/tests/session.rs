@@ -98,6 +98,19 @@ fn metrics() -> PageMetrics {
     }
 }
 
+/// The one locator range where `needle` occurs in the open unit.
+///
+/// Offsets come from search rather than being written down. `search_unit`
+/// and `select_range` share the unit's locator space, and neither has any
+/// idea which fonts laid the page out — so a range obtained this way means
+/// the same thing on every host, which a hand-written offset does not.
+fn only_hit(s: &mut Session, needle: &str) -> (u32, u32) {
+    let spine = s.spine();
+    let hits = s.search_unit(spine, needle);
+    assert_eq!(hits.len(), 1, "{needle:?} should occur exactly once");
+    (hits[0].locator.char_offset, hits[0].end)
+}
+
 #[test]
 fn epub_session_renders_navigates_and_selects() {
     let mut s = open_isolated("epub-nav", &fixture("epub/illustrated.epub"));
@@ -107,23 +120,39 @@ fn epub_session_renders_navigates_and_selects() {
     assert_eq!((pixmap.width(), pixmap.height()), (600, 800));
     assert!(s.page_count() >= 2);
 
-    // Selection: press near the top text line, drag right and down a line.
+    // Selection by hit test: press near the top text line, drag right and
+    // down a line. Which character that lands on is a function of the
+    // host's fonts, so this half asserts the shape of the result — it runs
+    // from the heading into the paragraph below it — and the deterministic
+    // half below asserts the exact text.
     assert!(s.selection_begin(100.0, 70.0), "press must hit the heading");
     s.selection_drag(400.0, 140.0);
     let (start, end) = s.selected_range().expect("non-empty selection");
     assert!(end > start);
-    // The selected text comes back ready to paste: the locator space is
-    // the raw source text, so its line breaks and indentation collapse.
     let text = s.selected_text().expect("selection carries text");
     assert!(
-        text.starts_with("e Illustrated Chapter"),
-        "selection starts mid-heading: {text:?}"
+        text.contains("Illustrated Chapter"),
+        "selection starts in the heading: {text:?}"
     );
     assert!(
         text.contains("Text before the picture"),
         "selection runs into the first paragraph: {text:?}"
     );
     assert!(!text.contains('\n'), "pasteable text has no line breaks");
+
+    // The selected text comes back ready to paste: the locator space is
+    // the raw source text, so its line breaks and indentation collapse.
+    // chapter1.xhtml ends a source line after the link and indents the
+    // next, so a range spanning the two proves the collapse exactly.
+    let (link_start, _) = only_hit(&mut s, "underlined link");
+    let (_, after_end) = only_hit(&mut s, "and some");
+    s.select_range(link_start, after_end);
+    assert_eq!(
+        s.selected_text().as_deref(),
+        Some("underlined link and some"),
+        "the source breaks the line and indents between these two"
+    );
+    s.selection_clear();
     // The selected page renders with the highlight without panicking.
     s.render().unwrap();
     // Page navigation clears the selection.
@@ -409,8 +438,16 @@ fn frames_report_what_changed() {
     m.next_unit();
     assert_eq!(m.frame().unwrap().intent, FrameIntent::UnitChange);
 
-    // The strongest change since the last frame is the one reported.
-    s.selection_begin(100.0, 70.0);
+    // The strongest change since the last frame is the one reported. Walk
+    // back to the first page before asking for a turn: how many pages this
+    // book has depends on the host's fonts, and under some of them page 1
+    // is the last, which would make the turn below a no-op and leave the
+    // selection as the strongest change.
+    assert!(s.page_count() >= 2);
+    while s.prev_page() {}
+    s.frame().expect("consume the walk back");
+    let (heading_start, heading_end) = only_hit(&mut s, "Illustrated Chapter");
+    s.select_range(heading_start, heading_end);
     s.next_page();
     assert_eq!(
         s.frame().unwrap().intent,
