@@ -334,30 +334,61 @@ cleanup. That is right about the dependency and wrong about the order:
 1. **Spike (throwaway).** Rungs 1–4 above. Output is a list of API defects,
    not code worth keeping.
 2. **Fix the shape, in safe Rust.** Typed sources and a builder, a font
-   source, `render_into`, a cache budget and `release_caches`, `suspend()`.
-   All of it tested in the workspace, none of it FFI. This is PLATFORM §2's
-   session-lifecycle item, arrived at by evidence instead of by guessing.
+   source, `render_into`, a cache budget and `release_caches`, `suspend()`,
+   and the optional `library` feature. All of it tested in the workspace,
+   none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
+   by evidence instead of by guessing. The wasm32 CI check lands here, once
+   there is something for it to prove.
 3. **`chapbook-ffi` for real.** cbindgen header, stable error codes, Contract
    tier, and an FFI conformance test that drives the C ABI from a Rust test
    so CI covers the boundary without an emulator.
 4. **`chapbook-android`, and the input model.** The AAR, the demo app, and
    `chapbook_core::input` — which lands here because a touchscreen is where
    tap zones can actually be judged.
+5. **The browser demo.** Last, because Android has a user and a demo has an
+   audience, and because by this point step 2 has already done all of its
+   work for it.
 
 ## Still to decide
 
-- **UniFFI or a hand-written C ABI.** Recommended above, but it is a
-  licence decision as much as a technical one.
 - **Whether `frame()` crosses the boundary at all**, or whether hosts get
   pixels only. Pixels only, for now, is the recommendation.
-- **Whether the WASM target is real.** See below; the decision is open, but it
-  does not gate the C ABI.
 
-## WASM: measured, not decided
+Settled: the binding is a hand-written C ABI, and WASM is a demo surface
+rather than a product — see below for what that costs and what it keeps open.
+
+## WASM: a demo, deliberately
 
 `wasm-bindgen` wraps Rust, not C, so a WASM build would be a sibling exporter
 over the same shape and never a consumer of the header. The C ABI is therefore
 safe either way, and what follows constrains the *shape* only.
+
+**Decided: build the demo, do not commit to a web reader.** A page that takes
+someone's own EPUB and paginates it in front of them is the pitch for a
+platform others are meant to build on, and at the size measured below it is
+affordable. A web reader stays a live option and is not being planned.
+
+What makes that cheap is that the demo is not a detour from the reader —
+it is the same build profile, so it pays for the door rather than deferring
+it. **EPUB only, no library, no loader thread, fonts embedded, opened from
+bytes**: every one of those is a thing a browser forces and a thing a web
+reader would have needed anyway. The same profile is what a stripped e-ink
+build wants, which is the second reason to define it whether or not a browser
+ever runs it. Concretely it implies a `library` feature on `chapbook-reader`,
+default on, that a device or browser build turns off.
+
+The argument against was never the port, it was that a browser build becomes a
+fourth target to keep green forever. The answer to that is proportion: **check
+it in CI, do not ship it from CI.** A `cargo check --target
+wasm32-unknown-unknown` over the EPUB-only profile costs no linker, no
+wasm-bindgen and no Node, and it catches exactly the regressions that would
+quietly close the door — a new ambient `std::fs` call, an `Instant::now`, a
+thread. Building and deploying the page itself stays manual and occasional.
+
+That job should land *with* the optional-library work and not before. Today it
+would pass while proving nothing, because `chapbook-library` compiles for
+wasm32 perfectly well and merely fails to work — and this repo has already
+been bitten once by a CI job that ran happily and checked nothing.
 
 **It compiles, and it is smaller than expected.** Every engine crate passes
 `cargo check --target wasm32-unknown-unknown`, including `chapbook-library`;
