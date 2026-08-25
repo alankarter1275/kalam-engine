@@ -35,8 +35,9 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    resolve_in_text, BookKind, LayeredLocator, Locator, PageMetrics, PixelFormat, Point,
-    Publication, ReadingSettings, Rect, Result, Rgba, Rotation, SpineItem, TocEntry,
+    resolve_in_text, BookKind, FontReport, FontSource, LayeredLocator, Locator, PageMetrics,
+    PixelFormat, Point, Publication, ReadingSettings, Rect, Result, Rgba, Rotation, SpineItem,
+    TocEntry,
 };
 use chapbook_layout::{cascade, dom, ChapterLayout};
 use chapbook_library::AnnotationKind;
@@ -225,6 +226,8 @@ pub struct Session {
     book: OpenBook,
     title: String,
     fonts: cosmic_text::FontSystem,
+    /// What the font source actually produced, kept so a shell can say so.
+    font_report: FontReport,
     renderer: chapbook_render_tinyskia::Renderer,
     settings: ReadingSettings,
     metrics: Option<PageMetrics>,
@@ -285,7 +288,16 @@ impl Session {
     /// the library (fingerprint, then identifier for replaced editions,
     /// else imported) and their stored position restored; streams skip the
     /// library (no local file to fingerprint) but honor `pse:lastRead`.
-    pub fn open(source: &str) -> Result<Session> {
+    ///
+    /// `fonts` is required rather than defaulted. A session that finds no
+    /// faces lays out, renders, paints and *conforms* — it just paginates
+    /// every book to a single blank page, taking navigation, search and
+    /// the table of contents down with it — and fontdb has no Android, iOS
+    /// or wasm branch, so "no faces" is the ordinary case on three
+    /// platforms. Desktop shells want [`FontSource::host`]; anything whose
+    /// output is compared against a golden wants
+    /// [`FontSource::embedded`]. See `chapbook_core::font`.
+    pub fn open(source: &str, fonts: FontSource) -> Result<Session> {
         let mut library =
             chapbook_library::Library::open(&chapbook_library::Library::default_dir())
                 .map_err(|e| eprintln!("chapbook: library unavailable: {e}"))
@@ -429,10 +441,13 @@ impl Session {
             .map(|lib| lib.effective_settings(book_id))
             .unwrap_or_default();
 
+        let (fonts, font_report) = chapbook_layout::build_font_system(&fonts)?;
+
         Ok(Session {
             book,
             title,
-            fonts: chapbook_layout::system_font_system(),
+            fonts,
+            font_report,
             renderer: chapbook_render_tinyskia::Renderer::new(),
             settings,
             metrics: None,
@@ -1603,6 +1618,36 @@ impl Session {
 
     pub fn pixel_format(&self) -> PixelFormat {
         self.pixel_format
+    }
+
+    /// What the font source produced: how many faces loaded, and any CSS
+    /// generic that resolved to a family nothing carries.
+    ///
+    /// Worth printing once at startup on a platform you have not run on.
+    /// Every font failure this API exists to prevent is silent — a page
+    /// still lays out, still renders, still conforms — so this is the only
+    /// cheap way to tell a correctly configured device from a broken one
+    /// without looking at pixels.
+    pub fn font_report(&self) -> &FontReport {
+        &self.font_report
+    }
+
+    /// Every font family the session can match, deduplicated and sorted.
+    ///
+    /// The read-back half of [`FontSource`], and what a font-family picker
+    /// needs: a shell cannot offer a choice it cannot enumerate. Includes
+    /// families registered from a book's own `@font-face` rules once that
+    /// unit has laid out, so the list grows as chapters load.
+    pub fn font_families(&self) -> Vec<String> {
+        let mut families: Vec<String> = self
+            .fonts
+            .db()
+            .faces()
+            .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
+            .collect();
+        families.sort_unstable();
+        families.dedup();
+        families
     }
 
     /// The image store backing the current unit's `Image` ops. Empty for

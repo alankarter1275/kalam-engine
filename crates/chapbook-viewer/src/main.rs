@@ -36,7 +36,7 @@ fn main() {
         eprintln!("usage: chapbook-viewer [--gpu] <book.epub|comic.cbz|doc.pdf|opds-url>");
         std::process::exit(2);
     };
-    let session = match Session::open(&source) {
+    let session = match Session::open(&source, chapbook_core::FontSource::host()) {
         Ok(session) => session,
         Err(e) => {
             eprintln!("chapbook-viewer: {e}");

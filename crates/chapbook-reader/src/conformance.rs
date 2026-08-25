@@ -25,9 +25,16 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use chapbook_reader::chapbook_core::FontSource;
 //! use chapbook_reader::{conformance, Session};
 //!
-//! let report = conformance::Harness::new(|| Session::open("book.epub").unwrap()).run();
+//! // A fixed source, not the host's: a conformance run should mean the
+//! // same thing on every machine it is run on.
+//! let fonts = FontSource::embedded("fixtures/fonts", "Crimson Text");
+//! let report = conformance::Harness::new(move || {
+//!     Session::open("book.epub", fonts.clone()).unwrap()
+//! })
+//! .run();
 //! report.assert_ok();
 //! # Ok(())
 //! # }

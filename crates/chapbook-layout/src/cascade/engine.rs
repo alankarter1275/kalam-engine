@@ -121,7 +121,8 @@ impl StyleEngine {
     }
 
     /// Run the cascade: every element in `doc` ends up with its
-    /// `ComputedValues`, readable via [`crate::dom::Document::primary_styles`].
+    /// `ComputedValues`, readable via `Document::primary_styles` (which it
+    /// reaches through its `Deref` to `DocumentInner`).
     pub fn style_document(&mut self, doc: &mut Document) {
         // All Locked<T> values (sheets, style attributes) must belong to the
         // lock our traversal guards come from.
@@ -268,7 +269,7 @@ impl<E: TElement> DomTraversal<E> for RecalcStyle<'_> {
     }
 }
 
-/// Convenience accessor mirroring [`Document::primary_styles`], so consumers
+/// Convenience accessor mirroring `Document::primary_styles`, so consumers
 /// only need this crate in scope.
 pub fn computed(doc: &Document, id: crate::dom::NodeId) -> Option<ServoArc<ComputedValues>> {
     doc.primary_styles(id)

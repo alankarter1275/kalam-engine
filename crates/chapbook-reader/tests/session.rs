@@ -27,6 +27,17 @@ fn open_isolated(name: &str, source: &str) -> Session {
 }
 
 /// Reopen against the same per-test library (position-persistence tests).
+/// The vendored fixture faces, all three axes pinned, so this suite means
+/// the same thing on Linux, on a Mac and on a device. Taking the host's
+/// fonts is what pinned two of these assertions to one machine's
+/// collection.
+fn fixture_fonts() -> chapbook_core::FontSource {
+    chapbook_core::FontSource::embedded(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts"),
+        "Crimson Text",
+    )
+}
+
 fn reopen_isolated(name: &str, source: &str) -> Session {
     open_library(name, source, false)
 }
@@ -41,7 +52,7 @@ fn open_library(name: &str, source: &str, fresh: bool) -> Session {
         let _ = std::fs::remove_dir_all(&dir);
     }
     std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
-    let session = Session::open(source).unwrap();
+    let session = Session::open(source, fixture_fonts()).unwrap();
     drop(guard);
     session
 }
@@ -1078,4 +1089,44 @@ fn taps_find_highlights_recolor_them_and_list_every_mark() {
 fn a_session_can_move_between_threads() {
     fn assert_send<T: Send>() {}
     assert_send::<Session>();
+}
+
+/// The failure `FontSource` exists to convert into an error.
+///
+/// A session that finds no faces is not an ereader that looks wrong; it is
+/// an ereader that cannot move. Every book paginates to one blank page, so
+/// there is nowhere to navigate to, nothing for search to find, and no page
+/// for a TOC entry to land on — and the session lays out, renders, paints
+/// and *conforms* the whole time. fontdb has no Android, iOS or wasm
+/// branch, which makes that the ordinary case on three platforms rather
+/// than a corner.
+#[test]
+fn a_session_with_no_faces_is_refused_at_construction() {
+    let guard = ENV_LOCK.lock().unwrap();
+    let dir = std::env::temp_dir().join(format!("chapbook-fontless-{}", std::process::id()));
+    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
+    let empty = chapbook_core::FontSource::embedded("/nonexistent/fonts", "Nothing");
+    let result = Session::open(&fixture("epub/minimal.epub"), empty);
+    drop(guard);
+
+    let err = result.err().expect("a fontless session must not open");
+    let message = err.to_string();
+    assert!(message.contains("no faces"), "{message}");
+}
+
+/// The read-back half: a shell cannot offer a font-family picker over a
+/// list it cannot obtain.
+#[test]
+fn the_session_can_enumerate_the_families_it_was_given() {
+    let session = open_isolated("families", &fixture("epub/minimal.epub"));
+
+    let families = session.font_families();
+    assert_eq!(families, vec!["Crimson Text".to_string()]);
+    // And the source resolved cleanly, which is what a shell would print.
+    assert!(
+        session.font_report().is_clean(),
+        "{}",
+        session.font_report()
+    );
+    assert_eq!(session.font_report().faces, 4);
 }

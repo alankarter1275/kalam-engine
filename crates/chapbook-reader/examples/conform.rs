@@ -31,21 +31,24 @@ fn main() {
         None => Size::new(600.0, 800.0),
     };
 
-    let report = Harness::new(move || match Session::open(&source) {
-        Ok(session) => session,
-        Err(e) => {
-            eprintln!("conform: {e}");
-            std::process::exit(1);
-        }
-    })
-    .metrics(PageMetrics {
-        size,
-        margins: EdgeSizes::uniform(32.0),
-        dpi_scale: 1.0,
-        rotation: Rotation::None,
-    })
-    .budget(Duration::from_secs(30))
-    .run();
+    let report =
+        Harness::new(
+            move || match Session::open(&source, chapbook_core::FontSource::host()) {
+                Ok(session) => session,
+                Err(e) => {
+                    eprintln!("conform: {e}");
+                    std::process::exit(1);
+                }
+            },
+        )
+        .metrics(PageMetrics {
+            size,
+            margins: EdgeSizes::uniform(32.0),
+            dpi_scale: 1.0,
+            rotation: Rotation::None,
+        })
+        .budget(Duration::from_secs(30))
+        .run();
 
     print!("{report}");
     let failed = report.failures().count();

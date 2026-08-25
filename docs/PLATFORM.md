@@ -415,11 +415,14 @@ the library, so font size survives a restart. `SettingsScope` picks whether
 a change is the reader's default or this book's override; an override
 outlives later changes to the default, and `clear_book_settings` hands the
 book back. `cycle_theme` and `adjust_font` remain as conveniences over it.
-Still missing: font-family selection, which needs a font-enumeration story
-before it needs an API. (Margins are fine: they live in `PageMetrics`,
-supplied by the shell.)
+Still missing: font-family selection — but no longer blocked. The
+font-enumeration story it was waiting on is `Session::font_families()`,
+which arrived with `FontSource`, so what remains is a field in
+`ReadingSettings` and a family name reaching the cascade. (Margins are
+fine: they live in `PageMetrics`, supplied by the shell.)
 
-**Session lifecycle.** `open(source: &str)` sniffs a string. A platform wants
+**Session lifecycle.** `open(source: &str, fonts: FontSource)` sniffs a
+string. A platform wants
 typed sources plus injectable I/O — Android content URIs, iOS
 security-scoped bookmarks, in-memory books, and encrypted stores all fail the
 string-path assumption. An observer/event model (layout invalidated, position

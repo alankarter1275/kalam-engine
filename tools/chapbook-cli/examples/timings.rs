@@ -56,7 +56,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let book = open.time(|| Book::open(Path::new(&book_path)))?;
 
     let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
-    let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
+    let (mut fonts, _) = chapbook_layout::build_font_system(&chapbook_core::FontSource::embedded(
+        &fonts_dir,
+        "Crimson Text",
+    ))?;
 
     let mut unit_bytes = Stage::new("unit_bytes (zip read)");
     let mut parse = Stage::new("parse_xhtml");

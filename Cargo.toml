@@ -71,6 +71,13 @@ xml5ever = "0.39"
 
 # Text shaping/layout and CPU rasterization
 cosmic-text = "0.19"
+# Both are cosmic-text's own dependencies, named here because chapbook-layout
+# builds the font system itself rather than calling `FontSystem::new()`:
+# `unicode-script` is the script type its `Fallback` trait speaks, so the
+# version must match cosmic-text's, and `sys-locale` is how it resolves the
+# host locale.
+unicode-script = "0.5"
+sys-locale = "0.3"
 hyphenation = { version = "0.8", features = ["embed_en-us"] }
 tiny-skia = "0.12"
 # GPU backend. A second rasterizer over the same display list, to keep the

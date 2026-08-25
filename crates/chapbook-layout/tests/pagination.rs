@@ -11,7 +11,9 @@ use chapbook_paint::FragmentKind;
 
 fn fonts() -> cosmic_text::FontSystem {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
-    chapbook_layout::fixture_font_system(&dir, "Crimson Text")
+    chapbook_layout::build_font_system(&chapbook_core::FontSource::embedded(dir, "Crimson Text"))
+        .expect("fixture fonts")
+        .0
 }
 
 /// Page with room for exactly `lines` default lines (18px font, 1.5 line

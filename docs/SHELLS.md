@@ -25,7 +25,7 @@ Start from `minimal.rs`. It exists to be copied.
 ## The shape of a shell
 
 ```rust
-let mut session = Session::open(&source)?;         // 1. open
+let mut session = Session::open(&source, fonts)?;  // 1. open, with fonts
 session.set_metrics(metrics);                      // 2. say how big a page is
 loop {
     // 3. turn input into Session calls
@@ -55,6 +55,39 @@ by default and a device build turns off what its hardware will never open.
 A format that was compiled out is refused at open time, with
 `ChapbookError::FormatNotBuilt`, rather than at compile time — so the same
 shell source builds against every configuration.
+
+It also takes a `FontSource`, and that argument is required. On a desktop
+you want `FontSource::host()`:
+
+```rust
+let session = Session::open(&source, FontSource::host())?;
+```
+
+The reason it is not the default is that "no fonts" fails silently. A
+session with an empty font database lays out, renders, paints and passes
+conformance — it just paginates every book to one blank page, so there is
+nowhere to navigate to, nothing for search to find, and no page for a TOC
+entry to land on. And fontdb has no Android, iOS or wasm branch, so an
+empty database is the *ordinary* result on three platforms rather than a
+corner case. A shell on one of those supplies its own:
+
+```rust
+// Android: the faces are there, but nothing scans for them, the generics
+// name Microsoft families the device does not have, and cosmic-text's
+// fallback list for this target is empty.
+let session = Session::open(&source, FontSource::android_system())?;
+```
+
+`FontSource` names three things separately, because a build can get any
+one right and the others wrong: which faces exist, what the five CSS
+generics mean, and what to try when a glyph is missing. `chapbook_core::font`
+documents each; `docs/FFI.md` has the evidence.
+
+Two things to read back after opening. `session.font_report()` says how
+many faces loaded and names any generic that resolved to a family nothing
+carries — worth printing once at startup on a platform you have not run on,
+since none of these failures announce themselves. `session.font_families()`
+lists what the session can match, which is what a font-family picker needs.
 
 Opening also imports or matches the book in the library, which is how
 step 5 has somewhere to put a position. The library lives under
@@ -300,7 +333,8 @@ use chapbook_reader::conformance::Harness;
 
 #[test]
 fn my_shell_drives_the_session_correctly() {
-    Harness::new(|| Session::open("fixture.epub").unwrap())
+    let fonts = FontSource::embedded("fixtures/fonts", "Crimson Text");
+    Harness::new(move || Session::open("fixture.epub", fonts.clone()).unwrap())
         .run()
         .assert_ok();
 }

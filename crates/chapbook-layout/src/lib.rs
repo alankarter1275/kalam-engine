@@ -41,7 +41,7 @@ use chapbook_paint::{ImageStore, Page};
 
 use crate::dom::Document;
 
-pub use fonts::{fixture_font_system, system_font_system};
+pub use fonts::build_font_system;
 pub use fragmentation::{BreakRule, FragRules, FragStyle};
 pub use webfonts::{extract_font_faces, register_font, FontFace};
 

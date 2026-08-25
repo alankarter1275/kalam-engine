@@ -27,6 +27,17 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// A factory the harness can call repeatedly. Each call reopens the *same*
 /// library dir, which is what `PositionSurvivesARestart` needs in order to
 /// have anything to restore from; the dir is wiped once, here, rather than
+/// The vendored fixture faces, all three axes pinned, so this suite means
+/// the same thing on Linux, on a Mac and on a device. Taking the host's
+/// fonts is what pinned two of these assertions to one machine's
+/// collection.
+fn fixture_fonts() -> chapbook_core::FontSource {
+    chapbook_core::FontSource::embedded(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts"),
+        "Crimson Text",
+    )
+}
+
 /// per call.
 fn factory(name: &'static str, source: String) -> impl FnMut() -> Session {
     let dir = std::env::temp_dir().join(format!(
@@ -37,7 +48,7 @@ fn factory(name: &'static str, source: String) -> impl FnMut() -> Session {
     move || {
         let guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
-        let session = Session::open(&source).unwrap();
+        let session = Session::open(&source, fixture_fonts()).unwrap();
         drop(guard);
         session
     }

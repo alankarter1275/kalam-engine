@@ -37,6 +37,15 @@ pub enum ChapbookError {
     #[error("layout error: {0}")]
     Layout(String),
 
+    /// The font source a session was given cannot produce a usable font
+    /// system — in practice, it found no faces at all. Its own error rather
+    /// than a `Layout` one because it is a construction-time
+    /// misconfiguration on the caller's side, and because the failure it
+    /// replaces was silent: a fontless session lays out, renders, paints
+    /// and conforms, one blank page per book.
+    #[error("font error: {0}")]
+    Font(String),
+
     #[error("invalid CFI: {0}")]
     Cfi(String),
 

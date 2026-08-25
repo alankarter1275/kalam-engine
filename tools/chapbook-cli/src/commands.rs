@@ -133,7 +133,10 @@ pub fn layout(epub: &Path, spine: usize) -> Result<String> {
 
     // Deterministic fonts: vendored fixture faces only, never host fonts.
     let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
-    let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
+    let (mut fonts, _) = chapbook_layout::build_font_system(&chapbook_core::FontSource::embedded(
+        &fonts_dir,
+        "Crimson Text",
+    ))?;
     let images = load_chapter_assets(&book, &href, &doc, &css, &mut fonts);
     let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
     let layout =
@@ -195,7 +198,10 @@ pub fn render(
     let (doc, css, _notes) = styled_chapter(&book, spine, &href, &settings)?;
 
     let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
-    let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
+    let (mut fonts, _) = chapbook_layout::build_font_system(&chapbook_core::FontSource::embedded(
+        &fonts_dir,
+        "Crimson Text",
+    ))?;
     let images = load_chapter_assets(&book, &href, &doc, &css, &mut fonts);
     let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
     let metrics = PageMetrics::default();
@@ -517,7 +523,10 @@ fn render_image_book(
     )
     .ok_or_else(|| chapbook_core::ChapbookError::Layout("empty page size".into()))?;
     let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
-    let mut fonts = chapbook_layout::fixture_font_system(&fonts_dir, "Crimson Text");
+    let (mut fonts, _) = chapbook_layout::build_font_system(&chapbook_core::FontSource::embedded(
+        &fonts_dir,
+        "Crimson Text",
+    ))?;
     let mut renderer = chapbook_render_tinyskia::Renderer::new();
     renderer.render(&dl, &mut fonts, &images, scale, &mut pixmap);
     pixmap

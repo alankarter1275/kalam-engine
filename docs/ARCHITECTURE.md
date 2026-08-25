@@ -61,7 +61,12 @@ stays that way.
 
 ## Crate boundaries
 
-- **chapbook-core** — geometry, `PageMetrics`, `ReadingSettings`, the
+- **chapbook-core** — geometry, `PageMetrics`, `ReadingSettings`,
+  `FontSource` (where faces come from, what the five CSS generics mean, and
+  what to try when a glyph is missing — three axes that `FontSystem::new()`
+  decides from `cfg` and silently, which is why they are said out loud
+  here; `chapbook-layout` realizes it, and no other crate touches
+  `fontdb::Database`), the
   format-neutral book model (`Publication`, `BookMetadata`, `SpineItem`,
   `TocEntry`), and `Locator { spine_index, char_offset }` plus the layered,
   versioned persistence record (`LayeredLocator`: quote context, spine

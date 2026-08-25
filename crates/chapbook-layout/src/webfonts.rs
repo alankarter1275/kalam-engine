@@ -259,12 +259,11 @@ mod tests {
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/fonts/CrimsonText-Bold.ttf");
         let data = std::fs::read(dir).unwrap();
-        let mut fonts = crate::fixture_font_system(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/fonts")
-                .as_path(),
+        let source = chapbook_core::FontSource::embedded(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts"),
             "Crimson Text",
         );
+        let (mut fonts, _) = crate::build_font_system(&source).unwrap();
         assert!(register_font(&mut fonts, "Totally Custom Family", data));
         let found = fonts
             .db()

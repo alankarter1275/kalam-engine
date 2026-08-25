@@ -28,7 +28,8 @@ const DUMPED: &[(&str, LonghandId)] = &[
 ];
 
 /// Walk the styled document and render one line per element with its
-/// computed values for the properties in [`DUMPED`]. The `<head>` subtree is
+/// computed values for the properties in this module's `DUMPED` list. The
+/// `<head>` subtree is
 /// skipped (computed `display: none` per the UA sheet; nothing to lay out).
 pub fn dump_computed_styles(doc: &Document) -> String {
     let mut out = String::new();

@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let info = panel.info();
     let mut driver = PanelDriver::new(panel);
 
-    let mut session = Session::open(&book)?;
+    let mut session = Session::open(&book, chapbook_core::FontSource::host())?;
     // The page is laid out in reading orientation; rotation happens on the
     // way to the panel, so an unrotated shell hands over its own size.
     let page = Size::new(info.width as f32, info.height as f32);

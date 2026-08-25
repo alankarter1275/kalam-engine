@@ -357,7 +357,8 @@ the only ones, and the toolchain closes both.
 
 Then four things the build could not have told us.
 
-**A font source is not merely missing, it is unreachable.** `Session::open`
+**A font source is not merely missing, it is unreachable.** *(Closed — see
+"Implemented" at the end of the fonts section.)* `Session::open`
 calls `chapbook_layout::system_font_system()` directly, and nothing takes its
 place, so on Android the session begins life with an empty font database and
 no way to fill it. The only door is `paint_resources()`, which hands back
@@ -809,35 +810,115 @@ tests — and they are one defect seen from three angles. It is worth setting
 out whole, because once it is whole the fix is smaller than three reports
 make it sound, and two of the three platforms turn out to be nearly free.
 
-**`FontSystem::new()` does two independent things, and this codebase has only
-ever noticed one.** The first is *which faces exist*: `load_system_fonts()`
+**`FontSystem::new()` does three independent things, and this codebase has
+only ever noticed one.** The first is *which faces exist*: `load_system_fonts()`
 and its per-target directory scans. The second is *what the five CSS generics
-mean*: `serif`, `sans-serif`, `monospace`, `cursive`, `fantasy`. A database
-can succeed completely at the first and fail completely at the second, and
-nothing in the type system distinguishes them.
+mean*: `serif`, `sans-serif`, `monospace`, `cursive`, `fantasy`. The third is
+*which family is tried when the chosen face has no glyph for a character* —
+cosmic-text's script fallback. A database can succeed completely at any one
+of the three and fail completely at the others, and nothing in the type
+system distinguishes them.
 
-**fontdb's idea of a default is Windows.** `Database::new()` sets the five to
-`Times New Roman`, `Arial`, `Courier New`, `Comic Sans MS` and `Impact`
-(`Papyrus` for fantasy on macOS). Exactly one platform corrects them:
-on Linux `load_fontconfig()` reads fontconfig's `<alias>` rules and calls
-`set_serif_family` and its siblings. Everywhere else the Microsoft names
-stand, and whether they resolve is luck.
+An earlier revision of this section counted two. The third was found while
+checking the other two against cosmic-text 0.19's source, and it is the one
+that decides whether a Greek epigraph renders or comes out as boxes.
 
-| target | faces | generics |
-|---|---|---|
-| Windows | `%SYSTEMROOT%\Fonts` | native, correct |
-| Linux, `fontconfig` on | via fontconfig | rewritten by its aliases |
-| Linux, `fontconfig` off | four known dirs | MS names stand — luck |
-| macOS | four dirs, 370 faces | 5 of 5, by luck |
-| iOS | **none — no branch** | would be 4 of 5, by luck |
-| Android | **none — no branch** | 0 of 5 |
-| wasm32 | none | 0 of 5 |
+**The generics are worse than "Windows defaults", and the earlier reading of
+them was wrong.** `Database::new()` does set the five to `Times New Roman`,
+`Arial`, `Courier New`, `Comic Sans MS` and `Impact` (`Papyrus` on macOS).
+But `FontSystem::new()` does not stop there. It calls `new_with_fonts`, which
+runs `load_system_fonts()` — on Linux that is `load_fontconfig()`, reading
+fontconfig's `<alias>` rules — and then, unconditionally and on every target,
+overwrites three of them:
 
-Linux is the only target where both axes are handled, and they are handled by
-a dependency that exists on no other target. That is the shape behind every
-font surprise in this document: chapbook was written on the one platform
-where fonts are somebody else's problem, and `fontconfig` was quietly doing
-half the work that a font source will have to do explicitly.
+```rust
+db.set_monospace_family("Noto Sans Mono");
+db.set_sans_serif_family("Open Sans");
+db.set_serif_family("DejaVu Serif");
+```
+
+So fontconfig's answers for serif, sans-serif and monospace are computed and
+then thrown away, and the two it is allowed to keep are the two nobody
+checks. Measured on this Linux dev box, all three stages:
+
+| generic | `Database::new()` | after fontconfig | after `FontSystem::new()` |
+|---|---|---|---|
+| serif | Times New Roman | **FreeSerif** (present) | DejaVu Serif |
+| sans-serif | Arial | **FreeSans** (present) | Open Sans |
+| monospace | Courier New | **FreeMono** (present) | Noto Sans Mono |
+| cursive | Comic Sans MS | IranNastaliq — **absent from the database** | IranNastaliq |
+| fantasy | Impact | Homa — **absent from the database** | Homa |
+
+Two things fall out of that, and neither was in the previous reading. The
+three names chapbook actually uses are cosmic-text's hardcoded Linux-flavoured
+guesses on *every* platform, macOS and Windows included, rather than anything
+the host said. And on this machine `font-family: cursive` resolves to a
+Persian nastaliq family that is not installed — fontconfig's alias chain
+names it, fontdb records the name, and nothing checks that a face exists. A
+publisher styling a pull-quote `cursive` gets no match and silently falls
+through to fallback.
+
+The lesson is not "fontconfig is bad". It is that **a generic family name is
+a string nobody validates**, on any platform, and that the one target this
+project assumed was handled is handled the least carefully of all.
+
+| target | faces | generics | script fallback |
+|---|---|---|---|
+| Windows | `%SYSTEMROOT%\Fonts` | native, correct | `windows.rs` |
+| Linux, `fontconfig` on | via fontconfig | 3 clobbered, 2 name absent families | `unix.rs` — matches |
+| Linux, `fontconfig` off | four known dirs | 3 clobbered, 2 MS names | `unix.rs` — matches |
+| macOS | four dirs, 370 faces | 3 clobbered to families macOS lacks | `macos.rs` |
+| iOS | **none — no branch** | would be 4 of 5, by luck | `unix.rs` — **wrong names** |
+| Android | **none — no branch** | 0 of 5 | `other.rs` — **empty** |
+| wasm32 | none | 0 of 5 | `other.rs` — **empty** |
+
+Linux is the only target where all three axes are handled, and two of them
+are handled by a dependency that exists on no other target. That is the shape
+behind every font surprise in this document: chapbook was written on the one
+platform where fonts are somebody else's problem, and `fontconfig` was quietly
+doing two thirds of the work that a font source will have to do explicitly.
+
+### The third axis, and why Android's workaround is not enough
+
+`cosmic-text/src/font/fallback/mod.rs:13-27` selects a fallback module by
+`cfg`, and the selector for the empty one is
+`not(any(all(unix, not(target_os = "android")), target_os = "windows"))`.
+Android is unix, so `all(unix, not(android))` is false and Android lands in
+`other.rs`, where `common_fallback()`, `forbidden_fallback()` and
+`script_fallback()` each return `&[]`. iOS is unix and is neither macOS nor
+Android, so it lands in `unix.rs` alongside Linux, whose list opens with
+`Noto Sans`, `DejaVu Sans` and `FreeSans` — three families no iOS device has.
+
+The consequence for Android is sharper than "0 of 5 generics", and it is not
+fixed by the thing rung 3 did. The workaround loads 214 faces from
+`/system/fonts`, which is essentially complete Noto coverage for every script
+a book might use — and cosmic-text will never reach for any of it, because
+loading a face and *falling back to* a face are different mechanisms and only
+the first was addressed. A book with a Cyrillic name, a Greek quotation, a
+CJK title or an emoji renders tofu on a device that has the glyph sitting in
+its own font directory.
+
+**This one needs no upstream patch.** Unlike fontdb's missing iOS `cfg`
+branch, cosmic-text already takes the list as a parameter:
+`FontSystem::new_with_locale_and_db_and_fallback(locale, db, impl Fallback)`
+is public in 0.19. The fix is ours to make in-tree, today.
+
+### The third axis is also a hole in the test gate
+
+*(Closed, with the rest.)* `chapbook-layout/src/fonts.rs` opened by saying
+layout results depend on the fonts available, so tests and goldens use a fixed
+directory of vendored fonts and "never the host's font collection".
+`fixture_font_system` then built its pinned `Database` and handed it to
+`new_with_locale_and_db` — which supplies `PlatformFallback`. So the
+deterministic font system was deterministic on two axes and host-branched on
+the third.
+
+It is latent rather than live: the only non-ASCII in the xhtml fixtures is
+`—`, `“`, `”`, `é` and `ï`, all of which Crimson Text covers, so no fixture
+currently reaches fallback at all. It goes off the first time somebody adds a
+CJK or Greek fixture, and it will go off as a golden diff on one platform
+only, which is the worst way to find out. Rule 5 below does not close it,
+because rule 5 was written against the two-axis model.
 
 ### iOS is the cheap one, and this document said the opposite
 
@@ -858,11 +939,19 @@ And the Microsoft names are present: `Core/TimesNewRoman.ttf`,
 faces each for the first three. Only `Comic Sans MS` is missing, so `cursive`
 is the single generic that would not resolve.
 
-So iOS's font problem is **one missing `cfg` branch**, not a platform
+So iOS's *face* problem is **one missing `cfg` branch**, not a platform
 limitation. Add `target_os = "ios"` loading `/System/Library/Fonts`, and 265
 faces appear and four of five generics resolve by the same accident that has
 been keeping macOS working all along. It is a six-line patch worth sending
 upstream whether or not we choose to depend on it landing.
+
+Two of three axes, then. The third still fails: iOS takes `unix.rs`'s
+fallback list and will chase `Noto Sans`, `DejaVu Sans` and `FreeSans`
+through a database that contains none of them. iOS's real fallbacks are
+`Helvetica`, `PingFang SC`, `Apple Color Emoji` and friends, and no `cfg`
+branch upstream supplies them. This is the one place iOS is not cheaper than
+Android — but since the list is a constructor parameter rather than a
+`cfg`, both are the same fix.
 
 One question survives, and it is now the only iOS font question: whether a
 sandboxed app can read `/System/Library/Fonts` at all. A simulator runs
@@ -882,19 +971,27 @@ the host, and then recalibrated once against whatever they are moved onto.
 
 ### Android is the real one
 
-Android is the only target where both axes genuinely fail and neither fails
-by accident. The faces are in `/system/fonts`, which nothing scans, and the
+Android is the only target where all three axes genuinely fail and none fails
+by accident. The faces are in `/system/fonts`, which nothing scans; the
 families there are `Noto Serif` and `Roboto`, which no Microsoft default
-names. It is also the only target where the platform will not meet us
-halfway, and so it is the one that sets the shape of the API.
+names; and the fallback lists are empty, so even a correctly loaded database
+is unreachable for any character outside the selected face. It is also the
+only target where the platform will not meet us halfway, and so it is the one
+that sets the shape of the API.
 
 ### The cost, reproduced on a second platform
 
-The seven-of-thirty measurement was taken on a Mac. It reproduces exactly on
-Linux: patch `system_font_system` to hand back an empty `fontdb::Database` —
-Android's condition — and `chapbook-reader`'s session suite goes 23 passed, 7
-failed, the same seven. So it is a property of the engine and not of anyone's
-host, which is what makes it a number worth quoting.
+The seven-of-thirty measurement was taken on a Mac. It reproduced exactly on
+Linux: patching the old `system_font_system` to hand back an empty
+`fontdb::Database` — Android's condition — took `chapbook-reader`'s session
+suite to 23 passed, 7 failed, the same seven. So it is a property of the
+engine and not of anyone's host, which is what makes it a number worth
+quoting.
+
+That experiment cannot be repeated as written, because the function it
+patched no longer exists: a source that resolves to zero faces is now an
+error at construction. The seven failures are what the error message
+describes.
 
 The names say more than the count:
 
@@ -918,14 +1015,15 @@ that looks wrong, it is an ereader that cannot move.
 
 ### The shape
 
-Three things are collapsed into one call today: where faces come from, what
-the generics mean, and whether layout may depend on the host at all. Separate
-them.
+Four things are collapsed into one call today: where faces come from, what
+the generics mean, what happens when a glyph is missing, and whether layout
+may depend on the host at all. Separate them.
 
 ```rust
 pub struct FontSource {
     faces: Vec<Faces>,
-    generics: Generics,   // no Default — see rule 2
+    generics: Generics,    // no Default — see rule 2
+    fallback: Fallbacks,   // no Default — see rule 3
     locale: String,
 }
 
@@ -936,9 +1034,30 @@ pub enum Faces {
 }
 
 pub struct Generics { serif, sans_serif, monospace, cursive, fantasy: String }
+
+pub struct Fallbacks {
+    common: Vec<String>,                  // tried for any missing glyph
+    per_script: Vec<(ScriptTag, Vec<String>)>,
+    forbidden: Vec<String>,               // never fall back to these
+}
 ```
 
-Five rules, each one bought with a failure recorded above.
+**It belongs in `chapbook-core`, at Contract tier.** It appears in the
+session constructor's signature, so every shell has to name it — which is the
+Contract test, the same one `Panel` passes. It costs core no new dependency:
+`PathBuf`, `Arc<[u8]>`, `String`. Core describes the source;
+`chapbook-layout` realizes it into a `FontSystem`. That is also the split
+that lets it cross the C ABI, where Android hands over a directory path and
+iOS hands over bytes.
+
+**`Fallbacks` is data, not a trait.** cosmic-text's `Fallback` returns
+`&'static [&'static str]`, which is fine for a list compiled in and wrong for
+one a Java or Swift caller assembles at runtime. Core holds owned `Vec<String>`
+and layout wraps it in an adapter implementing `Fallback`. Small, but it is
+the difference between a design that survives the FFI and one that has to be
+redone at it.
+
+Six rules, each one bought with a failure recorded above.
 
 1. **A mandatory constructor argument, not a setter.** Today the only door is
    `paint_resources()`, which reaches through a *paint* accessor to configure
@@ -948,20 +1067,100 @@ Five rules, each one bought with a failure recorded above.
 2. **`Generics` gets no `Default`, and all five fields are required.** This
    is the rule that turns rung 3's second finding into a compile error. No
    caller can accidentally inherit `Times New Roman`.
-3. **Zero faces is an error, not a state.** `Session::open` returns `Err`
+3. **`Fallbacks` gets no `Default` either.** Same argument, newer finding:
+   the platform default is empty on Android and wrong on iOS, and an empty
+   fallback list fails as tofu rather than as an error. A caller that
+   genuinely wants none writes `Fallbacks::none()` and can be found by grep.
+4. **Zero faces is an error, not a state.** The constructor returns `Err`
    when a source resolves empty, so Android's blank pages and iOS's blank
    pages both become one message at construction.
-4. **Nothing calls `load_system_fonts()` implicitly.** Only `Faces::Host`
+5. **Nothing calls `load_system_fonts()` implicitly.** Only `Faces::Host`
    does, and the name tells the caller what they bought — host-dependent
    layout, including host-dependent tests.
-5. **Tests, goldens and conformance take an embedded source, never `Host`.**
-   This is what makes the gate mean the same thing on Linux, on a Mac and on
-   a device, which today it does not.
+6. **Tests, goldens and conformance take an embedded source, never `Host`,
+   and pin all three axes.** Pinning faces alone was what
+   `fixture_font_system` did, and it left the gate meaning different things
+   on Linux, on a Mac and on a device.
 
-Rule 5 does not by itself turn the two macOS tests green — that was tried,
-and Crimson Text gives a third answer rather than the expected one. Those
-assertions need recalibrating once, against whichever source they land on.
-A one-time cost, and portable forever after.
+Rule 6 was expected to cost a one-time recalibration, because pointing the
+session at Crimson Text had been tried and gave a third answer rather than
+the expected one. It did not, and the reason is worth recording: the two
+pinned assertions had already been fixed the better way — by deleting the
+fingerprint rather than re-taking it, taking their offsets from `search_unit`
+instead of writing them down. So when the suite was moved onto an embedded
+source, all thirty tests passed unchanged. Fixing the assertion and fixing
+the font source were two halves of the same defect, and doing the harder
+half first made the second free.
+
+### The direction nobody has designed: reading it back
+
+`FontSource` as written is input-only, and PLATFORM §2 records font-family
+selection as the one settings feature still missing, "which needs a
+font-enumeration story before it needs an API". That story is this object
+read backwards:
+
+```rust
+impl Session { pub fn families(&self) -> Vec<FamilyName>; }
+```
+
+It is nearly free once the source is explicit — the database is already
+built and already enumerable — and it is the only thing standing between
+`ReadingSettings` and a font-family field. Worth landing in the same pass,
+because a shell that can supply fonts and cannot list them is an odd
+half-API to ship.
+
+Not part of this: Dynamic Type on iOS and `fontScale` on Android are
+`base_font_px`, which `set_settings` already reaches. They are a shell
+responsibility and they are easy to file under "fonts" by mistake.
+
+### Implemented
+
+`FontSource` landed as described, with one addition the design did not
+anticipate.
+
+`chapbook_core::font` holds the description — `FontSource`, `Faces`,
+`Generics`, `Fallbacks`, `ScriptTag` — and costs core no new dependency:
+paths, bytes and strings, nothing from cosmic-text or fontdb. Contract tier,
+because it is in the session constructor's signature.
+`chapbook_layout::build_font_system` realizes it, and is now the only thing
+in the workspace that touches `fontdb::Database`. `system_font_system` and
+`fixture_font_system` are gone; `Session::open(source, fonts)` takes the
+source as a required second argument.
+
+**The addition is `FontReport`.** Every failure in this section is silent,
+and rule 4 only catches the loudest one — zero faces. A generic that names
+a family nothing carries fails quieter still: no error, no blank page, just
+a `font-family: cursive` that matches nothing. So realizing a source also
+returns what it produced, and `Session::font_report()` keeps it. On the
+Linux box this was written on it says exactly what the measurement above
+predicted:
+
+```
+2382 faces; cursive -> "IranNastaliq" not installed; fantasy -> "Homa" not installed
+```
+
+Printing that once at startup is the difference between diagnosing a device
+and guessing at it.
+
+`Session::font_families()` came with it, per *the direction nobody has
+designed* above: sorted, deduplicated, and inclusive of families a book
+registered through its own `@font-face` rules. That is PLATFORM §2's
+font-enumeration story, so font-family selection is now blocked on nothing
+but a field in `ReadingSettings`.
+
+What the tests prove, rather than what the code claims: a source resolving
+to zero faces is refused at construction with a message naming the source;
+a generic naming an absent family is reported and not fatal; script fallback
+answers by ISO 15924 tag; family names intern rather than leaking per
+session; and the whole reader suite — thirty-two tests now — runs on the
+vendored Crimson Text faces with all three axes pinned and no platform
+fallback underneath.
+
+Still open, and both are one constructor argument away: `Faces::Host` is
+what every desktop shell passes, so nothing yet *forces* a device build to
+choose; and the iOS preset is not written, because whether a sandboxed app
+can read `/System/Library/Fonts` is still the question only a device can
+answer.
 
 ### Turn `fontconfig` off everywhere it is a lie
 
@@ -991,8 +1190,11 @@ cleanup. That is right about the dependency and wrong about the order:
 1. **Spike (throwaway).** Rungs 1–4 above. Output is a list of API defects,
    not code worth keeping.
 2. **Fix the shape, in safe Rust.** Typed sources and a builder, a font
-   source, `render_into`, a cache budget and `release_caches`, `suspend()`,
-   and the optional `library` feature. All of it tested in the workspace,
+   source, an HTTP transport (`opds-client` now takes one; the session does
+   not pass one down), a credential store, `render_into`, a cache budget and
+   `release_caches`, `suspend()`, and the optional `library` feature. The
+   first four are one constructor argument between them, and doing them
+   separately means changing that signature four times. All of it tested in the workspace,
    none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
    by evidence instead of by guessing. The wasm32 CI check lands here, once
    there is something for it to prove.

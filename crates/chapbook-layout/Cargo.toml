@@ -18,6 +18,8 @@ style_config = { workspace = true }
 selectors = { workspace = true }
 cssparser = { workspace = true }
 cosmic-text = { workspace = true }
+unicode-script = { workspace = true }
+sys-locale = { workspace = true }
 hyphenation = { workspace = true }
 html5ever = { workspace = true }
 markup5ever = { workspace = true }

@@ -30,7 +30,7 @@ fn main() {
 
     // 1. Open. This also imports or matches the book in the library,
     //    which is what gives step 5 somewhere to put a position.
-    let mut session = match Session::open(&source) {
+    let mut session = match Session::open(&source, chapbook_core::FontSource::host()) {
         Ok(session) => session,
         Err(e) => {
             eprintln!("minimal: {e}");

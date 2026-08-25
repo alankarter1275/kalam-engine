@@ -9,7 +9,7 @@ fn main() {
     let source = &args[0];
     let out = args.get(1).cloned().unwrap_or_else(|| ".".to_string());
 
-    let mut s = Session::open(source).unwrap();
+    let mut s = Session::open(source, chapbook_core::FontSource::host()).unwrap();
     s.set_metrics(PageMetrics {
         size: Size::new(600.0, 800.0),
         margins: EdgeSizes::uniform(40.0),

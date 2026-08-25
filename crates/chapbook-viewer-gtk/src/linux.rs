@@ -30,7 +30,7 @@ pub fn run() -> glib::ExitCode {
         eprintln!("usage: chapbook-viewer-gtk <book.epub|comic.cbz|doc.pdf|opds-url>");
         return glib::ExitCode::from(2);
     };
-    let session = match Session::open(&source) {
+    let session = match Session::open(&source, chapbook_core::FontSource::host()) {
         Ok(session) => session,
         Err(e) => {
             eprintln!("chapbook-viewer-gtk: {e}");

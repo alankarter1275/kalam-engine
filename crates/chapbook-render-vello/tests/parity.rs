@@ -36,6 +36,17 @@ fn metrics() -> PageMetrics {
     }
 }
 
+/// The vendored fixture faces, all three axes pinned, so this suite means
+/// the same thing on Linux, on a Mac and on a device. Taking the host's
+/// fonts is what pinned two of these assertions to one machine's
+/// collection.
+fn fixture_fonts() -> chapbook_core::FontSource {
+    chapbook_core::FontSource::embedded(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts"),
+        "Crimson Text",
+    )
+}
+
 /// A session over a per-test library dir, so tests don't share state.
 fn session(name: &str, source: &str) -> Session {
     let dir =
@@ -43,7 +54,7 @@ fn session(name: &str, source: &str) -> Session {
     let _ = std::fs::remove_dir_all(&dir);
     // Safety: these tests are single-threaded per process for this reason.
     unsafe { std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir) };
-    Session::open(source).unwrap()
+    Session::open(source, fixture_fonts()).unwrap()
 }
 
 /// `None` when the machine has no adapter at all — the test then skips.

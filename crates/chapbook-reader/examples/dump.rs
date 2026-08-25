@@ -8,7 +8,7 @@ use chapbook_reader::Session;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (source, out) = (&args[0], &args[1]);
-    let mut session = Session::open(source).unwrap();
+    let mut session = Session::open(source, chapbook_core::FontSource::host()).unwrap();
     session.set_metrics(PageMetrics {
         size: Size::new(600.0, 800.0),
         margins: EdgeSizes::uniform(40.0),

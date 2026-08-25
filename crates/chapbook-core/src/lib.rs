@@ -8,6 +8,7 @@
 mod book;
 mod cfi;
 mod error;
+mod font;
 mod geometry;
 mod locator;
 mod page;
@@ -18,6 +19,10 @@ pub use book::{
 };
 pub use cfi::{Cfi, CfiStep};
 pub use error::ChapbookError;
+pub use font::{
+    Faces, FallbackFamilies, Fallbacks, FontReport, FontSource, GenericFamilies, Generics,
+    ScriptTag,
+};
 pub use geometry::{EdgeSizes, Point, Rect, Rgba, Size};
 pub use locator::{
     book_progression, find_quote_nearest, resolve_in_text, LayeredLocator, Locator, Quote,

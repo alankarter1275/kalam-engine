@@ -537,6 +537,8 @@ dependencies = [
  "stylo_dom",
  "stylo_static_prefs",
  "stylo_traits",
+ "sys-locale",
+ "unicode-script",
  "url",
  "xml5ever",
 ]
