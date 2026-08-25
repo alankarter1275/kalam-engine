@@ -39,6 +39,21 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 | `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) | Not a library |
 | `chapbook-viewer-gtk` | GTK4 reference viewer (Linux only) | Not a library |
 | `tools/chapbook-cli` | Dev/test CLI exercising each pipeline stage | Not a library |
+| `chapbook-jni` | Android JNI binding — a spike, paired with `android/` | Spike |
+
+## Android
+
+`android/` is a Gradle project with an AAR library module and a demo app,
+over `chapbook-jni`. It builds, draws a book, and passes the conformance
+harness on a device. It is a spike whose purpose is to shape the portability
+boundary rather than to be built on — read [docs/FFI.md](docs/FFI.md) before
+touching it, including the prerequisites, which are not obvious.
+
+```sh
+export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/<version>
+./android/build-jni.sh release      # cargo-ndk into jniLibs, then check linkage
+cd android && ./gradlew :demo:assembleDebug
+```
 
 ## Getting started
 
