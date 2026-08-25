@@ -14,6 +14,7 @@ members = [
     "crates/chapbook-pdf",
     "crates/chapbook-library",
     "crates/chapbook-reader",
+    "crates/chapbook-jni",
     "crates/chapbook-viewer",
     "crates/chapbook-viewer-gtk",
     "tools/chapbook-cli",

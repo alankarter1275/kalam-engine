@@ -1,0 +1,20 @@
+[package]
+name = "chapbook-jni"
+description = "Android JNI binding for chapbook — a spike, not a contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# `cdylib` is what Android loads; `rlib` keeps it usable from a Rust test.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chapbook-reader = { workspace = true, features = ["cbz", "pdf"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

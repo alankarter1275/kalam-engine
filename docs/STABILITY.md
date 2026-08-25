@@ -21,6 +21,7 @@ meaning something, and where it will not be treated as a cost at all.
 | **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello`, `chapbook-panel-fbdev` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
 | **Internal** | `chapbook-layout` | No stability of any kind. It exists to make the engine work, its DOM binding and cascade driver follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
 | **Not a library** | `chapbook-viewer`, `chapbook-viewer-gtk`, `tools/chapbook-cli` | Binaries. Their surface is their command line, not their Rust API; the reference shells exist to be read and copied, not linked. |
+| **Spike** | `chapbook-jni` | Expected to be deleted or rewritten. It exists to find out what the C ABI must carry, not to be depended on; see `docs/FFI.md`. |
 
 ## Why the lines fall there
 
@@ -100,3 +101,12 @@ yourself.
 Nothing is published to crates.io yet. When it is, the Internal and
 "Not a library" tiers get `publish = false` unless there is a reason not
 to; until then, this document is the only thing that distinguishes them.
+
+**Spike** is a tier with a shelf life, and naming it is how a throwaway
+stays throwaway. `chapbook-jni` is in the workspace so that it keeps
+compiling and stays under the same gate as everything else, not because
+anything may build on it. Once the C ABI crate exists, this one becomes a
+thin JNI layer over it or it goes away; either way its current surface is
+not a promise to anyone. (Naming that crate here in backticks would be a
+lie this document's own rot test catches, which is the second reason the
+tier is worth writing down.)
