@@ -468,7 +468,8 @@ nothing added and nothing dropped, so there are no iOS-only dependencies and
 no new licence surface to weigh. (Android is 198: it loses `fontconfig-parser`
 and `roxmltree`, for the reason below.)
 
-**fontdb has no iOS branch at all, and that is worse than Android's problem.**
+**fontdb has no iOS branch at all** — which reads worse than Android's
+problem and is in fact much better; see *Fonts, on every platform* below.
 There is not one `target_os = "ios"` in the crate. iOS is `unix` and is
 neither `macos` nor `android`, so it falls into the branch marked *Linux* and
 goes looking for `/usr/share/fonts/`, `/usr/local/share/fonts/`,
@@ -476,10 +477,15 @@ goes looking for `/usr/share/fonts/`, `/usr/local/share/fonts/`,
 feature on as it is here, for `/etc/fonts/fonts.conf` first. None of that
 exists on iOS. The result is the same empty database Android gets, reached by
 a path that believes it is on a desktop, plus two crates of dead weight
-compiled in to parse a config file that cannot be there. Whether
-`/System/Library/Fonts` can be read from inside the sandbox is the first thing
-to check on a device; if it cannot, the answer is CoreText enumeration or
-bundled faces, and either way `FontSource` earns its place again.
+compiled in to parse a config file that cannot be there.
+
+What that first reading missed is that the faces iOS does have are reachable
+in a single directory, recursively, and that fontdb already scans
+recursively. The gap is a `cfg` branch and not a platform. Whether
+`/System/Library/Fonts` can be read from inside the sandbox is the one
+question left, and still the first thing to check on a device; if it cannot,
+the answer is CoreText enumeration or bundled faces, and a font source
+carries either.
 
 **The library directory accidentally works, in the wrong place.**
 `Library::default_dir()` falls back to `$HOME/.local/share/chapbook`, and iOS
@@ -593,6 +599,160 @@ absent one. Rung 4 green means less there than it looks like it means.
 5. It takes a security-scoped bookmark — the iOS twin of Android's content
    URI, and the other half of the argument for typed sources.
 
+## Fonts, on every platform
+
+The font defect is reported three times above — Android's empty database, the
+generic families that resolve to desktop names, and the two macOS session
+tests — and they are one defect seen from three angles. It is worth setting
+out whole, because once it is whole the fix is smaller than three reports
+make it sound, and two of the three platforms turn out to be nearly free.
+
+**`FontSystem::new()` does two independent things, and this codebase has only
+ever noticed one.** The first is *which faces exist*: `load_system_fonts()`
+and its per-target directory scans. The second is *what the five CSS generics
+mean*: `serif`, `sans-serif`, `monospace`, `cursive`, `fantasy`. A database
+can succeed completely at the first and fail completely at the second, and
+nothing in the type system distinguishes them.
+
+**fontdb's idea of a default is Windows.** `Database::new()` sets the five to
+`Times New Roman`, `Arial`, `Courier New`, `Comic Sans MS` and `Impact`
+(`Papyrus` for fantasy on macOS). Exactly one platform corrects them:
+on Linux `load_fontconfig()` reads fontconfig's `<alias>` rules and calls
+`set_serif_family` and its siblings. Everywhere else the Microsoft names
+stand, and whether they resolve is luck.
+
+| target | faces | generics |
+|---|---|---|
+| Windows | `%SYSTEMROOT%\Fonts` | native, correct |
+| Linux, `fontconfig` on | via fontconfig | rewritten by its aliases |
+| Linux, `fontconfig` off | four known dirs | MS names stand — luck |
+| macOS | four dirs, 370 faces | 5 of 5, by luck |
+| iOS | **none — no branch** | would be 4 of 5, by luck |
+| Android | **none — no branch** | 0 of 5 |
+| wasm32 | none | 0 of 5 |
+
+Linux is the only target where both axes are handled, and they are handled by
+a dependency that exists on no other target. That is the shape behind every
+font surprise in this document: chapbook was written on the one platform
+where fonts are somebody else's problem, and `fontconfig` was quietly doing
+half the work that a font source will have to do explicitly.
+
+### iOS is the cheap one, and this document said the opposite
+
+The handoff above called fontdb's missing iOS branch "worse than Android's
+problem." That was wrong, and an iOS 18.5 simulator runtime says why. Three
+things, from a real iOS filesystem:
+
+`/System/Library/Fonts` on iOS holds **no files at its top level.** It is all
+subdirectories — `Core/`, `CoreAddition/`, `AppFonts/`, `WebFonts/`,
+`LanguageSupport/`, `UnicodeSupport/`. macOS is flat there; iOS is not, which
+is exactly the shape that would defeat a naive scan.
+
+It does not defeat fontdb's. `load_fonts_dir_impl` recurses into every
+`is_dir()` entry it meets, so one path picks up all **265** face files.
+
+And the Microsoft names are present: `Core/TimesNewRoman.ttf`,
+`WebFonts/Arial.ttf`, `Core/CourierNew.ttf` and `WebFonts/Impact.ttf`, four
+faces each for the first three. Only `Comic Sans MS` is missing, so `cursive`
+is the single generic that would not resolve.
+
+So iOS's font problem is **one missing `cfg` branch**, not a platform
+limitation. Add `target_os = "ios"` loading `/System/Library/Fonts`, and 265
+faces appear and four of five generics resolve by the same accident that has
+been keeping macOS working all along. It is a six-line patch worth sending
+upstream whether or not we choose to depend on it landing.
+
+One question survives, and it is now the only iOS font question: whether a
+sandboxed app can read `/System/Library/Fonts` at all. A simulator runs
+without the container restrictions, so this file cannot answer it and a
+device must. If the answer is no, the fallbacks are CoreText enumeration or
+bundled faces — and a font source carries either.
+
+### macOS is already fine, and its two red tests are not a font-source bug
+
+370 faces load, and all five generics resolve, because macOS ships the whole
+Microsoft core set alongside its own. Nothing about the font *source* is
+broken there. What is broken is that the session takes the host's fonts at
+all, so the two session assertions are pinned to one machine's collection —
+and, as recorded above, the repository's own Crimson Text does not reproduce
+them either. macOS needs no font work. It needs those two tests moved off
+the host, and then recalibrated once against whatever they are moved onto.
+
+### Android is the real one
+
+Android is the only target where both axes genuinely fail and neither fails
+by accident. The faces are in `/system/fonts`, which nothing scans, and the
+families there are `Noto Serif` and `Roboto`, which no Microsoft default
+names. It is also the only target where the platform will not meet us
+halfway, and so it is the one that sets the shape of the API.
+
+### The shape
+
+Three things are collapsed into one call today: where faces come from, what
+the generics mean, and whether layout may depend on the host at all. Separate
+them.
+
+```rust
+pub struct FontSource {
+    faces: Vec<Faces>,
+    generics: Generics,   // no Default — see rule 2
+    locale: String,
+}
+
+pub enum Faces {
+    Dir(PathBuf),        // Android /system/fonts, iOS /System/Library/Fonts
+    Bytes(Arc<[u8]>),    // bundled, or handed over by CoreText
+    Host,                // explicit opt-in to fontdb's per-target guess
+}
+
+pub struct Generics { serif, sans_serif, monospace, cursive, fantasy: String }
+```
+
+Five rules, each one bought with a failure recorded above.
+
+1. **A mandatory constructor argument, not a setter.** Today the only door is
+   `paint_resources()`, which reaches through a *paint* accessor to configure
+   fonts before anything is painted. It has to be mandatory rather than
+   defaulted because the failure is silent: a fontless session lays out,
+   renders, paints and *conforms*.
+2. **`Generics` gets no `Default`, and all five fields are required.** This
+   is the rule that turns rung 3's second finding into a compile error. No
+   caller can accidentally inherit `Times New Roman`.
+3. **Zero faces is an error, not a state.** `Session::open` returns `Err`
+   when a source resolves empty, so Android's blank pages and iOS's blank
+   pages both become one message at construction.
+4. **Nothing calls `load_system_fonts()` implicitly.** Only `Faces::Host`
+   does, and the name tells the caller what they bought — host-dependent
+   layout, including host-dependent tests.
+5. **Tests, goldens and conformance take an embedded source, never `Host`.**
+   This is what makes the gate mean the same thing on Linux, on a Mac and on
+   a device, which today it does not.
+
+Rule 5 does not by itself turn the two macOS tests green — that was tried,
+and Crimson Text gives a third answer rather than the expected one. Those
+assertions need recalibrating once, against whichever source they land on.
+A one-time cost, and portable forever after.
+
+### Turn `fontconfig` off everywhere it is a lie
+
+`fontconfig` is a cosmic-text default and compiles into every target. On iOS
+that is `fontconfig-parser` and `roxmltree` linked in to parse
+`/etc/fonts/fonts.conf`, a file that cannot exist; on Android the same two
+crates are dropped only because Android takes a different branch by accident.
+Declare it per target instead:
+
+```toml
+[target.'cfg(all(unix, not(any(target_os = "macos",
+                               target_os = "ios",
+                               target_os = "android"))))'.dependencies]
+```
+
+and off everywhere else. Linux keeps the alias rewriting, which under this
+design is the one place fontdb's help is still wanted. iOS and Android drop
+two crates and stop looking for a file that is not there. PLATFORM's feature
+audit left this knob alone as "wanting a device to justify it"; the device
+justified it.
+
 ## Sequencing
 
 PLATFORM's priority list puts the FFI first because it forces the §2
@@ -620,6 +780,18 @@ cleanup. That is right about the dependency and wrong about the order:
 
 - **Whether `frame()` crosses the boundary at all**, or whether hosts get
   pixels only. Pixels only, for now, is the recommendation.
+- **Whether an embedded font source ships in every shell binary** or only in
+  tests and conformance. Four Crimson Text faces is not nothing. The
+  recommendation is that it is always available to tests, and that shells are
+  required to name a source — so nobody ships a reader that silently falls
+  back to one serif.
+- **Who owns the per-target generic tables.** The recommendation is
+  `chapbook-layout`, shipping known-good mappings for Android, iOS, macOS and
+  Windows with a shell override, rather than each shell rediscovering that
+  `sans-serif` means `Roboto` on Android.
+- **Whether to upstream the fontdb iOS branch.** Six lines, and it makes
+  `Faces::Host` correct on iOS instead of empty. Worth sending either way;
+  the question is only whether we wait on it.
 
 Settled: the binding is a hand-written C ABI, and WASM is a demo surface
 rather than a product — see below for what that costs and what it keeps open.
