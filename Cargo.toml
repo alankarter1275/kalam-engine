@@ -9,6 +9,7 @@ members = [
     "crates/chapbook-render-vello",
     "crates/chapbook-panel-fbdev",
     "crates/chapbook-opds",
+    "crates/opds-client",
     "crates/chapbook-cbz",
     "crates/chapbook-pdf",
     "crates/chapbook-library",
@@ -37,6 +38,12 @@ chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
 chapbook-render-vello = { path = "crates/chapbook-render-vello" }
 chapbook-panel-fbdev = { path = "crates/chapbook-panel-fbdev" }
 chapbook-opds = { path = "crates/chapbook-opds" }
+# Not chapbook-prefixed on purpose: no chapbook dependency, and headed for
+# its own repo. chapbook-opds is the thin binding that keeps it here.
+# Defaults off for the same reason chapbook-reader's are: the bundled ureq
+# transport is a choice a build should have to make, and a device build that
+# routes HTTP through the host must be able to not make it.
+opds-client = { path = "crates/opds-client", default-features = false }
 chapbook-cbz = { path = "crates/chapbook-cbz" }
 chapbook-pdf = { path = "crates/chapbook-pdf" }
 chapbook-library = { path = "crates/chapbook-library" }

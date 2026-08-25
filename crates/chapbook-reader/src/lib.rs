@@ -35,8 +35,8 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    resolve_in_text, BookKind, ChapbookError, LayeredLocator, Locator, PageMetrics, PixelFormat,
-    Point, Publication, ReadingSettings, Rect, Result, Rgba, Rotation, SpineItem, TocEntry,
+    resolve_in_text, BookKind, LayeredLocator, Locator, PageMetrics, PixelFormat, Point,
+    Publication, ReadingSettings, Rect, Result, Rgba, Rotation, SpineItem, TocEntry,
 };
 use chapbook_layout::{cascade, dom, ChapterLayout};
 use chapbook_library::AnnotationKind;
@@ -299,10 +299,10 @@ impl Session {
             bool,
         ) = if source.starts_with("http://") || source.starts_with("https://") {
             #[cfg(not(feature = "opds"))]
-            return Err(ChapbookError::FormatNotBuilt("OPDS"));
+            return Err(chapbook_core::ChapbookError::FormatNotBuilt("OPDS"));
             #[cfg(feature = "opds")]
             {
-                let mut client = chapbook_opds::OpdsClient::new();
+                let mut client = chapbook_opds::OpdsClient::with_ureq();
                 if let (Ok(user), Ok(pass)) = (
                     std::env::var("CHAPBOOK_OPDS_USER"),
                     std::env::var("CHAPBOOK_OPDS_PASSWORD"),
@@ -311,7 +311,7 @@ impl Session {
                 }
                 let cache = chapbook_library::Library::default_dir().join("pse-cache");
                 let comic = chapbook_opds::StreamedComic::open(client, source, &cache)
-                    .map_err(ChapbookError::from)?;
+                    .map_err(chapbook_opds::to_chapbook_error)?;
                 let resume = comic.resume_page().unwrap_or(0);
                 (OpenBook::Comic(Arc::new(comic)), None, resume, None, true)
             }
@@ -325,11 +325,11 @@ impl Session {
                 #[cfg(feature = "cbz")]
                 Some("cbz") => OpenBook::Comic(Arc::new(chapbook_cbz::ComicBook::open(path)?)),
                 #[cfg(not(feature = "cbz"))]
-                Some("cbz") => return Err(ChapbookError::FormatNotBuilt("CBZ")),
+                Some("cbz") => return Err(chapbook_core::ChapbookError::FormatNotBuilt("CBZ")),
                 #[cfg(feature = "pdf")]
                 Some("pdf") => OpenBook::Pdf(Arc::new(chapbook_pdf::PdfBook::open(path)?)),
                 #[cfg(not(feature = "pdf"))]
-                Some("pdf") => return Err(ChapbookError::FormatNotBuilt("PDF")),
+                Some("pdf") => return Err(chapbook_core::ChapbookError::FormatNotBuilt("PDF")),
                 _ => OpenBook::Epub(Box::new(chapbook_epub::Book::open(path)?)),
             };
 

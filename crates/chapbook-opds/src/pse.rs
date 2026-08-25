@@ -16,13 +16,9 @@ use std::path::{Path, PathBuf};
 
 use sha1::{Digest, Sha1};
 
-use chapbook_core::{
-    BookKind, BookMetadata, ChapbookError, Publication, Resource, Result, SpineItem, TocEntry,
-};
+use chapbook_core::{BookKind, BookMetadata, Publication, Resource, Result, SpineItem, TocEntry};
 
-use crate::client::{pse_page_url, OpdsClient};
-use crate::model::{Entry, Link};
-use crate::OpdsError;
+use opds_client::{pse_page_url, Entry, Link, OpdsClient, OpdsError};
 
 /// A remote comic backed by an OPDS-PSE stream link.
 pub struct StreamedComic {
@@ -177,7 +173,7 @@ impl Publication for StreamedComic {
         let (data, _content_type) = self
             .client
             .fetch_pse_page(&self.stream, spine_index as u32, None)
-            .map_err(ChapbookError::from)?;
+            .map_err(crate::to_chapbook_error)?;
         let tmp = cached.with_extension("part");
         let write = (|| -> std::io::Result<()> {
             let mut file = std::fs::File::create(&tmp)?;

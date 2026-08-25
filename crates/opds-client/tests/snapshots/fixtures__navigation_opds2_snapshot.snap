@@ -1,5 +1,5 @@
 ---
-source: crates/chapbook-opds/tests/fixtures.rs
+source: crates/opds-client/tests/fixtures.rs
 expression: dump(&feed)
 ---
 version: V2

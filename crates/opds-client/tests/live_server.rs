@@ -1,10 +1,17 @@
-//! Client behavior against a live (local) HTTP server: mid-flow 401 with an
-//! Authentication Document, Basic-auth retry, and atomic downloads.
+//! The bundled `ureq` transport against a live (local) HTTP server: mid-flow
+//! 401 with an Authentication Document, Basic-auth retry, and atomic
+//! downloads.
+//!
+//! The protocol flow itself is covered transport-free in
+//! `injected_transport.rs`; what this adds is that `UreqHttp` honors the
+//! contract in `src/http.rs` — chiefly that it hands 401 back as a response
+//! with its body intact rather than as an error.
+#![cfg(feature = "ureq")]
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 
-use chapbook_opds::{OpdsClient, OpdsError};
+use opds_client::{OpdsClient, OpdsError};
 
 const FEED: &str = r#"<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -93,7 +100,7 @@ fn spawn_server(requests_to_serve: usize) -> String {
 #[test]
 fn mid_flow_401_surfaces_auth_document_then_basic_retry_succeeds() {
     let base = spawn_server(3);
-    let mut client = OpdsClient::new();
+    let mut client = OpdsClient::with_ureq();
 
     // 1. Unauthenticated: 401 with a parsed Authentication Document.
     let err = client.fetch(&format!("{base}/opds/")).unwrap_err();
@@ -110,7 +117,7 @@ fn mid_flow_401_surfaces_auth_document_then_basic_retry_succeeds() {
     assert_eq!(feed.entries.len(), 1);
 
     // 3. Download an acquisition: temp file + atomic rename, no .part left.
-    let dir = std::env::temp_dir().join(format!("chapbook-opds-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("opds-client-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let dest = dir.join("b1.epub");
     let url = &feed.entries[0].links[0].href;

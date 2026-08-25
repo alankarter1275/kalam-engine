@@ -1,6 +1,12 @@
 //! StreamedComic against a local server: lazy-PSE resolution (feed →
 //! complete entry → stream), 0-based page templating, disk caching, and
 //! the Publication surface.
+//!
+//! Driven over the bundled `ureq` transport, so it needs that feature. The
+//! transport-free half of the story — that a caller can supply its own
+//! `HttpClient` and everything still works — is `opds-client`'s
+//! `injected_transport.rs`.
+#![cfg(feature = "ureq")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -97,8 +103,12 @@ fn lazy_open_pages_and_cache() {
     let cache_root = std::env::temp_dir().join(format!("chapbook-pse-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache_root);
 
-    let comic =
-        StreamedComic::open(OpdsClient::new(), &format!("{base}/feed"), &cache_root).unwrap();
+    let comic = StreamedComic::open(
+        OpdsClient::with_ureq(),
+        &format!("{base}/feed"),
+        &cache_root,
+    )
+    .unwrap();
     assert_eq!(comic.kind(), BookKind::Comic);
     assert_eq!(comic.metadata().title.as_deref(), Some("Test Comic"));
     assert_eq!(comic.spine().len(), 3);
@@ -123,8 +133,12 @@ fn lazy_open_pages_and_cache() {
     }
     assert_eq!(hits.load(Ordering::SeqCst), 3, "cache must absorb re-reads");
     // And a fresh instance reuses the same cache.
-    let comic2 =
-        StreamedComic::open(OpdsClient::new(), &format!("{base}/feed"), &cache_root).unwrap();
+    let comic2 = StreamedComic::open(
+        OpdsClient::with_ureq(),
+        &format!("{base}/feed"),
+        &cache_root,
+    )
+    .unwrap();
     assert_eq!(comic2.unit_bytes(1).unwrap(), b"JPEGDATA:1");
     assert_eq!(hits.load(Ordering::SeqCst), 3);
 

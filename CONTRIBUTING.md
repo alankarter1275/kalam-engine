@@ -71,8 +71,9 @@ These are not style preferences. Each one has cost somebody a day.
   job builds under `RUSTUP_TOOLCHAIN`, not just an installed default,
   because `rust-toolchain.toml` outranks `rustup default` — without it
   the job rebuilds on the pinned stable and proves nothing.
-- **No async runtime.** OPDS is blocking `ureq`; the page loader is a plain
-  thread.
+- **No async runtime.** `opds-client`'s injected `HttpClient` is blocking by
+  contract, and `UreqHttp` is only its default implementation; the page
+  loader is a plain thread.
 - **Core stays GPU-assumption-free**, so it can port to e-ink.
 - **`DomNode` must stay pointer-sized** — stylo's style sharing cache
   statically asserts it.

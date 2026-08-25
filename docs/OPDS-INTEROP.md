@@ -1,6 +1,8 @@
 # OPDS client interop requirements (M6)
 
-What chapbook-opds must handle to work against real catalogs. Every behavior
+What the OPDS client must handle to work against real catalogs. (It lives
+in `opds-client` now; `chapbook-opds` is the `Publication` binding over it.)
+Every behavior
 below is observed in servers in the wild (self-hosted catalog servers, comic
 servers, and library-lending stacks, surveyed Aug 2026); the fixture corpus in
 `fixtures/opds/` exercises each one — wire the fixtures into parser tests

@@ -1,0 +1,27 @@
+[package]
+name = "opds-client"
+description = "OPDS 1.2 (Atom) and 2.0 (JSON) catalog client with a bring-your-own-HTTP transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+quick-xml = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+ureq = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+[features]
+# The bundled desktop transport. Turning it off drops ureq, rustls and the
+# webpki root store; the caller supplies its own `HttpClient` and everything
+# else in the crate is unchanged. See src/http.rs for why that seam exists.
+default = ["ureq"]
+ureq = ["dep:ureq"]

@@ -1,6 +1,6 @@
 # API stability
 
-Seventeen workspace members is a lot of surface to promise nothing about
+Sixteen workspace members is a lot of surface to promise nothing about
 and far too much to promise everything about. This is the split: which
 crates carry semver discipline, which are implementations you may depend
 on at your own pace, and which are internals that will move under you.
@@ -16,8 +16,8 @@ meaning something, and where it will not be treated as a cost at all.
 | Tier | Crates | What it means |
 |---|---|---|
 | **Contract** | `chapbook-core`, `chapbook-paint` | Types that appear in signatures a downstream must name. Breaking one breaks every shell *and* every backend at once. Changed most reluctantly. |
-| **API** | `chapbook-reader`, `chapbook-library`, `chapbook-opds` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
-| **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
+| **API** | `chapbook-reader`, `chapbook-library`, `opds-client` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
+| **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf`, `chapbook-opds` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
 | **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello`, `chapbook-panel-fbdev` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
 | **Internal** | `chapbook-layout` | No stability of any kind. It exists to make the engine work, its DOM binding and cascade driver follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
 | **Not a library** | `chapbook-viewer`, `chapbook-viewer-gtk`, `tools/chapbook-cli` | Binaries. Their surface is their command line, not their Rust API; the reference shells exist to be read and copied, not linked. |
@@ -48,16 +48,26 @@ The same holds for the two rasterizers against `DisplayList`.
 appear in the session's own signatures. A crate whose types leak through
 a stable API is a stable API, whatever its intent was.
 
-**`chapbook-opds` is API rather than Producer** because it is the one
-crate here with a life of its own. It is a working OPDS 1.2/2.0 client
-with no ereader attached, and it is plausible for something to depend on
-it and nothing else.
+**`opds-client` is the one member with a life of its own,** and the only
+one whose name does not start with `chapbook`. It is a working OPDS
+1.2/2.0 client with no ereader attached — it does not depend on
+`chapbook-core` and never will — so it carries the API tier and is
+expected to leave this repository for its own eventually. It is also the
+only crate here whose *feature* surface is part of the promise: the
+`ureq` transport is a default feature, and a caller that turns it off and
+supplies its own `HttpClient` must keep working.
 
-**Internal means internal.** `dom`, `style` and `layout` are shaped by
-stylo's trait requirements, not by a design anyone chose, and the pinned
-stylo set upgrades all-at-once as a deliberate task that rewrites them.
-Promising anything about their surface would be promising something about
-Servo's.
+**`chapbook-opds` is Producer,** now that it is only the binding: an
+OPDS-PSE stream presented as a `Publication`, plus the error seam into
+`ChapbookError`. It re-exports `opds-client` wholesale, so a consumer
+inside the workspace still depends on one crate, but the tier follows
+what the crate itself is — a format reader like the other three.
+
+**Internal means internal.** `chapbook-layout` — its `dom` binding, its
+`cascade` driver, and layout itself — is shaped by stylo's trait
+requirements, not by a design anyone chose, and the pinned stylo set
+upgrades all-at-once as a deliberate task that rewrites it. Promising
+anything about that surface would be promising something about Servo's.
 
 ## What this asks of a change
 

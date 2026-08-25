@@ -279,7 +279,7 @@ fn push_field(out: &mut String, name: &str, value: Option<&str>) {
 }
 
 fn opds_client() -> chapbook_opds::OpdsClient {
-    let mut client = chapbook_opds::OpdsClient::new();
+    let mut client = chapbook_opds::OpdsClient::with_ureq();
     // Credentials via environment for the dev CLI; the viewer will prompt
     // using the Authentication Document instead.
     if let (Ok(user), Ok(pass)) = (
@@ -300,7 +300,7 @@ fn describe_opds_error(e: chapbook_opds::OpdsError) -> chapbook_core::ChapbookEr
             flows.join(", ")
         ));
     }
-    e.into()
+    chapbook_opds::to_chapbook_error(e)
 }
 
 fn dump_feed(feed: &chapbook_opds::Feed) -> String {

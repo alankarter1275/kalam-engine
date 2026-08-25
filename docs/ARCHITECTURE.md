@@ -189,16 +189,35 @@ stays that way.
   transcribes onto it, and device scale becomes a scene transform. Renders
   offscreen through wgpu with readback. Its parity test against the CPU
   backend is what keeps the seam a contract rather than a data structure.
-- **chapbook-opds** — blocking `ureq` + rustls (no async runtime). OPDS 1.2
-  Atom as the canonical dialect, parsed at the XML level with namespace-aware
-  `quick-xml` (NOT `atom_syndication`/`feed-rs`: both silently drop the
-  foreign-namespace link attributes that facets and OPDS-PSE page streaming
-  live in); OPDS 2.0 JSON via serde as a secondary parser. Pagination
-  (`next`/`previous` + OpenSearch totals), search, facets, acquisition
-  download (temp file + atomic rename; no Range resume assumed), HTTP Basic
-  at any point in a flow plus OPDS Authentication Document login. Full
-  requirements: `docs/OPDS-INTEROP.md`; wire-format fixtures:
+- **opds-client** — the OPDS itself, and the one member with no chapbook
+  dependency: it is a standalone catalog client that happens to live here.
+  OPDS 1.2 Atom as the canonical dialect, parsed at the XML level with
+  namespace-aware `quick-xml` (NOT `atom_syndication`/`feed-rs`: both
+  silently drop the foreign-namespace link attributes that facets and
+  OPDS-PSE page streaming live in); OPDS 2.0 JSON via serde as a secondary
+  parser. Pagination (`next`/`previous` + OpenSearch totals), search,
+  facets, acquisition download (complete or not at all; no Range resume
+  assumed), HTTP Basic at any point in a flow plus OPDS Authentication
+  Document login.
+  **It opens no sockets.** The caller injects an `HttpClient` — a blocking
+  three-method trait over `HttpRequest`/`HttpResponse` — because a bundled
+  networking stack is what PLATFORM §7 found costs an iOS app background
+  transfer, system trust and ATS, costs Android `WorkManager`, and is
+  simply unavailable in WASM. `UreqHttp` (blocking `ureq` + rustls, no
+  async runtime) is one implementation behind the default `ureq` feature;
+  `--no-default-features` drops ureq, rustls and the root store and the
+  crate still does everything but fetch. `HttpClient::download` has a
+  default that streams to a temp file and renames, and exists to be
+  overridden by a host that owns a background download facility.
+  Full requirements: `docs/OPDS-INTEROP.md`; wire-format fixtures:
   `fixtures/opds/`.
+- **chapbook-opds** — the binding, and the only part of the above that
+  could not travel: `StreamedComic`, an OPDS-PSE stream presented as a
+  `Publication` (one HTTP fetch per page through a 0-based `{pageNumber}`
+  template, disk-cached, lazy stream links followed at open), plus the
+  conversion from `OpdsError` into `ChapbookError`. Re-exports
+  `opds-client` wholesale, so consumers inside the workspace name one
+  crate.
 - **chapbook-library** — rusqlite (bundled, WAL): books/authors, positions,
   annotations, opds_sources. Positions are `Locator`s and survive relayout
   via the char_map.

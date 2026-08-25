@@ -1,38 +1,48 @@
-//! The blocking HTTP client: fetch/sniff/parse feeds, Basic auth with
-//! Authentication Document surfacing, atomic downloads, PSE page urls,
-//! OpenSearch. Behavior contract: docs/OPDS-INTEROP.md.
+//! The OPDS flow: fetch/sniff/parse feeds, Basic auth with Authentication
+//! Document surfacing, downloads, PSE page urls, OpenSearch. Behavior
+//! contract: docs/OPDS-INTEROP.md.
+//!
+//! Everything here is protocol, not networking — bytes arrive through an
+//! injected [`HttpClient`] (see `crate::http` for why).
 
 use std::io::Read;
 use std::path::Path;
 
 use crate::atom::parse_atom;
+use crate::http::{HttpClient, HttpRequest};
 use crate::model::{AuthDocument, Feed, Link, MediaType};
 use crate::opds2::{parse_opds2, parse_opds2_publication};
 use crate::OpdsError;
 
 pub struct OpdsClient {
-    agent: ureq::Agent,
+    http: Box<dyn HttpClient>,
     /// Precomputed `Authorization: Basic ...` header value.
     basic_auth: Option<String>,
 }
 
-impl Default for OpdsClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl OpdsClient {
-    pub fn new() -> Self {
-        let config = ureq::Agent::config_builder()
-            // Read 4xx/5xx bodies ourselves: a 401 carries the
-            // Authentication Document.
-            .http_status_as_error(false)
-            .build();
+    /// Build a client over a caller-supplied transport.
+    pub fn new(http: impl HttpClient + 'static) -> Self {
         OpdsClient {
-            agent: config.into(),
+            http: Box::new(http),
             basic_auth: None,
         }
+    }
+
+    /// Build a client over an already-boxed transport, for callers that
+    /// choose one at runtime.
+    pub fn with_boxed_http(http: Box<dyn HttpClient>) -> Self {
+        OpdsClient {
+            http,
+            basic_auth: None,
+        }
+    }
+
+    /// Build a client over the bundled `ureq` transport — the desktop
+    /// default, and the only constructor that pulls in a TLS stack.
+    #[cfg(feature = "ureq")]
+    pub fn with_ureq() -> Self {
+        Self::new(crate::UreqHttp::new())
     }
 
     /// Set credentials for this catalog. Any request may 401 mid-flow; the
@@ -83,33 +93,25 @@ impl OpdsClient {
         self.fetch(&url)
     }
 
-    /// Download an acquisition to `dest`: temp file + atomic rename. No
-    /// Range resume is assumed — an interrupted download restarts.
+    /// Download an acquisition to `dest`, complete or not at all. No Range
+    /// resume is assumed — an interrupted download restarts.
+    ///
+    /// The transport does the writing (see [`HttpClient::download`]), so a
+    /// host with a background download facility gets to use it.
     pub fn download(&self, url: &str, dest: &Path) -> Result<(), OpdsError> {
-        let mut request = self.agent.get(url);
-        if let Some(auth) = &self.basic_auth {
-            request = request.header("Authorization", auth);
-        }
-        let mut response = request
-            .call()
+        let status = self
+            .http
+            .download(self.request(url, "*/*"), dest)
             .map_err(|e| OpdsError::Network(e.to_string()))?;
-        let status = response.status().as_u16();
         if status == 401 {
+            // No Authentication Document here: the transport owns the body
+            // on this path, and a download 401 is a retry-with-credentials
+            // signal rather than a login prompt.
             return Err(OpdsError::AuthRequired(None));
         }
         if !(200..300).contains(&status) {
             return Err(OpdsError::Http(status));
         }
-        let tmp = dest.with_extension("part");
-        {
-            let mut file = std::fs::File::create(&tmp)
-                .map_err(|e| OpdsError::Network(format!("create {}: {e}", tmp.display())))?;
-            let mut reader = response.body_mut().as_reader();
-            std::io::copy(&mut reader, &mut file)
-                .map_err(|e| OpdsError::Network(format!("download: {e}")))?;
-        }
-        std::fs::rename(&tmp, dest)
-            .map_err(|e| OpdsError::Network(format!("rename to {}: {e}", dest.display())))?;
         Ok(())
     }
 
@@ -127,24 +129,26 @@ impl OpdsClient {
         self.get(&url, "image/*")
     }
 
-    fn get(&self, url: &str, accept: &str) -> Result<(Vec<u8>, Option<String>), OpdsError> {
-        let mut request = self.agent.get(url).header("Accept", accept);
-        if let Some(auth) = &self.basic_auth {
-            request = request.header("Authorization", auth);
+    /// Assemble a request: one Accept media type, no q-values (interop doc
+    /// §1), plus credentials when the caller has set them.
+    fn request(&self, url: &str, accept: &str) -> HttpRequest {
+        let request = HttpRequest::new(url).header("Accept", accept);
+        match &self.basic_auth {
+            Some(auth) => request.header("Authorization", auth),
+            None => request,
         }
-        let mut response = request
-            .call()
+    }
+
+    fn get(&self, url: &str, accept: &str) -> Result<(Vec<u8>, Option<String>), OpdsError> {
+        let mut response = self
+            .http
+            .get(self.request(url, accept))
             .map_err(|e| OpdsError::Network(e.to_string()))?;
-        let status = response.status().as_u16();
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string);
+        let status = response.status;
+        let content_type = response.content_type.clone();
         let mut body = Vec::new();
         response
-            .body_mut()
-            .as_reader()
+            .body
             .read_to_end(&mut body)
             .map_err(|e| OpdsError::Network(format!("read body: {e}")))?;
 

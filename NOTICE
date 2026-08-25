@@ -122,7 +122,9 @@ Everything else that needed naming
                          carry their own notice, reproduced in each crate.
 
     ring                 Apache-2.0 AND ISC. Present only with the `opds`
-                         feature (ureq -> rustls). Its LICENSE file is more
+                         feature AND chapbook-opds's default `ureq` feature
+                         (ureq -> rustls); a build that injects its own
+                         transport has neither. Its LICENSE file is more
                          precise than the SPDX field: ISC for new code,
                          Apache-2.0 for the parts derived from BoringSSL,
                          MIT/Apache-2.0 for a vendored once_cell polyfill.
@@ -131,7 +133,8 @@ Everything else that needed naming
     webpki-roots         CDLA-Permissive-2.0. Mozilla's CA certificate
                          bundle, licensed as data rather than as code.
                          Permissive, with no attribution requirement in 2.0.
-                         Present only with the `opds` feature.
+                         Present only with the `opds` feature and
+                         chapbook-opds's default `ureq` feature.
 
     hexf-parse           CC0-1.0. Desktop viewer only, via wgpu's shader
                          compiler. A public-domain dedication — note that
@@ -163,6 +166,13 @@ The obligations scale with what you compile in, which is why
 
     chapbook-reader (default: cbz, pdf, opds)
         + ring, webpki-roots, brotli, subtle, alloc-*.
+
+    chapbook-opds --no-default-features
+        none of the TLS set. The whole licence surface above belongs to
+        the bundled `ureq` transport rather than to OPDS itself, so a
+        build that injects its own `HttpClient` keeps catalogs and sheds
+        all of it. Not yet reachable through chapbook-reader, which still
+        constructs `OpdsClient::with_ureq()` directly.
 
     chapbook-viewer / chapbook-viewer-gtk
         + the winit and wgpu Apache-2.0 set, dpi, hexf-parse.

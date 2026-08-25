@@ -556,13 +556,8 @@ version = "0.1.0"
 dependencies = [
  "chapbook-core",
  "insta",
- "quick-xml 0.42.0",
- "serde",
- "serde_json",
+ "opds-client",
  "sha1",
- "thiserror 2.0.20",
- "ureq",
- "url",
 ]
 
 [[package]]
@@ -2992,6 +2987,19 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "opds-client"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "quick-xml 0.42.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "ureq",
+ "url",
+]
 
 [[package]]
 name = "orbclient"

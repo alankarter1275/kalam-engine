@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use chapbook_opds::{parse_atom, parse_opds2, parse_opds2_publication, Feed, OpdsVersion};
+use opds_client::{parse_atom, parse_opds2, parse_opds2_publication, Feed, OpdsVersion};
 
 const BASE: &str = "https://cat.example.com/opds/feed/new?page=2";
 
@@ -72,7 +72,7 @@ fn dump(feed: &Feed) -> String {
     out
 }
 
-fn feed_rels(link: &chapbook_opds::Link) -> Vec<&str> {
+fn feed_rels(link: &opds_client::Link) -> Vec<&str> {
     link.rel.iter().map(String::as_str).collect()
 }
 
@@ -159,7 +159,7 @@ fn acquisition_atom_pse_link() {
     // Complete-entry follow target for lazy PSE.
     assert!(comic.complete_entry().is_some());
 
-    let url = chapbook_opds::pse_page_url(stream, 0, Some(1200));
+    let url = opds_client::pse_page_url(stream, 0, Some(1200));
     assert!(
         url.contains("page=0") && url.contains("width=1200"),
         "{url}"
@@ -243,7 +243,7 @@ fn publication_opds2_polymorphism() {
 
 #[test]
 fn authentication_document() {
-    let doc: chapbook_opds::AuthDocument =
+    let doc: opds_client::AuthDocument =
         serde_json::from_slice(&fixture("authentication.opds-auth.json")).unwrap();
     assert_eq!(doc.title, "Example Catalog");
     let basic = doc.basic_flow().expect("basic flow offered");
@@ -258,7 +258,7 @@ fn authentication_document() {
 
 #[test]
 fn opensearch_description() {
-    let template = chapbook_opds::opensearch_template(&fixture("opensearch.xml"), BASE).unwrap();
+    let template = opds_client::opensearch_template(&fixture("opensearch.xml"), BASE).unwrap();
     assert!(template.contains("{searchTerms}"), "{template}");
     // The fixture's template is absolute — it must pass through untouched.
     assert_eq!(template, "https://example.com/opds/search?q={searchTerms}");
@@ -268,7 +268,7 @@ fn opensearch_description() {
 
 #[test]
 fn media_type_essence_comparison() {
-    use chapbook_opds::MediaType;
+    use opds_client::MediaType;
     let t = MediaType::parse("application/atom+xml;profile=opds-catalog;kind=acquisition");
     assert!(t.is_atom());
     assert!(t.is_opds_catalog());

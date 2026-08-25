@@ -1,17 +1,11 @@
 ---
-source: crates/chapbook-opds/tests/fixtures.rs
+source: crates/opds-client/tests/fixtures.rs
 expression: dump(&feed)
 ---
 version: V1
-title: Example Catalog
-id: Some("urn:cat:root")
+title: The Go Programming Language
+id: None
 totals: Totals { total_results: None, items_per_page: None, start_index: None, current_page: None }
-link ["self"] -> https://cat.example.com/opds/ [application/atom+xml]
-link ["search"] -> https://cat.example.com/opds/opensearch.xml [application/opensearchdescription+xml]
-entry: New Releases | id=/opds/feed/new authors=[] lang=None published=None series=None
-  ["http://opds-spec.org/sort/new"] -> https://cat.example.com/opds/feed/new
-entry: By Subject | id=/opds/feed/subjects authors=[] lang=None published=None series=None
-  ["subsection"] -> https://cat.example.com/opds/feed/subjects
 entry: The Go Programming Language | id=urn:isbn:9780134190440 authors=["Alan Donovan", "Brian Kernighan"] lang=Some("en") published=Some("2026-01-02") series=None
   ["alternate"] -> https://cat.example.com/opds/publication/gopl
   ["http://opds-spec.org/image"] -> https://cat.example.com/covers/gopl.jpg
@@ -19,4 +13,3 @@ entry: The Go Programming Language | id=urn:isbn:9780134190440 authors=["Alan Do
   ["http://opds-spec.org/acquisition/buy"] -> https://cat.example.com/buy/gopl price=39.99 USD indirect=["application/vnd.readium.lcp.license.v1.0+json", "application/epub+zip"]
   ["http://opds-spec.org/acquisition/borrow"] -> https://cat.example.com/borrow/gopl availability=unavailable holds=Some(12) copies=Some(0)
   ["http://opds-spec.org/acquisition/open-access"] -> https://cat.example.com/dl/gopl.epub
-  ["collection"] -> https://cat.example.com/opds/feed/featured

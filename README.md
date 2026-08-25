@@ -30,7 +30,8 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 | `chapbook-render-tinyskia` | CPU rasterization backend | Backend |
 | `chapbook-render-vello` | GPU rasterization backend (vello + wgpu) | Backend |
 | `chapbook-panel-fbdev` | Linux framebuffer panel backend (`/dev/fb0`) | Backend |
-| `chapbook-opds` | OPDS 1.2/2.0 catalog client + OPDS-PSE streamed comics | API |
+| `opds-client` | OPDS 1.2/2.0 catalog client, bring-your-own-HTTP (no chapbook dependency) | API |
+| `chapbook-opds` | Binds `opds-client` to chapbook: OPDS-PSE streamed comics as `Publication`s | Producer |
 | `chapbook-cbz` | CBZ comic-book archive reading | Producer |
 | `chapbook-pdf` | PDF reading, rasterized via hayro (pure Rust) | Producer |
 | `chapbook-library` | Local bookshelf: metadata, positions, annotations (SQLite) | API |

@@ -31,12 +31,21 @@ hyphenation and hayro included. Exactly two crates fail, both with the same
 error and neither ours:
 
 - `libsqlite3-sys` (bundled SQLite, reached through `chapbook-library`)
-- `ring` (TLS, reached through `chapbook-opds`)
+- `ring` (TLS, reached through `chapbook-opds` → `opds-client`'s default
+  `ureq` feature)
 
 Both want `aarch64-linux-android-clang`, which is the NDK. Turning off the
 `opds` feature drops `ring`; SQLite is on the path of every build, because
 the library is where positions and annotations live. So the NDK is a
 prerequisite, not a fallback, and it is the *only* prerequisite.
+
+Since the OPDS split there is a better answer than dropping catalogs,
+though it is not reachable from `chapbook-reader` yet: `ring` arrives
+through `chapbook-opds`'s default `ureq` feature rather than through OPDS
+itself, so a build that turns that off and hands `opds-client` an
+`HttpClient` backed by the platform's own stack keeps catalogs and sheds
+the NDK dependency. What is missing is a way to pass that transport through
+`Session::open` — see PLATFORM §7.
 
 **Android loads no fonts.** fontdb 0.23 gates its system-font discovery on
 `cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))`, so

@@ -662,11 +662,15 @@ The pipeline is right *for a controlled-typography reader*. It is the wrong
 tool for an app whose job is rendering arbitrary publisher EPUBs faithfully,
 and no amount of FFI work changes that.
 
-### Transport belongs to the host, and it is 273 lines
+### Transport belongs to the host — split done, plumbing open
 
-`chapbook-opds` reaches the network through `ureq` with its own rustls stack
-and `webpki-roots`. On iOS that means bypassing `URLSession`, and the losses
-are not cosmetic:
+**Status: the crate split is done; passing a transport in through
+`Session::open` is not.** This section is kept because the argument still
+explains the shape, and because the credential half below is still open.
+
+The problem was that OPDS reached the network through `ureq` with its own
+rustls stack and `webpki-roots`. On iOS that means bypassing `URLSession`,
+and the losses are not cosmetic:
 
 - **Background transfer.** A large download dies when the app suspends. A
   background `URLSession` is the only thing that finishes it, and there is no
@@ -681,13 +685,32 @@ are not cosmetic:
 The same argument gives Android background downloads through WorkManager and
 gives WASM `fetch`, which it has no choice about.
 
-The shape of the fix is already visible in the crate: of 1,727 lines of
-source, `client.rs` is **273**. Everything else — `atom.rs`, `opds2.rs`,
-`pse.rs`, `href.rs` — is format knowledge that should never move. Split the
-client into a parser half and an injected transport trait, and the desktop
-keeps `ureq` as one implementation of it.
+The fix was the one this section predicted, and it came in at the size it
+predicted. `chapbook-opds` split in two: `opds-client` holds the format and
+protocol knowledge — Atom, OPDS 2.0, hrefs, auth flows, search, PSE
+templating — and `chapbook-opds` keeps only the ~200 lines that could not
+travel, the `Publication` impl and the error seam. `opds-client` opens no
+sockets: the caller injects an `HttpClient`, a blocking trait over an owned
+`HttpRequest`/`HttpResponse` pair chosen to survive a trip through a foreign
+runtime. `UreqHttp` is one implementation behind a default feature;
+`--no-default-features` leaves a dependency tree with no ureq, no rustls and
+no `ring` in it, which is also the answer to FFI.md's second NDK
+prerequisite.
 
-**Credentials go with it.** `opds_sources.auth_secret` is plaintext in
+`HttpClient::download` is the part worth noting for iOS specifically: it has
+a default that streams to a temp file and renames, and it exists to be
+overridden, so a host that owns a background download facility takes the
+whole operation rather than handing back a stream that dies on suspend.
+
+**What is left is one level up.** `chapbook-reader`'s `Session::open` still
+calls `OpdsClient::with_ureq()` outright, so a shell has nowhere to hand its
+own transport down. The seam exists and is tested; reaching it from the
+session needs an injection point, and that is the same argument as the font
+source and the credential store below — a constructor that takes the host's
+capabilities rather than assuming a desktop. Worth doing as one piece rather
+than three.
+
+**Credentials have not gone with it.** `opds_sources.auth_secret` is plaintext in
 SQLite, and `Session::open` reads `CHAPBOOK_OPDS_USER` and
 `CHAPBOOK_OPDS_PASSWORD` from environment variables that do not exist on a
 phone. Both belong behind an injected credential store, which is Keychain on
