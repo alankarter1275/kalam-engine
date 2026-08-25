@@ -57,13 +57,14 @@ bytes. Reading a comic forward accumulates every decoded page: a
 Desktop never noticed. Android is the first platform that kills the
 process for it, and `onTrimMemory` is a callback with nothing to call.
 
-**Pixels should line up.** tiny-skia's `Pixmap` is premultiplied RGBA8888,
-and an Android `Bitmap.Config.ARGB_8888` is premultiplied RGBA in native
-memory, so the frame ought to `memcpy` straight into locked bitmap pixels
-with no conversion. Ought to — this one is reasoned from both formats'
-documentation and is the first thing the spike should check against a real
-pixel, because a silently swapped red and blue channel is exactly the class
-of bug that reads as "it works."
+**Pixels line up — measured, not reasoned.** tiny-skia's `Pixmap` is
+premultiplied RGBA8888 and an Android `Bitmap.Config.ARGB_8888` is
+premultiplied RGBA in native memory, so the frame `memcpy`s straight into
+locked bitmap pixels with no conversion. Confirmed on a device rather than
+inferred from two documents: black text on white paper cannot tell RGBA from
+BGRA, so the check was run against the sepia theme, whose paper sampled
+**(246, 240, 226)** on screen — warm, `R > G > B`. A channel swap would have
+read (226, 240, 246), and looked cold blue.
 
 ## The boundary
 
@@ -307,7 +308,8 @@ different.
    list.
 5. **It takes a content URI.** Open through the storage access framework,
    which has no path and no extension, and is therefore the rung that forces
-   `Source::Reader` and `Format::Guess` to be real.
+   `Source::Reader` and `Format::Guess` to be real. *Not yet done — rungs 1
+   through 4 are.*
 
 ### What rungs 1 and 2 found
 
@@ -384,8 +386,48 @@ Android Studio's bundled JBR does have `javac` but is Java 25, which Gradle
 API level is `-P` now. None of this is chapbook's problem, and all of it is
 in the way.
 
-Rung 4 — the conformance harness running on a device — has not been run yet;
-it is waiting on an emulator image.
+### What rung 4 found: it conforms
+
+The harness ran on an Android 36 emulator, through the JNI binding, against
+Moby-Dick:
+
+```
+  ok      a crossed unit still moves
+  ok      page turns walk the whole book
+  ok      turns are reversible
+  ok      the end of the book stands still
+  ok      resize keeps the place
+  ok      rotation is not a reflow
+  ok      frame consumes the change record
+  skip    damage stays inside the page — no frame stated a damage region
+  ok      pending loads converge
+  ok      a selection lives and dies with the page
+  ok      position survives a restart
+```
+
+Ten passed, one skipped, none failed. The skip is the harness being honest:
+an EPUB with no selection and no arriving images never states a damage
+region, so there is nothing to check rather than nothing wrong.
+
+**"Position survives a restart" is the load-bearing one.** It means bundled
+SQLite works on Android, `CHAPBOOK_LIBRARY_DIR` found somewhere writable
+under `filesDir`, and a locator round-tripped through the library. Watching
+the app come back on the unit it was left on — and in the theme it was left
+in, since settings persist the same way — is the same result arrived at from
+outside.
+
+**The font workaround holds.** 214 faces from `/system/fonts`, rising to 216
+on a unit with embedded webfonts, so the webfont path works through the
+binding too. Text pages render justified and hyphenated with the publisher's
+own faces.
+
+**Nothing the engine printed reached logcat**, as predicted. Not one of the
+eleven `eprintln!` diagnostics appeared, which is the finding above confirmed
+from the other side rather than a new one.
+
+What rung 4 did *not* settle: this is x86_64 under an emulator. Nothing here
+has run on arm64 silicon, and the panel-side questions PLATFORM cares about —
+refresh policy, e-ink waveforms — are as unproven as they were.
 
 ### Shape on disk
 
