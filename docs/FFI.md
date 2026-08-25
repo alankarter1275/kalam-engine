@@ -452,8 +452,9 @@ matters are the existing feature flags and per-ABI bundle splits.
 
 ## The iOS spike
 
-Not started. This section is the handoff: what a session on a Mac can take as
-settled, what is different from Android, and what only a device can answer.
+Rung 1 done, rungs 2-5 not started. This section is the handoff: what a
+session on a Mac can take as settled, what is different from Android, and what
+only a device can answer.
 
 **Most of the defect list is not Android's.** The font source being
 unreachable, the missing generic-family mappings, the absent log seam, the
@@ -499,11 +500,77 @@ functions because it has no choice, but a header generated and depended on
 before the shape is fixed is exactly the freeze this document exists to
 avoid. Name it a spike, keep cbindgen out of it, and throw it away.
 
+### What rung 1 found: it builds, and the workspace around it does not
+
+Rung 1 is done, and it needed no persuasion. `cargo build -p chapbook-reader`
+succeeds for both `aarch64-apple-ios` and `aarch64-apple-ios-sim` — no flags,
+no patches, no feature changes — against Xcode 26.6 and the iOS 26.5 device
+and simulator SDKs. `ring` builds and bundled SQLite builds, which were the
+two Xcode-clang questions below; they are answered *yes at compile time*, and
+still unanswered at run time inside a sandbox.
+
+The dependency claim holds, and this machine can prove it more sharply than
+Linux could. `aarch64-apple-ios` and `x86_64-unknown-linux-gnu` resolve
+`chapbook-reader` to identical crate sets — not comparable, identical. On the
+same Mac, `aarch64-apple-darwin` drops exactly `fontconfig-parser` and
+`roxmltree`: the same two Android loses. macOS has a fontdb branch and iOS
+does not, on Apple's own silicon, through Apple's own SDK.
+
+Three things about the host, none of them iOS-specific, all of them waiting
+for whoever opens this repo on a Mac.
+
+**`cargo test --workspace` does not run on macOS at all.** `chapbook-viewer-gtk`
+needs `pkg-config` and glib, and the build fails before a single test does.
+`--exclude chapbook-viewer-gtk` is the whole workaround, but the published gate
+in CONTRIBUTING is a workspace command, so the first thing a Mac session does
+is watch the documented gate fail for a reason that has nothing to do with it.
+
+**Two reader tests fail on macOS, and they were failing before this branch
+existed.** `epub_session_renders_navigates_and_selects` and
+`frames_report_what_changed` fail identically at `c73cbe5`, so nothing here
+caused them. `Session::open` calls `chapbook_layout::system_font_system()` —
+the host's installed fonts — while `chapbook-layout/src/fonts.rs` says in its
+own doc comment that layout depends on the fonts available and so tests must
+use `fixture_font_system` and "never the host's font collection." The CLI and
+the layout tests obey it; the session does not. Different metrics wrap
+differently, so a press at (100, 70) lands on a different glyph, and the page
+count shifts far enough that `next_page()` becomes a no-op and `Selection`
+outranks the `PageTurn` meant to beat it.
+
+This is the unreachable-font-source defect wearing a third face, and the worst
+of the three. Android fails loudly, with an empty database and blank pages.
+iOS will fail the same loud way. macOS fails *quietly*, as two assertions about
+selected text that read like selection bugs, on a machine where fonts are the
+last thing anyone would suspect.
+
+**And the expectation is pinned to one machine, not to this repository.**
+Pointing `Session` at `fixture_font_system(fixtures/fonts, "Crimson Text")` —
+the repository's own vendored faces, the ones the CLI and the layout tests
+already use — does *not* turn the tests green. Three font sets give three
+different answers: the Mac's host collection, Crimson Text, and an empty
+database each select a slightly different run of text, and none is the run the
+assertion wants. What `starts_with("e Illustrated Chapter")` records is the
+metrics of whatever happened to be installed on the Linux box where it was
+written. That is not a fixture, it is a fingerprint, and it means the fix is
+two things and not one: give the session a font source, and recalibrate these
+two assertions against the faces that source names.
+
+**The toolchain pin does not carry the targets.** `rust-toolchain.toml` pins
+the channel and its components but declares no `targets`, so both iOS targets
+have to be added by hand before rung 1 will start. The same unguessable
+prerequisite as the NDK, and cheaper to fix.
+
+One note for rung 4, from Android's rung 4: the harness conformed on a device
+with an empty font database — ten passed, one skipped, none failed, against
+Moby-Dick, with no faces loaded at all. So conformance does not assert on text
+layout, and iOS conforming will not distinguish a working font path from an
+absent one. Rung 4 green means less there than it looks like it means.
+
 ### What only a Mac can answer
 
-- Does bundled SQLite compile and run under the iOS sandbox, and does
-  `ring` build for `aarch64-apple-ios`? Both are Xcode-clang questions that
-  Android answered in its own terms and neither answer transfers.
+- Whether bundled SQLite *runs* under the iOS sandbox. It compiles, as does
+  `ring` — see rung 1 above — but a database opening in a container is a
+  different question from a database linking.
 - Static or dynamic: a `staticlib` plus a module map is the simple path, an
   XCFramework the packaged one. Android's `cdylib` shape does not decide it.
 - The pixel path. A `CGBitmapContext` with `kCGImageAlphaPremultipliedLast`
