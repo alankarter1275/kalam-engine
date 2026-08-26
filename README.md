@@ -44,8 +44,9 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 ## Android
 
 `android/` is a Gradle project with an AAR library module and a demo app,
-over `chapbook-jni`. It builds, draws a book, and passes the conformance
-harness on a device. It is a spike whose purpose is to shape the portability
+over `chapbook-jni`. It builds, draws a book, opens one from a `content://`
+URI with no path and no extension, and passes the conformance harness on a
+device — all five rungs of `docs/FFI.md`'s ladder. It is a spike whose purpose is to shape the portability
 boundary rather than to be built on — read [docs/FFI.md](docs/FFI.md) before
 touching it, including the prerequisites, which are not obvious.
 

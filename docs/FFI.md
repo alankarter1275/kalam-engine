@@ -342,7 +342,8 @@ day.
 
 **Where the code is.** `crates/chapbook-jni` and `android/` live on the
 `ffi-spike` branch, not on main, until the spike is worth landing. What
-follows is the findings, which are the part worth keeping either way.
+follows is the findings, which are the part worth keeping either way — and
+two of them (below) were bugs on main that the spike is how anyone noticed.
 
 
 Purpose: **discover the API's defects against a real platform before the C
@@ -422,7 +423,9 @@ different.
    rung 5. Eight entry points: open, set metrics, next, prev, render, title,
    position, close. `CHAPBOOK_LIBRARY_DIR` set to `context.filesDir` via
    `setenv`, which needs no API change and buys the whole storage question
-   for free at this stage.
+   for free at this stage. *(Since replaced by
+   `SessionConfig::with_library_dir` — which is what the stopgap was
+   arguing for.)*
 3. **It draws.** Kotlin `View`, an `ARGB_8888` `Bitmap`, `render_into` over
    locked pixels, tap to turn. This is where the premultiplied-RGBA
    assumption gets checked against a real pixel, and where the missing font
@@ -435,11 +438,10 @@ different.
    list.
 5. **It takes a content URI.** Open through the storage access framework,
    which has no path and no extension, and is therefore the rung that forces
-   `Source::Reader` and `Format::Guess` to be real. *Not yet done — rungs 1
-   through 4 are. The Rust half is no longer in the way: `Source::Reader`
-   and `Format::Guess` exist and are tested against the fixture corpus, so
-   what remains is the JNI shim from a `ParcelFileDescriptor` to a
-   `ReadSeek`.*
+   `Source::Reader` and `Format::Guess` to be real. *Done — all five rungs
+   are. `openFd` takes a detached `ParcelFileDescriptor`, wraps it as a
+   `File` and hands it over as `Source::reader`; the shim is nine lines,
+   because `Source::Reader` and `Format::Guess` had already done the work.*
 
 ### What rungs 1 and 2 found
 
@@ -489,12 +491,17 @@ feature flags, and per-ABI bundle splits so no device downloads two.
 
 ### What rung 3 found
 
-**Everything the engine logs is invisible.** `chapbook-reader` makes eleven
-`eprintln!` calls and the workspace has no `log` or `tracing` facade at all —
-a deliberate scope choice that works fine for a desktop shell and stops
-working at the boundary. "library unavailable", "page N failed to load",
-"resuming at unit N": on Android stderr goes nowhere an app can read. The C
-ABI needs a log sink, and a callback is the cheap version of it.
+**Everything the engine logs is invisible.** *(Closed — the `log` seam
+landed, and the rewrite verified it from the device: `android_logger` in the
+binding, and records arriving under the crate that emitted them, as in
+`I/chapbook chapbook_reader: resuming at unit 6 (Exact)`. A callback was not
+needed; `log` was already in the graph via cosmic-text.)* `chapbook-reader`
+makes eleven `eprintln!` calls and the workspace has no `log` or `tracing`
+facade at all — a deliberate scope choice that works fine for a desktop
+shell and stops working at the boundary. "library unavailable", "page N
+failed to load", "resuming at unit N": on Android stderr goes nowhere an app
+can read. The C ABI needs a log sink, and a callback is the cheap version
+of it.
 
 **Two failure classes that a green build cannot see.** A missing
 `#[link(name = ...)]` and a drifted `external fun` name both produce a
@@ -543,24 +550,100 @@ an EPUB with no selection and no arriving images never states a damage
 region, so there is nothing to check rather than nothing wrong.
 
 **"Position survives a restart" is the load-bearing one.** It means bundled
-SQLite works on Android, `CHAPBOOK_LIBRARY_DIR` found somewhere writable
-under `filesDir`, and a locator round-tripped through the library. Watching
+SQLite works on Android, the library found somewhere writable under
+`filesDir`, and a locator round-tripped through the library. It is also the
+check that caught both of the regressions below, which is the argument for
+this rung being the cheap one. Watching
 the app come back on the unit it was left on — and in the theme it was left
 in, since settings persist the same way — is the same result arrived at from
 outside.
 
 **The font workaround holds.** 214 faces from `/system/fonts`, rising to 216
 on a unit with embedded webfonts, so the webfont path works through the
-binding too. Text pages render justified and hyphenated with the publisher's
+binding too. *(The workaround is gone; `FontSource::android_system()` is the
+same answer as a preset, and reports the same 214 faces with no unresolved
+generics.)* Text pages render justified and hyphenated with the publisher's
 own faces.
 
 **Nothing the engine printed reached logcat**, as predicted. Not one of the
 eleven `eprintln!` diagnostics appeared, which is the finding above confirmed
-from the other side rather than a new one.
+from the other side rather than a new one. *(Closed. The rewrite installs a
+backend and the same diagnostics now arrive tagged and filterable — and the
+first thing they were good for was diagnosing the two findings below.)*
 
 What rung 4 did *not* settle: this is x86_64 under an emulator. Nothing here
 has run on arm64 silicon, and the panel-side questions PLATFORM cares about —
 refresh policy, e-ink waveforms — are as unproven as they were.
+
+### What rung 5 found: the bytes win
+
+`openFd` takes a `ParcelFileDescriptor` the app has `detachFd()`'d, wraps it
+in a `File`, and passes `Source::reader`. That is the whole shim; the Rust
+half was already built and tested, and this rung only had to confirm it
+against a platform that actually withholds the path.
+
+**The format sniffer earns its keep here, twice.** A file pushed with *no
+extension at all* — which the system picker lists as an 832 kB "BIN file",
+having no idea what it is — opens as the EPUB it is, title and all. So does
+an EPUB renamed `timemachine.pdf`, which the picker displays with a red PDF
+icon. Both are the `A book is its bytes, not its name` invariant arriving
+somewhere it can be observed rather than asserted: on Android the name is
+either absent or supplied by whoever wrote the file, and neither is evidence.
+
+**A handle does not reach the library, and the session does not say so.**
+That is by design — no path means nothing to fingerprint — and it is
+documented on `Source`. What is not obvious from a shell is the *silence*: a
+book opened this way restores no position, keeps no annotations, persists no
+settings, and `suspend()` on it returns without a word. The demo shows it
+plainly, because a book opened from the picker comes back in the default
+theme rather than the one the reader left. Closing the gap is the custody
+question (persist a bookmark, not a copy) in `docs/PLATFORM.md`; until then a
+shell that offers both doors should say which one the reader came through.
+
+### What the rewrite found, which the workarounds had been hiding
+
+Rungs 1–4 were written against an API that was missing five things, and the
+workarounds for those were the deliverable. Deleting all of them and
+rewriting against the real constructor turned up two more — neither of which
+the original spike could have seen, because in each case a workaround had
+been standing where the failure would have shown.
+
+**A feature flag lost persistence in silence.** `library` became optional
+(the browser and stripped-e-ink profile), and the workspace pins
+`chapbook-reader` with `default-features = false`. The spike's dependency
+line named the formats it wanted — `["cbz", "pdf"]` — and so, from that
+commit onward, built with no library at all. The app opened, laid out,
+rendered, navigated, searched and *passed ten of eleven conformance checks*.
+It simply remembered nothing, and nothing anywhere said so: the engine warns
+when a library will not open, and has nothing to warn about when it was
+compiled without one. On a desktop this is a missing bookshelf; on a phone,
+where "come back where I left off" is most of what a reader notices, it is
+the product. **Any artifact that ships a chosen feature set should be able to
+report it at runtime** — one call naming the compiled-in capabilities, which
+the C ABI wants anyway and which the demo's status line would have shown.
+
+**A restored position followed the reader into the wrong chapter.** With the
+library switched back on, rung 4 regressed: `the end of the book stands
+still` failed, and only when the library already held a position. A restored
+offset cannot become a page until its unit lays out, so it is held pending
+and resolved in `frame()` — against whatever unit the reader had reached by
+then, because it did not record which unit it came from. Nothing obliges a
+shell to paint before it navigates, and the harness does not, so the offset
+landed in a chapter it was never measured against. At the end of a book that
+reads as the end moving: `next_page()` refuses, a `frame()` drops the reader
+several pages back, and the same turn then succeeds.
+
+Nothing about it is Android. It reproduces on a desktop by running
+`examples/conform` twice against one library — the first run leaves the
+position the second one restores — and it had been invisible because every
+test in the workspace builds a fresh library directory, so no session in the
+gate had ever restored anything it did not also write in the same process.
+Fixed by pairing both pending landings with the unit they were captured in
+and dropping them once the reader leaves it: navigating away supersedes a
+restore. **The gate's blind spot is worth more than the bug** — "state
+carried across two runs of the same binary" is a whole class this suite
+cannot currently reach, and the cheapest fix is a test that runs the harness
+twice against one directory.
 
 ### Shape on disk
 
@@ -1297,14 +1380,17 @@ justified it.
 PLATFORM's priority list puts the FFI first because it forces the §2
 cleanup. That is right about the dependency and wrong about the order:
 
-1. **Spike (throwaway).** Rungs 1–4 above. Output is a list of API defects,
-   not code worth keeping.
+1. **Spike (throwaway).** Rungs 1–5 above. Output is a list of API defects,
+   not code worth keeping. Done, twice over: the defects were found, fixed
+   in step 2, and then the spike was rewritten against the result — which
+   is how the last two findings below turned up, since a binding with no
+   workarounds left has nothing to hide a regression behind.
 2. **Fix the shape, in safe Rust.** Typed sources and a builder, a font
    source (done), a credential store (done), an HTTP transport (done — and
    `chapbook-reader`'s new `ureq` feature is what makes dropping rustls and
    ring reachable from the session rather than only from `opds-client`,
    which is this document's second NDK prerequisite), typed sources (done),
-   the library directory (still reached for behind the caller's back),
+   the library directory (done — `SessionConfig::with_library_dir`),
    `render_into` (done), a cache budget and `release_caches` (done),
    `suspend()` (done), the log seam (done — the `log` crate, plus
    `chapbook_core::log_to_stderr` for shells that want a terminal), and the
@@ -1334,6 +1420,15 @@ cleanup. That is right about the dependency and wrong about the order:
   instead, which is additive and can arrive whenever accessibility does.
   Shells that rasterize for themselves still take `frame()` in Rust; that
   path is unchanged and simply does not cross the C ABI.
+- **Whether a built artifact can report its own feature set.** Raised by the
+  spike building without a library and saying nothing (above). Every profile
+  this document argues for — browser without SQLite, e-ink without PDF, a
+  host without the bundled transport — is a build that silently cannot do
+  something a caller may assume. One accessor naming the compiled-in
+  capabilities costs nothing, and the C ABI needs it regardless, since a
+  header cannot tell you which `.so` you loaded. The open question is only
+  whether it is a bitmask, a string, or a struct that has to stay
+  ABI-stable.
 - **Whether an embedded font source ships in every shell binary** or only in
   tests and conformance. Four Crimson Text faces is not nothing. The
   recommendation is that it is always available to tests, and that shells are
