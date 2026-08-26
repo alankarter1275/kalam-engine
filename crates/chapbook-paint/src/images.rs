@@ -41,4 +41,13 @@ impl ImageStore {
     pub fn is_empty(&self) -> bool {
         self.images.is_empty()
     }
+
+    /// Bytes of decoded pixels held here.
+    ///
+    /// Exact, and the term that matters: a 1600x2400 comic page is 15.4 MB
+    /// of RGBA whatever the display can show, so this is what a session's
+    /// cache budget is mostly spending.
+    pub fn bytes(&self) -> usize {
+        self.images.values().map(|i| i.rgba.len()).sum()
+    }
 }

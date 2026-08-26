@@ -57,14 +57,36 @@ platform, and the API does not have one today. It is also, conveniently,
 the font-enumeration story PLATFORM §2 says font-family selection needs
 before it needs an API.
 
-**There is no memory ceiling.** `Session::layouts` and `Session::images`
-are only ever cleared wholesale, on a metrics or settings change, and for
-an image book the pixels are deliberately *not* cleared even then, because
-they are metrics-independent. Nothing evicts per unit and nothing counts
-bytes. Reading a comic forward accumulates every decoded page: a
-1600x2400 RGBA page is 15 MB, so thirty pages is most of half a gigabyte.
-Desktop never noticed. Android is the first platform that kills the
-process for it, and `onTrimMemory` is a callback with nothing to call.
+**There was no memory ceiling — now there is.** `Session::layouts` and
+`Session::images` were cleared only wholesale, on a metrics or settings
+change, and for an image book the pixels were deliberately *not* cleared
+even then, because they are metrics-independent. Nothing evicted per unit
+and nothing counted bytes.
+
+Measured before fixing, on a synthesised 40-page 1600x2400 CBZ at iPhone
+@3x: RSS went 29 MB at open, 92 MB after the first page, then **+15.4 MB
+per page in a straight line** — exactly one decoded page, retained — to
+**676 MB after forty**. This document's earlier estimate said thirty pages
+was "most of half a gigabyte"; measured, page thirty is 538 MB, so the
+estimate was right in shape and a little optimistic.
+
+Worse than the growth was that nothing gave it back. A metrics change, a
+theme change, and paging all the way back to page one each left RSS at
+680 MB. There was no lever at all, which is what "`onTrimMemory` is a
+callback with nothing to call" actually meant.
+
+`SessionConfig::with_cache_budget` and `Session::set_cache_budget` now cap
+both caches together, evicting least-recently-used units and never the one
+being read. Re-measured on the same comic: **flat at 276 MB** under the
+192 MiB default and **154 MB** under a 64 MiB budget, from page thirteen
+and page four respectively onward. `Session::cache_bytes()` reports the
+current total for a host that wants to decide.
+
+Eviction is safe because nothing cached is authoritative — a comic page is
+re-read from the archive and decoded again, a chapter is laid out again —
+and a miss costs that re-decode, measured at 77-120 ms for a page this
+size. That is the constraint on how small a budget can usefully be, and why
+the current unit is pinned.
 
 **Pixels line up — measured, not reasoned.** tiny-skia's `Pixmap` is
 premultiplied RGBA8888 and an Android `Bitmap.Config.ARGB_8888` is
@@ -294,11 +316,15 @@ the only guaranteed callback there is, and it has a time budget. Call it
 iOS wants the same call for a second reason that Android never raises — not
 only *persist now* but *drop your file locks now*. See the iOS section.
 
-**Power and memory.** Two calls, both driven by the finding above:
-`set_cache_budget(bytes)` so caches evict by least-recently-used instead of
-growing, and `release_caches()` for `onTrimMemory` and for an e-ink device
-that has been idle. Neither is Android-specific — a Kobo has 256 MB — but
-Android is where it becomes an OOM kill rather than a slow day.
+**Power and memory.** Two calls, both driven by the finding above.
+`set_cache_budget(bytes)` is **done** — caches evict least-recently-used
+instead of growing, and lowering the budget evicts on the spot rather than
+at the next page turn, which is what a memory warning needs.
+`release_caches()` for `onTrimMemory` and for an e-ink device that has been
+idle is still open, and is now a small thing: the eviction machinery exists,
+so it is "evict everything but the pinned unit". Neither is
+Android-specific — a Kobo has 256 MB — but Android is where it becomes an
+OOM kill rather than a slow day.
 
 ## The Android spike
 
@@ -1265,9 +1291,9 @@ cleanup. That is right about the dependency and wrong about the order:
    ring reachable from the session rather than only from `opds-client`,
    which is this document's second NDK prerequisite), typed sources (done),
    the library directory (still reached for behind the caller's back),
-   `render_into` (done), a cache budget and `release_caches`, `suspend()`,
-   and the optional `library` feature. The constructor work is finished:
-   every capability arrives through `SessionConfig` or `Source`. All of it tested in the workspace,
+   `render_into` (done), a cache budget (done) and `release_caches`,
+   `suspend()`, and the optional `library` feature. The constructor work is
+   finished: every capability arrives through `SessionConfig` or `Source`. All of it tested in the workspace,
    none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
    by evidence instead of by guessing. The wasm32 CI check lands here, once
    there is something for it to prove.

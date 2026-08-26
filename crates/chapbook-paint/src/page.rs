@@ -114,6 +114,36 @@ pub struct Glyph {
 }
 
 impl Page {
+    /// Roughly how many heap bytes this page holds.
+    ///
+    /// Approximate on purpose: it counts the big allocations — glyphs,
+    /// line text, fragment and run vectors — and ignores per-allocation
+    /// overhead. A cache budget wants to know that a chapter is hundreds
+    /// of kilobytes rather than tens of megabytes, and that answer does not
+    /// change with the fudge.
+    pub fn approx_bytes(&self) -> usize {
+        use std::mem::size_of;
+        let line_bytes = |line: &LineFragment| {
+            line.text.len()
+                + line.decorations.capacity() * size_of::<Decoration>()
+                + line.runs.capacity() * size_of::<GlyphRun>()
+                + line
+                    .runs
+                    .iter()
+                    .map(|run| run.glyphs.capacity() * size_of::<Glyph>())
+                    .sum::<usize>()
+        };
+        self.fragments.capacity() * size_of::<Fragment>()
+            + self
+                .fragments
+                .iter()
+                .map(|fragment| match &fragment.kind {
+                    FragmentKind::Line(line) | FragmentKind::HiddenText(line) => line_bytes(line),
+                    _ => 0,
+                })
+                .sum::<usize>()
+    }
+
     /// The locator offset nearest to a page-space point: hit-testing for
     /// selection. Considers line fragments whose vertical extent contains
     /// the point; among them, the horizontally nearest wins (a point in

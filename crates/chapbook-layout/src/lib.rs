@@ -57,6 +57,21 @@ pub struct ChapterLayout {
 }
 
 impl ChapterLayout {
+    /// Roughly how many heap bytes this laid-out chapter holds. See
+    /// [`Page::approx_bytes`](chapbook_paint::Page::approx_bytes) for why
+    /// approximate is the right precision here.
+    pub fn approx_bytes(&self) -> usize {
+        use std::mem::size_of;
+        self.pages.capacity() * size_of::<chapbook_paint::Page>()
+            + self.pages.iter().map(|p| p.approx_bytes()).sum::<usize>()
+            + self.char_map.capacity() * size_of::<u32>()
+            + self
+                .anchors
+                .keys()
+                .map(|k| k.len() + size_of::<usize>())
+                .sum::<usize>()
+    }
+
     /// Page containing the given locator offset.
     pub fn page_of(&self, char_offset: u32) -> usize {
         page_of(&self.char_map, char_offset)

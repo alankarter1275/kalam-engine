@@ -237,6 +237,14 @@ pub struct Session {
     metrics: Option<PageMetrics>,
     layouts: HashMap<usize, ChapterLayout>,
     images: HashMap<usize, ImageStore>,
+    /// Bytes the two caches above may hold between them.
+    cache_budget: usize,
+    /// Last time each unit was used, for eviction order. A counter rather
+    /// than a clock: monotonic, cheap, and it cannot go backwards when the
+    /// host's clock does.
+    used_at: HashMap<usize, u64>,
+    /// Ticks the counter above.
+    use_clock: u64,
     registered_fonts: HashSet<String>,
     spine: usize,
     page: usize,
@@ -286,6 +294,16 @@ pub struct Session {
     pending_anchor: Option<String>,
 }
 
+/// What a session keeps cached when the host does not say.
+///
+/// Chosen to hold a comfortable working set of comic pages — a 1600x2400
+/// page is 15.4 MB decoded, so this is about twelve of them — while being
+/// far below what any target would be killed for. It is a backstop, not a
+/// recommendation: a phone should pass its own number, and before this
+/// existed the answer was "everything, forever", which measured at 676 MB
+/// after forty pages of a comic with no way to give any of it back.
+pub const DEFAULT_CACHE_BUDGET: usize = 192 * 1024 * 1024;
+
 /// What a session needs from its host, instead of assuming a desktop.
 ///
 /// Every field here replaces something the session used to reach for on its
@@ -330,6 +348,14 @@ pub struct SessionConfig {
     /// `Library/Application Support`, and a browser has no filesystem at
     /// all. None of those are reachable through an environment variable.
     pub library_dir: Option<std::path::PathBuf>,
+    /// How many bytes of laid-out chapters and decoded page images a
+    /// session may keep. `None` takes [`DEFAULT_CACHE_BUDGET`].
+    ///
+    /// A host that knows its own limits should say. Android kills a
+    /// process for exceeding them and hands `onTrimMemory` no argument
+    /// about it; the number a device can afford is not one the engine can
+    /// guess from inside.
+    pub cache_budget: Option<usize>,
 }
 
 impl SessionConfig {
@@ -340,6 +366,7 @@ impl SessionConfig {
             #[cfg(feature = "opds")]
             transport: None,
             library_dir: None,
+            cache_budget: None,
         }
     }
 
@@ -360,6 +387,12 @@ impl SessionConfig {
         self.library_dir = Some(dir.into());
         self
     }
+
+    /// Cap what the session's caches may hold, in bytes.
+    pub fn with_cache_budget(mut self, bytes: usize) -> SessionConfig {
+        self.cache_budget = Some(bytes);
+        self
+    }
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -367,7 +400,8 @@ impl std::fmt::Debug for SessionConfig {
         let mut out = f.debug_struct("SessionConfig");
         out.field("fonts", &self.fonts)
             .field("credentials", &"<dyn CredentialStore>")
-            .field("library_dir", &self.library_dir);
+            .field("library_dir", &self.library_dir)
+            .field("cache_budget", &self.cache_budget);
         #[cfg(feature = "opds")]
         out.field(
             "transport",
@@ -586,6 +620,7 @@ impl Session {
             #[cfg(feature = "opds")]
             transport,
             library_dir,
+            cache_budget,
         } = config;
 
         // Resolved once, and used for the library and the page cache both.
@@ -806,6 +841,9 @@ impl Session {
             metrics: None,
             layouts: HashMap::new(),
             images: HashMap::new(),
+            cache_budget: cache_budget.unwrap_or(DEFAULT_CACHE_BUDGET),
+            used_at: HashMap::new(),
+            use_clock: 0,
             registered_fonts: HashSet::new(),
             spine: start_spine,
             page: 0,
@@ -901,6 +939,12 @@ impl Session {
             if self.placeholders.remove(&spine) {
                 self.layouts.remove(&spine);
             }
+            // A page that just landed is 15 MB of decoded RGBA for a comic;
+            // this is the moment the cache grows, so it is the moment to
+            // check it still fits. Sparing the arrival keeps a load that
+            // was asked for from being thrown away before it is drawn.
+            self.touch(spine);
+            self.evict_keeping(Some(spine));
         }
         if visible {
             // The region is exactly where the image was placed: a page
@@ -2024,6 +2068,83 @@ impl Session {
     /// result is in panel orientation and panel color: the metrics'
     /// rotation and the session's pixel format are both applied here.
     /// `None` under the same conditions as a frame.
+    /// Bytes the layout and image caches currently hold.
+    ///
+    /// Exact for decoded images, approximate for laid-out chapters — see
+    /// `ChapterLayout::approx_bytes`. A host reporting memory, or deciding
+    /// whether to lower the budget, wants this.
+    pub fn cache_bytes(&self) -> usize {
+        self.layouts
+            .values()
+            .map(|l| l.approx_bytes())
+            .sum::<usize>()
+            + self.images.values().map(|i| i.bytes()).sum::<usize>()
+    }
+
+    /// What the caches are allowed to hold.
+    pub fn cache_budget(&self) -> usize {
+        self.cache_budget
+    }
+
+    /// Change the cap, evicting immediately if the caches are now over it.
+    ///
+    /// Runtime rather than construction-only because memory pressure is a
+    /// runtime event: a host told to trim lowers this and the session
+    /// obeys at once.
+    pub fn set_cache_budget(&mut self, bytes: usize) {
+        self.cache_budget = bytes;
+        self.evict_to_budget();
+    }
+
+    /// Note that a unit was just used, for eviction order.
+    fn touch(&mut self, spine: usize) {
+        self.use_clock += 1;
+        self.used_at.insert(spine, self.use_clock);
+    }
+
+    /// Drop least-recently-used units until the caches fit the budget.
+    ///
+    /// **The current unit is never evicted.** Everything else is fair game,
+    /// which is safe because none of it is authoritative: a comic page is
+    /// re-read from the archive and re-decoded, a chapter is laid out
+    /// again. The caches have always been reconstructible; they had simply
+    /// never been treated as caches, and were cleared only wholesale — and
+    /// for image books, not even then.
+    ///
+    /// A miss costs a re-decode, measured at 77-120 ms for a 1600x2400
+    /// comic page, so a budget below a few pages trades a memory problem
+    /// for a paging-back problem. The default is sized well clear of that.
+    fn evict_to_budget(&mut self) {
+        self.evict_keeping(None);
+    }
+
+    /// Evict, additionally sparing `keep` — the unit a caller is in the
+    /// middle of building, which would otherwise be a candidate the moment
+    /// it is not the current one (a prefetch, a search).
+    fn evict_keeping(&mut self, keep: Option<usize>) {
+        let pinned = self.spine;
+        while self.cache_bytes() > self.cache_budget {
+            // Oldest use first; a unit with no recorded use is older still.
+            let victim = self
+                .layouts
+                .keys()
+                .chain(self.images.keys())
+                .copied()
+                .filter(|spine| *spine != pinned && Some(*spine) != keep)
+                .min_by_key(|spine| self.used_at.get(spine).copied().unwrap_or(0));
+            let Some(victim) = victim else {
+                // Only the pinned unit is left. One page over budget beats
+                // a session with nothing to show.
+                return;
+            };
+            self.layouts.remove(&victim);
+            self.images.remove(&victim);
+            self.loaded_units.remove(&victim);
+            self.placeholders.remove(&victim);
+            self.used_at.remove(&victim);
+        }
+    }
+
     /// The device-pixel size [`render`](Self::render) and
     /// [`render_into`](Self::render_into) produce, rotation included.
     ///
@@ -2230,6 +2351,8 @@ impl Session {
                 BookKind::Comic | BookKind::Pdf => {
                     let layout = self.layout_image_unit(spine, &metrics);
                     self.layouts.insert(spine, layout);
+                    self.touch(spine);
+                    self.evict_keeping(Some(spine));
                     return self.layouts.get(&spine);
                 }
             };
@@ -2242,6 +2365,11 @@ impl Session {
                 self.images.insert(spine, images);
             }
         }
+        // Touch on every call, not only on a build: eviction order is
+        // about what is being *read*, and a unit served from cache is the
+        // most-used thing there is.
+        self.touch(spine);
+        self.evict_keeping(Some(spine));
         self.layouts.get(&spine)
     }
 

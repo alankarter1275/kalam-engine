@@ -194,6 +194,15 @@ Pixels are premultiplied RGBA8888. An unrotated page with `stride ==
 width * 4` costs no allocation and no copy; a rotated page or a padded
 stride is correct but goes through an intermediate.
 
+**Memory.** A session caches laid-out chapters and decoded page images, and
+both accumulate as you read. `session.set_cache_budget(bytes)` caps them
+together; `session.cache_bytes()` says what is held now. The default is
+generous enough for a desktop and too generous for a phone — say your own
+number, and lower it when the platform warns you, which evicts immediately
+rather than at the next page turn. Eviction never drops the unit on screen,
+and everything else is re-read and re-decoded on demand, so the only cost of
+a small budget is a slower page-back.
+
 **`session.frame() -> Option<Frame>`** is the seam. `Frame` carries:
 
 - `list` — a `DisplayList` of paint-neutral ops. There are exactly three:
