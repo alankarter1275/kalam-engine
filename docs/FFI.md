@@ -1375,6 +1375,93 @@ two crates and stop looking for a file that is not there. PLATFORM's feature
 audit left this knob alone as "wanting a device to justify it"; the device
 justified it.
 
+## Building the C ABI
+
+`chapbook-ffi` exists, at `crates/chapbook-ffi`, with `include/chapbook.h`
+beside it. Thirty-eight entry points over one opaque `cb_session*`: open
+from a path, from bytes or from a file descriptor; metrics, navigation,
+position; title and book kind; settings; `render_size` and `render_into`;
+`suspend`, `release_caches` and the cache numbers; the font report; and the
+waker with `poll_loaded`. The six boundary questions above were answered by
+the spike, so most of this was transcription. Five things were not.
+
+**The last-error string cannot hang off the session, and the reason is the
+interesting part.** The proposal above says "a per-session last error
+message", which is the obvious shape and is wrong: the failures a host most
+needs explained are a book that would not open, a font source that resolved
+to nothing, and a config it assembled incorrectly — and in every one of
+those there is no session to ask, because failing to make one is the whole
+event. It is thread-local instead, and thread-local rather than global
+because a `cb_session` is `Send`: two threads may each be driving one, and
+neither should be able to overwrite the other's diagnosis.
+
+**Every pointer-taking entry point is declared `unsafe fn`.** Not a
+concession to a lint — though clippy's `not_unsafe_ptr_arg_deref` is what
+raised it — but the truth: each one has preconditions C cannot check and
+Rust cannot verify. The C declaration cbindgen emits is identical either
+way, so this costs a host nothing and makes the obligation visible on the
+Rust side, where the next person adding a function will see it. The
+follow-on is that clippy then wants a `# Safety` section on all thirty-six.
+They get one section, at crate level, because cbindgen copies doc comments
+into the header and a header repeating the same paragraph thirty-six times
+is a worse artifact rather than a safer one.
+
+**The conventions had to become tests, and one of them was already broken.**
+"Every entry point wraps its body in `catch_unwind`" is exactly the kind of
+property that holds on the day it is written and decays silently afterwards:
+the function that forgets is the one added six months later, and nothing
+fails until a panic unwinds into a host and takes the process with it.
+`tests/discipline.rs` reads the source back and asserts it — crudely, by
+string search, because the shape being looked for is one line long and never
+legitimately absent. It found two on its first run, `cb_abi_version` and
+`cb_capabilities`, both of which had been left bare on the reasoning that
+arithmetic cannot panic. That reasoning is how the rule erodes, so they are
+wrapped and the rule has no exceptions. The same file asserts that every
+`extern "C"` function is `#[no_mangle]` — the Rust-side half of the check
+`android/build-jni.sh` performs against a built `.so` — and that no entry
+point returns an owned pointer, which is what keeps `cb_free_string` absent.
+
+**A generated header is not a compiling header.** cbindgen will happily emit
+text that does not parse; a doc comment containing a comment terminator is
+the classic, and this crate's comments are long. Nothing else in the
+workspace compiles C, so nothing else would notice, and the host would find
+out at their integration. So the header is compiled — twice-included, at
+`-std=c99`, `c11` and `c17`, with `-Wall -Wextra -Werror` — and skipped
+rather than failed where no compiler is on `PATH`, so the gate still runs on
+a machine with only a Rust toolchain.
+
+**`cb_capabilities()` is here because of the spike's silent missing
+library.** A header cannot tell a host which `.so` it actually loaded, and
+every profile this document argues for is a build that quietly cannot do
+something a caller may assume. It returns a bitmask; the ABI's own test
+suite uses it to skip the persistence test rather than `cfg!`, because
+asking the ABI is what a host would do and the test should be shaped like a
+host.
+
+**Writing an actual C host is what found the last defect.** The Rust-side
+tests all passed, the header compiled, and a short C program linked against
+`libchapbook_ffi.so` then opened Moby-Dick, rendered it and walked all 675
+pages — and reported a deliberately-wrong surface width as
+`CB_ERR_UNAVAILABLE`, "the page is not available", when what had happened
+was that the caller got its arithmetic wrong. `render_into` was discovering
+the mismatch late, after the stride and length checks, and conflating "your
+surface is the wrong shape" with "there is nothing to draw". It checks
+against `render_size` first now, and the two are separate codes with a
+message that names both sizes. Nothing was *broken* before; it just sent a
+caller to look in the wrong place, which is the failure mode a C ABI can
+least afford, because the caller cannot read the source to find out
+otherwise. Worth the twenty minutes, and worth repeating from Swift when
+iOS gets there.
+
+**What is deliberately not in it.** The display list, for the reasons
+already given. Search, the table of contents, links and annotations, for a
+different one: Contract tier means what ships holds still, so the first
+header carries what five rungs on a real device actually demonstrated a
+reader needs. Every one of those is additive later and none is blocked by
+anything here. The file-descriptor door is `#[cfg(unix)]` — a descriptor is
+what Android and iOS hand out, and Windows has no analogue worth guessing at
+from this side of the boundary.
+
 ## Sequencing
 
 PLATFORM's priority list puts the FFI first because it forces the §2
@@ -1402,7 +1489,11 @@ cleanup. That is right about the dependency and wrong about the order:
    there is something for it to prove.
 3. **`chapbook-ffi` for real.** cbindgen header, stable error codes, Contract
    tier, and an FFI conformance test that drives the C ABI from a Rust test
-   so CI covers the boundary without an emulator.
+   so CI covers the boundary without an emulator. **Done** — see *Building
+   the C ABI* below. All four parts landed as described; the header is
+   checked in and golden-tested rather than generated at build time, which
+   the sketch did not specify and which is what lets a host consume the ABI
+   with no Rust toolchain at all.
 4. **`chapbook-android`, and the input model.** The AAR, the demo app, and
    `chapbook_core::input` — which lands here because a touchscreen is where
    tap zones can actually be judged.

@@ -1,0 +1,584 @@
+//! Drive the C ABI the way a host does — through its own `extern "C"`
+//! entry points, with raw pointers, out-parameters and status codes.
+//!
+//! This is the check `docs/FFI.md`'s sequencing step 3 asks for, and it
+//! exists because of a hole the Android spike left: `chapbook-jni`'s
+//! binding is `#[cfg(target_os = "android")]`, so **nothing in `cargo test`
+//! ever compiled it**, and its two failure classes — a symbol that does not
+//! exist and a signature that does not match — were caught by a shell
+//! script after a device build or not at all. A C ABI that only CI on a
+//! phone can exercise has the same problem. This has no emulator, no
+//! device, and no second language in it.
+//!
+//! What it deliberately does *not* do is call the Rust API and compare.
+//! Every call below goes through the boundary, because the boundary is what
+//! is being tested.
+
+use std::ffi::{c_char, CString};
+use std::path::PathBuf;
+
+use chapbook_ffi::*;
+
+fn fixture(rel: &str) -> CString {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(rel);
+    CString::new(path.to_string_lossy().into_owned()).expect("fixture path has no interior NUL")
+}
+
+fn cstr(value: &str) -> CString {
+    CString::new(value).expect("no interior NUL")
+}
+
+/// The vendored faces, all three axes pinned, so this suite means the same
+/// thing on any machine — and so it does not depend on the host having
+/// fonts at all.
+fn fonts() -> *mut cb_font_source {
+    let dir = fixture("fonts");
+    let family = cstr("Crimson Text");
+    let fonts = unsafe { cb_font_source_embedded(dir.as_ptr(), family.as_ptr()) };
+    assert!(!fonts.is_null(), "embedded font source: {}", last_error());
+    fonts
+}
+
+/// A config with a library dir of this test's own, so nothing here reads or
+/// writes the machine's real library.
+fn config(name: &str) -> *mut cb_config {
+    let config = unsafe { cb_config_new(fonts()) };
+    assert!(!config.is_null(), "config: {}", last_error());
+    let dir = std::env::temp_dir().join(format!("chapbook-ffi-test-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("library dir is creatable");
+    let dir = cstr(&dir.to_string_lossy());
+    assert_eq!(
+        unsafe { cb_config_set_library_dir(config, dir.as_ptr()) },
+        cb_status::CB_OK
+    );
+    config
+}
+
+fn open(name: &str, rel: &str) -> *mut cb_session {
+    let path = fixture(rel);
+    let session = unsafe { cb_session_open_path(path.as_ptr(), config(name)) };
+    assert!(!session.is_null(), "open {rel}: {}", last_error());
+    session
+}
+
+/// The two-call string idiom, exercised as a host would have to write it.
+fn read_string(
+    mut call: impl FnMut(*mut c_char, usize, *mut usize) -> cb_status,
+) -> Result<String, cb_status> {
+    let mut needed: usize = 0;
+    let probe = call(std::ptr::null_mut(), 0, &mut needed);
+    assert_eq!(
+        probe,
+        cb_status::CB_ERR_BUFFER_TOO_SMALL,
+        "a zero-capacity probe must report the size it wanted"
+    );
+    assert!(needed >= 1, "needed always counts the NUL");
+
+    let mut buf = vec![0u8; needed];
+    let rc = call(buf.as_mut_ptr() as *mut c_char, buf.len(), &mut needed);
+    if rc != cb_status::CB_OK {
+        return Err(rc);
+    }
+    assert_eq!(buf.pop(), Some(0), "the callee NUL-terminates");
+    Ok(String::from_utf8(buf).expect("UTF-8 out"))
+}
+
+fn last_error() -> String {
+    read_string(|buf, cap, needed| unsafe { cb_last_error_message(buf, cap, needed) })
+        .unwrap_or_else(|_| "<no message>".into())
+}
+
+fn metrics() -> cb_metrics {
+    cb_metrics {
+        width: 600.0,
+        height: 800.0,
+        margin_top: 40.0,
+        margin_right: 40.0,
+        margin_bottom: 40.0,
+        margin_left: 40.0,
+        dpi_scale: 1.0,
+        rotation: cb_rotation::CB_ROTATION_NONE,
+    }
+}
+
+// ---- The shape of the ABI itself ----
+
+#[test]
+fn the_build_reports_what_it_can_actually_do() {
+    // The Android spike shipped for weeks without a library and said
+    // nothing, because a build compiled without a capability has nothing to
+    // report an error about. This is the answer to that, so it is worth a
+    // test that it tells the truth rather than always returning zero.
+    let caps = cb_capabilities();
+    assert_eq!(
+        caps & cb_capability::CB_CAP_LIBRARY as u32 != 0,
+        cfg!(feature = "library")
+    );
+    assert_eq!(
+        caps & cb_capability::CB_CAP_PDF as u32 != 0,
+        cfg!(feature = "pdf")
+    );
+    assert!(cb_abi_version() > 0);
+}
+
+#[test]
+fn null_handles_are_reported_and_never_dereferenced() {
+    // A host will pass null. It must get a code, not a segfault, and the
+    // *_free calls must tolerate it so error paths need no cascade of ifs.
+    let mut moved = false;
+    assert_eq!(
+        unsafe { cb_session_next_page(std::ptr::null_mut(), &mut moved) },
+        cb_status::CB_ERR_NULL_ARGUMENT
+    );
+    assert_eq!(
+        unsafe {
+            cb_session_render_size(std::ptr::null(), std::ptr::null_mut(), std::ptr::null_mut())
+        },
+        cb_status::CB_ERR_NULL_ARGUMENT
+    );
+    unsafe {
+        cb_session_close(std::ptr::null_mut());
+        cb_config_free(std::ptr::null_mut());
+        cb_font_source_free(std::ptr::null_mut());
+    }
+}
+
+#[test]
+fn a_null_out_pointer_is_refused_rather_than_written_through() {
+    let session = open("null-out", "epub/illustrated.epub");
+    assert_eq!(
+        unsafe { cb_session_position(session, std::ptr::null_mut()) },
+        cb_status::CB_ERR_NULL_ARGUMENT
+    );
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn a_bad_utf8_path_is_a_code_and_not_a_crash() {
+    // 0xFF is not valid UTF-8 anywhere, and a host with a mangled filename
+    // should learn that rather than open something surprising.
+    let bad = [0xFFu8, 0x00];
+    let session =
+        unsafe { cb_session_open_path(bad.as_ptr() as *const c_char, config("bad-utf8")) };
+    assert!(session.is_null());
+    assert!(
+        last_error().contains("UTF-8"),
+        "the message should name the problem: {}",
+        last_error()
+    );
+}
+
+#[test]
+fn the_string_idiom_reports_the_size_it_needs() {
+    let session = open("strings", "epub/illustrated.epub");
+    let title =
+        read_string(|buf, cap, needed| unsafe { cb_session_title(session, buf, cap, needed) })
+            .expect("title");
+    assert!(!title.is_empty());
+
+    // One byte short is an error with `needed` set, not a truncation.
+    let mut needed = 0usize;
+    let mut small = vec![0u8; title.len()];
+    let rc = unsafe {
+        cb_session_title(
+            session,
+            small.as_mut_ptr() as *mut c_char,
+            small.len(),
+            &mut needed,
+        )
+    };
+    assert_eq!(rc, cb_status::CB_ERR_BUFFER_TOO_SMALL);
+    assert_eq!(needed, title.len() + 1, "needed counts the NUL");
+    assert!(small.iter().all(|b| *b == 0), "nothing was written");
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn a_bad_font_source_fails_the_open_instead_of_reading_blank() {
+    // A source resolving to no faces used to paginate every book to one
+    // blank page — rendering, navigating and conforming the whole way. It
+    // is an error at construction now, and this ABI must pass that through
+    // rather than hand back a working-looking handle.
+    let dir = cstr("/nonexistent-directory-for-this-test");
+    let family = cstr("Nothing");
+    let fonts = unsafe { cb_font_source_embedded(dir.as_ptr(), family.as_ptr()) };
+    let config = unsafe { cb_config_new(fonts) };
+    let path = fixture("epub/illustrated.epub");
+    let session = unsafe { cb_session_open_path(path.as_ptr(), config) };
+    assert!(session.is_null(), "a fontless session must not open");
+    assert!(
+        last_error().to_lowercase().contains("font"),
+        "the message should name fonts: {}",
+        last_error()
+    );
+}
+
+#[test]
+fn invalid_metrics_are_refused_including_nan() {
+    let session = open("metrics", "epub/illustrated.epub");
+    for bad in [f32::NAN, 0.0, -1.0, f32::INFINITY] {
+        let mut m = metrics();
+        m.width = bad;
+        assert_eq!(
+            unsafe { cb_session_set_metrics(session, m) },
+            cb_status::CB_ERR_INVALID_ARGUMENT,
+            "width {bad} must be refused"
+        );
+    }
+    // And with no valid metrics ever set, a render size is unavailable
+    // rather than a guess.
+    let (mut w, mut h) = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_render_size(session, &mut w, &mut h) },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+    unsafe { cb_session_close(session) };
+}
+
+// ---- Reading, through the boundary ----
+
+#[test]
+fn a_book_opens_paginates_and_turns() {
+    let session = open("read", "epub/illustrated.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+
+    let mut kind = cb_book_kind::CB_BOOK_COMIC;
+    assert_eq!(
+        unsafe { cb_session_book_kind(session, &mut kind) },
+        cb_status::CB_OK
+    );
+    assert_eq!(kind, cb_book_kind::CB_BOOK_EPUB);
+
+    let mut faces = 0usize;
+    assert_eq!(
+        unsafe { cb_session_font_face_count(session, &mut faces) },
+        cb_status::CB_OK
+    );
+    assert!(faces > 0, "the embedded source produced faces");
+
+    let mut spine_len = 0usize;
+    assert_eq!(
+        unsafe { cb_session_spine_len(session, &mut spine_len) },
+        cb_status::CB_OK
+    );
+    assert!(spine_len > 0);
+
+    let mut start = cb_position { spine: 9, page: 9 };
+    assert_eq!(
+        unsafe { cb_session_position(session, &mut start) },
+        cb_status::CB_OK
+    );
+
+    // Walk with the returned flag, never by comparing positions.
+    let mut turns = 0;
+    loop {
+        let mut moved = false;
+        assert_eq!(
+            unsafe { cb_session_next_page(session, &mut moved) },
+            cb_status::CB_OK
+        );
+        if !moved {
+            break;
+        }
+        turns += 1;
+        assert!(turns < 10_000, "the walk terminates");
+    }
+    assert!(turns > 0, "the book has more than one page");
+
+    // The end stands still.
+    let mut at_end = cb_position { spine: 0, page: 0 };
+    assert_eq!(
+        unsafe { cb_session_position(session, &mut at_end) },
+        cb_status::CB_OK
+    );
+    let mut moved = true;
+    assert_eq!(
+        unsafe { cb_session_next_page(session, &mut moved) },
+        cb_status::CB_OK
+    );
+    assert!(!moved, "a turn past the end does not move");
+    let mut still = cb_position { spine: 0, page: 0 };
+    assert_eq!(
+        unsafe { cb_session_position(session, &mut still) },
+        cb_status::CB_OK
+    );
+    assert_eq!(still, at_end);
+
+    // And back is symmetric.
+    let mut back = false;
+    assert_eq!(
+        unsafe { cb_session_prev_page(session, &mut back) },
+        cb_status::CB_OK
+    );
+    assert!(back);
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn pixels_come_back_in_a_buffer_the_caller_owns() {
+    let session = open("pixels", "epub/illustrated.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+
+    let (mut w, mut h) = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_render_size(session, &mut w, &mut h) },
+        cb_status::CB_OK
+    );
+    assert_eq!((w, h), (600, 800), "unrotated, at scale 1");
+
+    let stride = w as usize * 4;
+    let mut surface = vec![0u8; stride * h as usize];
+    assert_eq!(
+        unsafe {
+            cb_session_render_into(session, surface.as_mut_ptr(), surface.len(), w, h, stride)
+        },
+        cb_status::CB_OK
+    );
+    assert!(
+        surface.iter().any(|b| *b != 0),
+        "something was actually drawn"
+    );
+    // Premultiplied RGBA8888: the default theme's paper is opaque white.
+    assert_eq!(
+        &surface[0..4],
+        &[255, 255, 255, 255],
+        "top-left is white paper"
+    );
+
+    // A surface of the wrong size is refused, not misdrawn into — and is
+    // reported as a bad argument rather than as an unavailable page, so a
+    // caller is sent to look at its own arithmetic.
+    assert_eq!(
+        unsafe {
+            cb_session_render_into(
+                session,
+                surface.as_mut_ptr(),
+                surface.len(),
+                w - 1,
+                h,
+                stride,
+            )
+        },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    assert!(
+        last_error().contains("render_size"),
+        "the message should point at the fix: {}",
+        last_error()
+    );
+    // A stride narrower than a row is caught before any write happens.
+    assert_eq!(
+        unsafe { cb_session_render_into(session, surface.as_mut_ptr(), surface.len(), w, h, 4) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    // As is a buffer too short for the stride it claims.
+    assert_eq!(
+        unsafe { cb_session_render_into(session, surface.as_mut_ptr(), 16, w, h, stride) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn a_theme_change_reaches_the_pixels() {
+    // Sepia is the one setting whose red and blue channels differ, so it is
+    // what tells a premultiplied-RGBA buffer from a BGRA one. Black text on
+    // white paper looks identical either way.
+    let session = open("theme", "epub/illustrated.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+
+    let mut settings = unsafe {
+        let mut out = std::mem::zeroed::<cb_settings>();
+        assert_eq!(cb_session_settings(session, &mut out), cb_status::CB_OK);
+        out
+    };
+    assert_eq!(settings.theme, cb_theme::CB_THEME_LIGHT);
+
+    settings.theme = cb_theme::CB_THEME_SEPIA;
+    assert_eq!(
+        unsafe {
+            cb_session_set_settings(session, settings, cb_settings_scope::CB_SCOPE_THIS_BOOK)
+        },
+        cb_status::CB_OK
+    );
+
+    let (mut w, mut h) = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_render_size(session, &mut w, &mut h) },
+        cb_status::CB_OK
+    );
+    let stride = w as usize * 4;
+    let mut surface = vec![0u8; stride * h as usize];
+    assert_eq!(
+        unsafe {
+            cb_session_render_into(session, surface.as_mut_ptr(), surface.len(), w, h, stride)
+        },
+        cb_status::CB_OK
+    );
+    let (r, g, b) = (surface[0], surface[1], surface[2]);
+    assert!(
+        r > b && g > b,
+        "sepia paper is warm: got r={r} g={g} b={b} — if b is highest the channels are swapped"
+    );
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn a_reading_position_survives_a_close_and_reopen() {
+    // The whole point of the library reaching the boundary at all. Uses one
+    // library dir across two sessions, which is also the arrangement that
+    // caught the restored-offset bug.
+    //
+    // Asked of the ABI rather than of `cfg!`, deliberately: this is the
+    // question a host has to be able to ask, and a build without the
+    // library remembers nothing *correctly*. Skipping on the answer is what
+    // a host would do, so the test does it the same way.
+    if cb_capabilities() & cb_capability::CB_CAP_LIBRARY as u32 == 0 {
+        eprintln!("skipped: this build has no library, so nothing persists");
+        return;
+    }
+    let path = fixture("corpus/accessible_epub_3.epub");
+    let dir = std::env::temp_dir().join(format!("chapbook-ffi-restore-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("library dir");
+    let dir_c = cstr(&dir.to_string_lossy());
+
+    let open_one = || {
+        let config = unsafe { cb_config_new(fonts()) };
+        assert_eq!(
+            unsafe { cb_config_set_library_dir(config, dir_c.as_ptr()) },
+            cb_status::CB_OK
+        );
+        let session = unsafe { cb_session_open_path(path.as_ptr(), config) };
+        assert!(!session.is_null(), "open: {}", last_error());
+        assert_eq!(
+            unsafe { cb_session_set_metrics(session, metrics()) },
+            cb_status::CB_OK
+        );
+        session
+    };
+
+    let left_at = {
+        let session = open_one();
+        for _ in 0..6 {
+            let mut moved = false;
+            unsafe { cb_session_next_page(session, &mut moved) };
+        }
+        let mut at = cb_position { spine: 0, page: 0 };
+        unsafe { cb_session_position(session, &mut at) };
+        assert_eq!(unsafe { cb_session_suspend(session) }, cb_status::CB_OK);
+        unsafe { cb_session_close(session) };
+        at
+    };
+    assert!(left_at.spine > 0 || left_at.page > 0, "moved off the start");
+
+    let session = open_one();
+    let mut back = cb_position { spine: 0, page: 0 };
+    unsafe { cb_session_position(session, &mut back) };
+    assert_eq!(back.spine, left_at.spine, "reopened in the same unit");
+    unsafe { cb_session_close(session) };
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn memory_calls_are_answerable_and_do_not_lose_the_place() {
+    let session = open("memory", "epub/illustrated.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut moved = false;
+    unsafe { cb_session_next_page(session, &mut moved) };
+    let mut before = cb_position { spine: 0, page: 0 };
+    unsafe { cb_session_position(session, &mut before) };
+
+    let (mut budget, mut used) = (0usize, 0usize);
+    assert_eq!(
+        unsafe { cb_session_cache_budget(session, &mut budget) },
+        cb_status::CB_OK
+    );
+    assert!(budget > 0);
+    assert_eq!(
+        unsafe { cb_session_cache_bytes(session, &mut used) },
+        cb_status::CB_OK
+    );
+
+    // onTrimMemory: give the caches up, keep the place.
+    assert_eq!(
+        unsafe { cb_session_release_caches(session) },
+        cb_status::CB_OK
+    );
+    let mut after = cb_position { spine: 9, page: 9 };
+    unsafe { cb_session_position(session, &mut after) };
+    assert_eq!(after, before, "releasing caches is not navigation");
+
+    // And the page still renders, rebuilt from nothing.
+    let (mut w, mut h) = (0u32, 0u32);
+    unsafe { cb_session_render_size(session, &mut w, &mut h) };
+    let stride = w as usize * 4;
+    let mut surface = vec![0u8; stride * h as usize];
+    assert_eq!(
+        unsafe {
+            cb_session_render_into(session, surface.as_mut_ptr(), surface.len(), w, h, stride)
+        },
+        cb_status::CB_OK
+    );
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn a_session_moves_between_threads() {
+    // `Send` and not `Sync` is the contract the header states. Moving one
+    // to another thread and using it there must work; this is what a host
+    // that opens on a worker and reads on the UI thread does.
+    let session = open("threads", "epub/illustrated.epub") as usize;
+    let handle = std::thread::spawn(move || {
+        let session = session as *mut cb_session;
+        assert_eq!(
+            unsafe { cb_session_set_metrics(session, metrics()) },
+            cb_status::CB_OK
+        );
+        let mut moved = false;
+        assert_eq!(
+            unsafe { cb_session_next_page(session, &mut moved) },
+            cb_status::CB_OK
+        );
+        unsafe { cb_session_close(session) };
+    });
+    handle.join().expect("the worker did not panic");
+}
+
+#[test]
+fn the_bytes_decide_the_format_not_the_name() {
+    // The same claim the Android spike checked against a `content://` URI,
+    // here with no Android in sight: hand over bytes with the format left
+    // unstated and the sniffer gets it right.
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/epub/illustrated.epub");
+    let bytes = std::fs::read(&path).expect("fixture is readable");
+    let session = unsafe {
+        cb_session_open_bytes(
+            bytes.as_ptr(),
+            bytes.len(),
+            cb_format::CB_FORMAT_GUESS,
+            config("sniff"),
+        )
+    };
+    assert!(!session.is_null(), "open from bytes: {}", last_error());
+    let mut kind = cb_book_kind::CB_BOOK_COMIC;
+    unsafe { cb_session_book_kind(session, &mut kind) };
+    assert_eq!(kind, cb_book_kind::CB_BOOK_EPUB, "sniffed as EPUB");
+    unsafe { cb_session_close(session) };
+}

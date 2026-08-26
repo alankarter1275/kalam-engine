@@ -39,7 +39,44 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 | `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) | Not a library |
 | `chapbook-viewer-gtk` | GTK4 reference viewer (Linux only) | Not a library |
 | `tools/chapbook-cli` | Dev/test CLI exercising each pipeline stage | Not a library |
+| `chapbook-ffi` | The C ABI every non-Rust host consumes; `include/chapbook.h` | Contract |
 | `chapbook-jni` | Android JNI binding — a spike, paired with `android/` | Spike |
+
+## Embedding from another language
+
+`crates/chapbook-ffi` is a hand-written C ABI over `chapbook-reader`, with a
+checked-in header. Kotlin reaches it through JNI or Panama, Swift through C
+interop, a browser through `wasm-bindgen` over the same core.
+
+```c
+#include "chapbook.h"
+
+cb_config *config = cb_config_new(cb_font_source_host());
+cb_config_set_library_dir(config, "/path/to/library");
+
+cb_session *session = cb_session_open_path("book.epub", config);  /* consumes config */
+if (!session) { /* cb_last_error_message(...) says why */ }
+
+cb_session_set_metrics(session, (cb_metrics){
+    .width = 600, .height = 800, .dpi_scale = 2,
+    .margin_top = 40, .margin_right = 40, .margin_bottom = 40, .margin_left = 40,
+    .rotation = CB_ROTATION_NONE,
+});
+
+uint32_t w, h;
+cb_session_render_size(session, &w, &h);          /* allocate exactly this */
+cb_session_render_into(session, pixels, len, w, h, w * 4);
+
+bool moved;
+cb_session_next_page(session, &moved);            /* use `moved`, not the position */
+cb_session_close(session);
+```
+
+Codes are the contract and strings are not; nothing crosses owned, so there
+is no `cb_free_string`; no call unwinds into the caller. The full rules are
+in the header and in [docs/STABILITY.md](docs/STABILITY.md). Link
+`libchapbook_ffi.a` (iOS, via an XCFramework) or `libchapbook_ffi.so`
+(Android, C).
 
 ## Android
 

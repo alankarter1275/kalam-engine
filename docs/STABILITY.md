@@ -15,7 +15,7 @@ meaning something, and where it will not be treated as a cost at all.
 
 | Tier | Crates | What it means |
 |---|---|---|
-| **Contract** | `chapbook-core`, `chapbook-paint` | Types that appear in signatures a downstream must name. Breaking one breaks every shell *and* every backend at once. Changed most reluctantly. |
+| **Contract** | `chapbook-core`, `chapbook-paint`, `chapbook-ffi` | Types that appear in signatures a downstream must name. Breaking one breaks every shell *and* every backend at once. Changed most reluctantly. |
 | **API** | `chapbook-reader`, `chapbook-library`, `opds-client` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
 | **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf`, `chapbook-opds` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
 | **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello`, `chapbook-panel-fbdev` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
@@ -101,6 +101,29 @@ yourself.
 Nothing is published to crates.io yet. When it is, the Internal and
 "Not a library" tiers get `publish = false` unless there is a reason not
 to; until then, this document is the only thing that distinguishes them.
+
+**`chapbook-ffi` is Contract tier for a different reason than the other
+two.** `chapbook-core` and `chapbook-paint` are types a downstream *names*;
+`chapbook-ffi` is a header a downstream *compiles against*, in a language
+with no way to express a version bound. A Kotlin or Swift host does not
+resolve this crate — it links a `.so` or a `.a` and trusts the header it was
+given. So the usual escape hatch, "breaking changes are deliberate and
+announced", is worth less here than anywhere else in the workspace: there is
+no `cargo update` to hold back and no compiler error to arrive first, only a
+struct whose layout quietly changed underneath a caller.
+
+Concretely, three things in it are permanent and one is not. The `cb_status`
+numbers, the `#[repr(C)]` struct layouts and the exported symbol names are
+the contract. The strings behind `cb_last_error_message` are not, and say so
+in their own documentation — they exist for logs and bug reports, and a host
+that branches on their text has written a bug the codes were there to
+prevent. Adding functions and adding enum variants at the end are additive
+and expected; renumbering, reordering or repurposing anything is not.
+
+`include/chapbook.h` is checked in rather than generated at build time so
+that consuming the ABI needs no cbindgen, no build script and no Rust
+toolchain — and it is a golden, so the Rust and the header cannot drift
+apart without the gate saying so.
 
 **Spike** is a tier with a shelf life, and naming it is how a throwaway
 stays throwaway. `chapbook-jni` is in the workspace so that it keeps
