@@ -14,6 +14,7 @@ mod geometry;
 mod locator;
 mod page;
 mod panel;
+mod source;
 
 pub use book::{
     BookKind, BookMetadata, Publication, Resource, SpineItem, TextGlyph, TextLine, TocEntry,
@@ -38,6 +39,7 @@ pub use panel::{
     Panel, PanelDriver, PanelInfo, PanelRect, RecordingPanel, RefreshPolicy, UpdateClass,
     UpdateToken,
 };
+pub use source::{Format, ReadSeek, Source, FORMAT_SNIFF_BYTES};
 
 /// Convenience result type used across chapbook crates.
 pub type Result<T> = std::result::Result<T, ChapbookError>;

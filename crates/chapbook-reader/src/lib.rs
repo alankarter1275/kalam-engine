@@ -35,9 +35,9 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    resolve_in_text, BookKind, CredentialStore, FontReport, FontSource, LayeredLocator, Locator,
-    NoCredentials, PageMetrics, PixelFormat, Point, Publication, ReadingSettings, Rect, Result,
-    Rgba, Rotation, SpineItem, TocEntry,
+    resolve_in_text, BookKind, CredentialStore, FontReport, FontSource, Format, LayeredLocator,
+    Locator, NoCredentials, PageMetrics, PixelFormat, Point, Publication, ReadingSettings, Rect,
+    Result, Rgba, Rotation, Source, SpineItem, TocEntry,
 };
 use chapbook_layout::{cascade, dom, ChapterLayout};
 use chapbook_library::AnnotationKind;
@@ -397,12 +397,130 @@ fn authorize(
     }
 }
 
+/// Decide a format from the bytes, falling back to the name and then to
+/// EPUB.
+///
+/// Bytes first is the point: an extension is a claim by whoever named the
+/// file, and a `.epub` that is really a comic archive is a parse error
+/// today. The name is consulted only when the bytes say nothing, and the
+/// final fallback to EPUB preserves an existing behaviour worth keeping —
+/// rbook opens an *unzipped* EPUB directory, which has no leading bytes to
+/// read at all.
+fn format_of_path(path: &Path) -> Format {
+    let sniffed = std::fs::File::open(path).ok().and_then(|mut file| {
+        let mut head = vec![0u8; chapbook_core::FORMAT_SNIFF_BYTES];
+        let read = std::io::Read::read(&mut file, &mut head).ok()?;
+        head.truncate(read);
+        Format::sniff(&head)
+    });
+    sniffed
+        .or_else(|| Format::from_extension(path))
+        .unwrap_or(Format::Epub)
+}
+
+/// Honour a format the host stated; sniff only when it said `Guess`.
+///
+/// A host that resolved a `content://` URI already asked the resolver for a
+/// MIME type, and that answer is better than ours — it may know things the
+/// first 64 bytes cannot say.
+fn resolve_format(stated: Format, head: &[u8]) -> Result<Format> {
+    match stated {
+        Format::Guess => Format::sniff(head).ok_or_else(|| {
+            chapbook_core::ChapbookError::BookMalformed(
+                "not an EPUB, CBZ or PDF: the leading bytes match no format chapbook reads".into(),
+            )
+        }),
+        stated => Ok(stated),
+    }
+}
+
+/// The first bytes of a handle, rewound afterwards so the format reader
+/// gets an untouched stream.
+fn peek(reader: &mut dyn chapbook_core::ReadSeek) -> Result<Vec<u8>> {
+    let mut head = vec![0u8; chapbook_core::FORMAT_SNIFF_BYTES];
+    let read = reader.read(&mut head)?;
+    head.truncate(read);
+    reader.seek(std::io::SeekFrom::Start(0))?;
+    Ok(head)
+}
+
+/// The format is not compiled in. Its own function so every arm reports it
+/// the same way — and `cfg`'d, because with every format built there is no
+/// arm left to call it.
+#[cfg(any(not(feature = "cbz"), not(feature = "pdf")))]
+fn not_built(format: Format) -> chapbook_core::ChapbookError {
+    chapbook_core::ChapbookError::FormatNotBuilt(format.as_str())
+}
+
+fn book_from_bytes(format: Format, bytes: Vec<u8>) -> Result<OpenBook> {
+    match format {
+        Format::Epub | Format::Guess => Ok(OpenBook::Epub(Box::new(
+            chapbook_epub::Book::from_bytes(bytes)?,
+        ))),
+        #[cfg(feature = "cbz")]
+        Format::Cbz => Ok(OpenBook::Comic(Arc::new(
+            chapbook_cbz::ComicBook::from_bytes(bytes)?,
+        ))),
+        #[cfg(feature = "pdf")]
+        Format::Pdf => Ok(OpenBook::Pdf(Arc::new(chapbook_pdf::PdfBook::from_bytes(
+            bytes,
+        )?))),
+        #[cfg(not(feature = "cbz"))]
+        Format::Cbz => Err(not_built(format)),
+        #[cfg(not(feature = "pdf"))]
+        Format::Pdf => Err(not_built(format)),
+    }
+}
+
+fn book_from_reader(format: Format, reader: Box<dyn chapbook_core::ReadSeek>) -> Result<OpenBook> {
+    match format {
+        Format::Epub | Format::Guess => {
+            Ok(OpenBook::Epub(Box::new(chapbook_epub::Book::read(reader)?)))
+        }
+        #[cfg(feature = "cbz")]
+        Format::Cbz => Ok(OpenBook::Comic(Arc::new(chapbook_cbz::ComicBook::read(
+            reader,
+        )?))),
+        #[cfg(feature = "pdf")]
+        Format::Pdf => Ok(OpenBook::Pdf(Arc::new(chapbook_pdf::PdfBook::read(
+            reader,
+        )?))),
+        #[cfg(not(feature = "cbz"))]
+        Format::Cbz => Err(not_built(format)),
+        #[cfg(not(feature = "pdf"))]
+        Format::Pdf => Err(not_built(format)),
+    }
+}
+
+fn book_at_path(format: Format, path: &Path) -> Result<OpenBook> {
+    match format {
+        Format::Epub | Format::Guess => {
+            Ok(OpenBook::Epub(Box::new(chapbook_epub::Book::open(path)?)))
+        }
+        #[cfg(feature = "cbz")]
+        Format::Cbz => Ok(OpenBook::Comic(Arc::new(chapbook_cbz::ComicBook::open(
+            path,
+        )?))),
+        #[cfg(feature = "pdf")]
+        Format::Pdf => Ok(OpenBook::Pdf(Arc::new(chapbook_pdf::PdfBook::open(path)?))),
+        #[cfg(not(feature = "cbz"))]
+        Format::Cbz => Err(not_built(format)),
+        #[cfg(not(feature = "pdf"))]
+        Format::Pdf => Err(not_built(format)),
+    }
+}
+
 impl Session {
-    /// Open a book from a path (`.epub`, `.cbz`) or an `http(s)://` OPDS
-    /// URL (resolved to a PSE page stream). Local books are matched into
-    /// the library (fingerprint, then identifier for replaced editions,
-    /// else imported) and their stored position restored; streams skip the
-    /// library (no local file to fingerprint) but honor `pse:lastRead`.
+    /// Open a book from a path or an `http(s)://` OPDS URL (resolved to a
+    /// PSE page stream). Local books are matched into the library
+    /// (fingerprint, then identifier for replaced editions, else imported)
+    /// and their stored position restored; streams skip the library (no
+    /// local file to fingerprint) but honor `pse:lastRead`.
+    ///
+    /// The format comes from the *bytes*, not the extension — see
+    /// [`chapbook_core::Format::sniff`]. A book whose name lies about it
+    /// opens correctly. A host with no path at all passes a
+    /// [`Source`] to [`Session::open_with`] instead.
     ///
     /// `fonts` is required rather than defaulted. A session that finds no
     /// faces lays out, renders, paints and *conforms* — it just paginates
@@ -420,11 +538,25 @@ impl Session {
         Session::open_with(source, SessionConfig::new(fonts))
     }
 
-    /// [`Session::open`], with the host's capabilities supplied explicitly.
+    /// [`Session::open`], with the source typed and the host's capabilities
+    /// supplied explicitly.
     ///
     /// The form every non-desktop shell wants, and the one the FFI will
     /// wrap: nothing in here is reached for behind the caller's back.
-    pub fn open_with(source: &str, config: SessionConfig) -> Result<Session> {
+    ///
+    /// `source` accepts anything that becomes a [`Source`] — a `&str` or
+    /// `String` still means what it always did (`http(s)://` is a catalog,
+    /// anything else a path), a `PathBuf` is a file, and
+    /// [`Source::bytes`] / [`Source::reader`] are for hosts that have no
+    /// path to give: an Android `content://` URI resolved to a file
+    /// descriptor, an iOS security-scoped file, a WASM `ArrayBuffer`.
+    ///
+    /// Only path sources reach the library. Bytes and handles have no file
+    /// to record and no stable identity to key a position on, so they open
+    /// at the beginning every time — the custody question in
+    /// `docs/PLATFORM.md`, not something a source type settles.
+    pub fn open_with(source: impl Into<Source>, config: SessionConfig) -> Result<Session> {
+        let source = source.into();
         let SessionConfig {
             fonts,
             // Only the OPDS path has anything to authenticate; a build
@@ -446,116 +578,122 @@ impl Session {
             usize,
             Option<u32>,
             bool,
-        ) = if source.starts_with("http://") || source.starts_with("https://") {
-            #[cfg(not(feature = "opds"))]
-            return Err(chapbook_core::ChapbookError::FormatNotBuilt("OPDS"));
-            #[cfg(feature = "opds")]
-            {
-                use chapbook_core::Freshness;
+        ) = match source {
+            Source::Url(_source) => {
+                #[cfg(not(feature = "opds"))]
+                return Err(chapbook_core::ChapbookError::FormatNotBuilt("OPDS"));
+                #[cfg(feature = "opds")]
+                {
+                    let source = _source.as_str();
+                    use chapbook_core::Freshness;
 
-                // Keyed by origin, not by the URL: the path may carry a
-                // per-user API key, and a catalog that moves its path must
-                // not lose its login. See `chapbook_core::credential`.
-                let key = chapbook_core::CredentialKey::http_origin(source);
-                let cache = chapbook_library::Library::default_dir().join("pse-cache");
-                let store = credentials.as_ref();
+                    // Keyed by origin, not by the URL: the path may carry a
+                    // per-user API key, and a catalog that moves its path must
+                    // not lose its login. See `chapbook_core::credential`.
+                    let key = chapbook_core::CredentialKey::http_origin(source);
+                    let cache = chapbook_library::Library::default_dir().join("pse-cache");
+                    let store = credentials.as_ref();
 
-                // One transport, however many clients the auth flow needs.
-                let http: Arc<dyn HttpClient> = match transport {
-                    Some(host) => host,
-                    #[cfg(feature = "ureq")]
-                    None => Arc::new(chapbook_opds::UreqHttp::new()),
-                    #[cfg(not(feature = "ureq"))]
-                    None => {
-                        return Err(chapbook_core::ChapbookError::Network(
-                            "this build has no bundled HTTP transport; pass one with \
+                    // One transport, however many clients the auth flow needs.
+                    let http: Arc<dyn HttpClient> = match transport {
+                        Some(host) => host,
+                        #[cfg(feature = "ureq")]
+                        None => Arc::new(chapbook_opds::UreqHttp::new()),
+                        #[cfg(not(feature = "ureq"))]
+                        None => {
+                            return Err(chapbook_core::ChapbookError::Network(
+                                "this build has no bundled HTTP transport; pass one with \
                              SessionConfig::with_transport"
-                                .into(),
-                        ))
-                    }
-                };
-
-                let mut client = chapbook_opds::OpdsClient::new(http.clone());
-                authorize(&mut client, store, key.as_ref(), Freshness::Cached);
-                let opened = chapbook_opds::StreamedComic::open(client, source, &cache);
-
-                // One retry, and only on a 401. `Freshness::Renewed` is
-                // what makes an expiring secret work: a store backed by a
-                // refreshable token can produce a new one here, and a
-                // store that cannot says so by returning nothing, which
-                // costs exactly one skipped retry. Prompting is not our
-                // job — the error carries the server's Authentication
-                // Document so the shell can do it.
-                let comic = match opened {
-                    Err(chapbook_opds::OpdsError::AuthRequired(doc)) => {
-                        let mut retry = chapbook_opds::OpdsClient::new(http.clone());
-                        if !authorize(&mut retry, store, key.as_ref(), Freshness::Renewed) {
-                            return Err(chapbook_opds::to_chapbook_error(
-                                chapbook_opds::OpdsError::AuthRequired(doc),
-                            ));
+                                    .into(),
+                            ))
                         }
-                        chapbook_opds::StreamedComic::open(retry, source, &cache)
-                            .map_err(chapbook_opds::to_chapbook_error)?
-                    }
-                    other => other.map_err(chapbook_opds::to_chapbook_error)?,
-                };
-                let resume = comic.resume_page().unwrap_or(0);
-                (OpenBook::Comic(Arc::new(comic)), None, resume, None, true)
-            }
-        } else {
-            let path = Path::new(source);
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_ascii_lowercase());
-            let book = match ext.as_deref() {
-                #[cfg(feature = "cbz")]
-                Some("cbz") => OpenBook::Comic(Arc::new(chapbook_cbz::ComicBook::open(path)?)),
-                #[cfg(not(feature = "cbz"))]
-                Some("cbz") => return Err(chapbook_core::ChapbookError::FormatNotBuilt("CBZ")),
-                #[cfg(feature = "pdf")]
-                Some("pdf") => OpenBook::Pdf(Arc::new(chapbook_pdf::PdfBook::open(path)?)),
-                #[cfg(not(feature = "pdf"))]
-                Some("pdf") => return Err(chapbook_core::ChapbookError::FormatNotBuilt("PDF")),
-                _ => OpenBook::Epub(Box::new(chapbook_epub::Book::open(path)?)),
-            };
+                    };
 
-            let mut same_edition = true;
-            let book_id = library.as_mut().and_then(|lib| {
-                let fingerprint = chapbook_library::Library::fingerprint_of_file(path).ok()?;
-                if let Ok(Some(id)) = lib.find_by_fingerprint(&fingerprint) {
-                    return Some(id);
+                    let mut client = chapbook_opds::OpdsClient::new(http.clone());
+                    authorize(&mut client, store, key.as_ref(), Freshness::Cached);
+                    let opened = chapbook_opds::StreamedComic::open(client, source, &cache);
+
+                    // One retry, and only on a 401. `Freshness::Renewed` is
+                    // what makes an expiring secret work: a store backed by a
+                    // refreshable token can produce a new one here, and a
+                    // store that cannot says so by returning nothing, which
+                    // costs exactly one skipped retry. Prompting is not our
+                    // job — the error carries the server's Authentication
+                    // Document so the shell can do it.
+                    let comic = match opened {
+                        Err(chapbook_opds::OpdsError::AuthRequired(doc)) => {
+                            let mut retry = chapbook_opds::OpdsClient::new(http.clone());
+                            if !authorize(&mut retry, store, key.as_ref(), Freshness::Renewed) {
+                                return Err(chapbook_opds::to_chapbook_error(
+                                    chapbook_opds::OpdsError::AuthRequired(doc),
+                                ));
+                            }
+                            chapbook_opds::StreamedComic::open(retry, source, &cache)
+                                .map_err(chapbook_opds::to_chapbook_error)?
+                        }
+                        other => other.map_err(chapbook_opds::to_chapbook_error)?,
+                    };
+                    let resume = comic.resume_page().unwrap_or(0);
+                    (OpenBook::Comic(Arc::new(comic)), None, resume, None, true)
                 }
-                if let Some(identifier) = &book.publication().metadata().identifier {
-                    if let Ok(Some(id)) = lib.find_by_identifier(identifier) {
-                        same_edition = false;
-                        let _ = lib.update_edition(id, path);
+            }
+
+            // A source with no file behind it: bytes a host already holds,
+            // or a handle it resolved from a `content://` URI. Neither
+            // reaches the library — there is no path to record and no
+            // stable identity to key a position on. Closing that is the
+            // custody question in `docs/PLATFORM.md` (persist a bookmark,
+            // not a copy), which a source type cannot answer alone.
+            Source::Bytes { format, bytes } => {
+                let format = resolve_format(format, &bytes)?;
+                (book_from_bytes(format, bytes)?, None, 0, None, true)
+            }
+            Source::Reader { format, mut reader } => {
+                let format = resolve_format(format, &peek(reader.as_mut())?)?;
+                (book_from_reader(format, reader)?, None, 0, None, true)
+            }
+
+            Source::Path(ref source_path) => {
+                let path = source_path.as_path();
+                let book = book_at_path(format_of_path(path), path)?;
+
+                let mut same_edition = true;
+                let book_id = library.as_mut().and_then(|lib| {
+                    let fingerprint = chapbook_library::Library::fingerprint_of_file(path).ok()?;
+                    if let Ok(Some(id)) = lib.find_by_fingerprint(&fingerprint) {
                         return Some(id);
                     }
-                }
-                lib.import(path, book.publication().metadata()).ok()
-            });
-
-            let (start_spine, pending_offset) = match (&library, book_id) {
-                (Some(lib), Some(id)) => match lib.position(id) {
-                    Ok(Some(stored)) => {
-                        let (locator, tier) = chapbook_library::restore_position(
-                            &stored.locator,
-                            same_edition,
-                            book.publication().spine(),
-                            |i| unit_locator_text(book.publication(), i),
-                        );
-                        eprintln!(
-                            "chapbook: resuming at unit {} ({tier:?})",
-                            locator.spine_index + 1
-                        );
-                        (locator.spine_index, Some(locator.char_offset))
+                    if let Some(identifier) = &book.publication().metadata().identifier {
+                        if let Ok(Some(id)) = lib.find_by_identifier(identifier) {
+                            same_edition = false;
+                            let _ = lib.update_edition(id, path);
+                            return Some(id);
+                        }
                     }
+                    lib.import(path, book.publication().metadata()).ok()
+                });
+
+                let (start_spine, pending_offset) = match (&library, book_id) {
+                    (Some(lib), Some(id)) => match lib.position(id) {
+                        Ok(Some(stored)) => {
+                            let (locator, tier) = chapbook_library::restore_position(
+                                &stored.locator,
+                                same_edition,
+                                book.publication().spine(),
+                                |i| unit_locator_text(book.publication(), i),
+                            );
+                            eprintln!(
+                                "chapbook: resuming at unit {} ({tier:?})",
+                                locator.spine_index + 1
+                            );
+                            (locator.spine_index, Some(locator.char_offset))
+                        }
+                        _ => (0, None),
+                    },
                     _ => (0, None),
-                },
-                _ => (0, None),
-            };
-            (book, book_id, start_spine, pending_offset, same_edition)
+                };
+                (book, book_id, start_spine, pending_offset, same_edition)
+            }
         };
 
         // Highlights load with the book; endpoints resolve lazily, per

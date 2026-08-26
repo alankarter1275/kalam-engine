@@ -83,11 +83,35 @@ Six questions. The answers below are proposals.
 explicit calls, no global state, no implicit singletons. Backed by the
 `Send`-not-`Sync` finding: movable, not shareable.
 
-**Sources — this is PLATFORM §2's last structural piece.** `open(source:
-&str)` sniffs a string for `http://` and then for a file extension. Android
-hands an app a `content://` URI resolved to a file descriptor, iOS hands it
-a security-scoped bookmark, and a WASM build has no filesystem at all. None
-of the three has a path, and two of the three have no extension either.
+**Sources — done.** `open(source: &str)` sniffed a string for `http://` and
+then for a file extension. Android hands an app a `content://` URI resolved
+to a file descriptor, iOS hands it a security-scoped bookmark, and a WASM
+build has no filesystem at all. None of the three has a path, and two of the
+three have no extension either.
+
+`chapbook_core::Source` is now what the session takes, through
+`open_with(impl Into<Source>, SessionConfig)` — so a `&str` still means what
+it always did and every existing caller compiles unchanged. Three notes from
+building it, none of which the sketch below anticipated:
+
+- **`ReadSeek` is `Send`, not `Send + Sync`,** even though rbook's
+  `threadsafe` feature demands the latter. `Sync` is a strange thing to ask
+  a *host* for — a reader shimming a foreign runtime manages `Send` easily
+  and `Sync` only by adding a lock — so `chapbook-epub` adds that lock once,
+  internally, and the public bound stays where a host can meet it.
+- **`Format::Guess` beats the extension even when there is one.** The path
+  branch sniffs the file head first and consults the name only when the
+  bytes say nothing, which is what makes a misnamed book open correctly
+  rather than fail to parse. The final fallback to EPUB is deliberate: rbook
+  opens an *unzipped* EPUB directory, which has no leading bytes at all.
+- **A stated format wins over the sniffer.** A host that resolved a
+  `content://` URI already asked for a MIME type, and that answer may know
+  things the first 64 bytes cannot.
+
+Only path sources reach the library. Bytes and handles have no file to
+record and no stable identity to key a position on, so they open at the
+beginning every time — that is the custody question in PLATFORM §7, and a
+source type cannot settle it alone.
 
 ```rust
 pub enum Format { Guess, Epub, Cbz, Pdf }
@@ -347,7 +371,10 @@ different.
 5. **It takes a content URI.** Open through the storage access framework,
    which has no path and no extension, and is therefore the rung that forces
    `Source::Reader` and `Format::Guess` to be real. *Not yet done — rungs 1
-   through 4 are.*
+   through 4 are. The Rust half is no longer in the way: `Source::Reader`
+   and `Format::Guess` exist and are tested against the fixture corpus, so
+   what remains is the JNI shim from a `ParcelFileDescriptor` to a
+   `ReadSeek`.*
 
 ### What rungs 1 and 2 found
 
@@ -1197,12 +1224,11 @@ cleanup. That is right about the dependency and wrong about the order:
    source (done), a credential store (done), an HTTP transport (done — and
    `chapbook-reader`'s new `ureq` feature is what makes dropping rustls and
    ring reachable from the session rather than only from `opds-client`,
-   which is this document's second NDK prerequisite), typed sources and the
-   library directory (still reached for behind the caller's back),
+   which is this document's second NDK prerequisite), typed sources (done),
+   the library directory (still reached for behind the caller's back),
    `render_into`, a cache budget and `release_caches`, `suspend()`, and the
-   optional `library` feature. The constructor items are one argument
-   between them — `SessionConfig` is that argument, and the two remaining
-   ones are fields added to it rather than a signature change each. All of it tested in the workspace,
+   optional `library` feature. The constructor work is finished apart from
+   the library directory, which is one more field on `SessionConfig`. All of it tested in the workspace,
    none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
    by evidence instead of by guessing. The wasm32 CI check lands here, once
    there is something for it to prove.

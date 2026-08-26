@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chapbook_core::{
     BookKind, BookMetadata, ChapbookError, Publication, Resource, Result, SpineItem, TocEntry,
@@ -27,11 +27,57 @@ pub struct Book {
     obfuscated: std::collections::HashMap<String, Obfuscation>,
 }
 
+/// Makes any `Send` reader `Send + Sync`, for rbook's benefit.
+///
+/// rbook's `threadsafe` feature — which chapbook wants, since the loader
+/// thread owns the book — requires `Read + Seek + Send + Sync`. `Sync` on a
+/// reader is a strange thing to ask a *host* for: a shim over a foreign
+/// runtime manages `Send` easily and `Sync` only by adding a lock. So
+/// chapbook adds the lock, once, here, and `chapbook_core::ReadSeek` stays
+/// at `Send`.
+///
+/// The lock is never contended in practice — rbook holds the only handle,
+/// and its own access is already serialized — so this is a type-system
+/// adapter rather than synchronization anyone pays for.
+struct SyncReader<R>(std::sync::Mutex<R>);
+
+impl<R: std::io::Read> std::io::Read for SyncReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.get_mut().expect("reader lock").read(buf)
+    }
+}
+
+impl<R: std::io::Seek> std::io::Seek for SyncReader<R> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.0.get_mut().expect("reader lock").seek(pos)
+    }
+}
+
 impl Book {
     pub fn open(path: &Path) -> Result<Self> {
         let epub = rbook::Epub::open(path).map_err(|e| ChapbookError::BookOpen {
             path: path.to_owned(),
             reason: e.to_string(),
+        })?;
+        Self::from_epub(epub)
+    }
+
+    /// Open from bytes already in memory.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
+        Self::read(std::io::Cursor::new(bytes))
+    }
+
+    /// Open from any seekable handle — a file descriptor a host resolved
+    /// from a `content://` URI, an iOS security-scoped file.
+    ///
+    /// Seekable rather than streaming because a zip's central directory is
+    /// at the end of the archive; there is no reading an EPUB forwards.
+    pub fn read(reader: impl chapbook_core::ReadSeek + 'static) -> Result<Self> {
+        let epub = rbook::Epub::read(SyncReader(std::sync::Mutex::new(reader))).map_err(|e| {
+            ChapbookError::BookOpen {
+                path: PathBuf::new(),
+                reason: e.to_string(),
+            }
         })?;
         Self::from_epub(epub)
     }

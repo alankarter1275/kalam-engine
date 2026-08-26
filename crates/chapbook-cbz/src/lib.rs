@@ -16,7 +16,7 @@
 
 use std::fs::File;
 use std::io::{BufReader, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use chapbook_core::{
@@ -31,7 +31,13 @@ pub struct ComicBook {
     spine: Vec<SpineItem>,
     toc: Vec<TocEntry>,
     /// zip reads need `&mut`; the trait surface is `&self`.
-    archive: Mutex<zip::ZipArchive<BufReader<File>>>,
+    ///
+    /// Boxed rather than generic: a comic opened from a `content://` file
+    /// descriptor and one opened from a path are the same publication, and
+    /// making `ComicBook` generic would push that difference into every
+    /// type that holds one — including the `dyn Publication` the session
+    /// already stores it as.
+    archive: Mutex<Archive>,
 }
 
 /// Extensions accepted as pages, matching the formats the render pipeline
@@ -91,7 +97,7 @@ fn depth(name: &str) -> usize {
 
 /// Read one member. Free rather than a method because `open` needs it
 /// before the archive goes behind the mutex.
-fn read_entry(archive: &mut zip::ZipArchive<BufReader<File>>, name: &str) -> Result<Vec<u8>> {
+fn read_entry(archive: &mut Archive, name: &str) -> Result<Vec<u8>> {
     let mut entry = archive
         .by_name(name)
         .map_err(|e| ChapbookError::ResourceNotFound(format!("{name}: {e}")))?;
@@ -104,7 +110,7 @@ fn read_entry(archive: &mut zip::ZipArchive<BufReader<File>>, name: &str) -> Res
 
 /// The first [`SNIFF_BYTES`] of a member, decompressed. Cheap even for a
 /// deflated entry: the reader stops as soon as it has them.
-fn read_head(archive: &mut zip::ZipArchive<BufReader<File>>, name: &str) -> Option<Vec<u8>> {
+fn read_head(archive: &mut Archive, name: &str) -> Option<Vec<u8>> {
     let mut entry = archive.by_name(name).ok()?;
     let mut head = vec![0u8; SNIFF_BYTES];
     let mut filled = 0;
@@ -119,14 +125,38 @@ fn read_head(archive: &mut zip::ZipArchive<BufReader<File>>, name: &str) -> Opti
     Some(head)
 }
 
+/// The zip, over whatever the caller handed us.
+type Archive = zip::ZipArchive<Box<dyn chapbook_core::ReadSeek>>;
+
 impl ComicBook {
     pub fn open(path: &Path) -> Result<ComicBook> {
-        let open_err = |reason: String| ChapbookError::BookOpen {
+        let file = File::open(path).map_err(|e| ChapbookError::BookOpen {
             path: path.to_path_buf(),
+            reason: e.to_string(),
+        })?;
+        Self::read_at(Box::new(BufReader::new(file)), path)
+    }
+
+    /// Open from bytes already in memory.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<ComicBook> {
+        Self::read(std::io::Cursor::new(bytes))
+    }
+
+    /// Open from any seekable handle. Seekable because a zip's central
+    /// directory is at the end: there is no reading an archive forwards.
+    pub fn read(reader: impl chapbook_core::ReadSeek + 'static) -> Result<ComicBook> {
+        Self::read_at(Box::new(reader), Path::new(""))
+    }
+
+    /// The real constructor. `path` is only ever for error messages — it is
+    /// empty for a handle, which is the honest thing to say when there is
+    /// no file to name.
+    fn read_at(reader: Box<dyn chapbook_core::ReadSeek>, path: &Path) -> Result<ComicBook> {
+        let open_err = |reason: String| ChapbookError::BookOpen {
+            path: PathBuf::from(path),
             reason,
         };
-        let file = File::open(path).map_err(|e| open_err(e.to_string()))?;
-        let mut archive = zip::ZipArchive::new(BufReader::new(file))
+        let mut archive = zip::ZipArchive::new(reader)
             .map_err(|e| open_err(format!("not a zip archive: {e}")))?;
 
         let mut pages: Vec<(String, &'static str)> = Vec::new();

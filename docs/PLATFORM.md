@@ -829,10 +829,11 @@ bug.
 1. **FFI boundary (§3)** — gate on the largest device markets; forces the
    session API into SDK shape, which is also what §2's remaining piece
    (typed sources and injectable I/O instead of `open(&str)`) needs.
-2. **The edges (§7)** — file custody is what remains. The credential store
-   and the transport are both done and both arrive through `SessionConfig`;
-   typed sources and the library directory are the last two capabilities
-   still reached for behind the caller's back. Sequenced here because it is
+2. **The edges (§7)** — file custody is what remains. The credential store,
+   the transport and typed sources are all done, arriving through
+   `SessionConfig` or `Source`; the library directory is the last thing
+   still reached for behind the caller's back. Custody is now the *only*
+   reason a `content://` book cannot remember where the reader was. Sequenced here because it is
    the same shape work as §2's remaining piece and lands in the same pass,
    and because the accessibility finding constrains what the first C ABI
    may leave out.

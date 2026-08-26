@@ -1157,7 +1157,7 @@ fn a_session_takes_its_host_capabilities_explicitly() {
 
     let config = SessionConfig::new(fixture_fonts()).with_credentials(store.clone());
     // A store in the config is not a store the local path consults.
-    let session = Session::open_with(&fixture("epub/minimal.epub"), config).unwrap();
+    let session = Session::open_with(fixture("epub/minimal.epub"), config).unwrap();
     assert!(session.spine_len() > 0);
     drop(guard);
 

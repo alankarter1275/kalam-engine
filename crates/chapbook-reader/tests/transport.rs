@@ -145,7 +145,7 @@ fn a_rejected_credential_is_renewed_and_the_open_retries() {
         .with_credentials(store.clone())
         .with_transport(Arc::new(http.clone()));
 
-    let session = Session::open_with(&format!("{HOST}/opds/"), config).unwrap();
+    let session = Session::open_with(format!("{HOST}/opds/"), config).unwrap();
     assert_eq!(session.spine_len(), 3, "the PSE stream's three pages");
     drop(guard);
 
@@ -176,7 +176,7 @@ fn a_store_with_nothing_to_offer_surfaces_the_authentication_document() {
         .with_credentials(Arc::new(NoCredentials))
         .with_transport(Arc::new(http.clone()));
 
-    let Err(err) = Session::open_with(&format!("{HOST}/opds/"), config) else {
+    let Err(err) = Session::open_with(format!("{HOST}/opds/"), config) else {
         panic!("a session with no credentials must not open a private catalog");
     };
     drop(guard);
@@ -203,7 +203,7 @@ fn a_locked_store_does_not_spend_a_retry() {
         .with_transport(Arc::new(http.clone()));
 
     assert!(
-        Session::open_with(&format!("{HOST}/opds/"), config).is_err(),
+        Session::open_with(format!("{HOST}/opds/"), config).is_err(),
         "a locked store is not a credential"
     );
     drop(guard);
@@ -230,7 +230,7 @@ fn a_local_book_needs_no_transport_at_all() {
         .join("../../fixtures/epub/minimal.epub")
         .to_string_lossy()
         .into_owned();
-    let session = Session::open_with(&path, SessionConfig::new(fixture_fonts())).unwrap();
+    let session = Session::open_with(path, SessionConfig::new(fixture_fonts())).unwrap();
     assert!(session.spine_len() > 0);
     drop(guard);
     let _ = std::fs::remove_dir_all(&dir);
@@ -248,7 +248,7 @@ fn a_build_with_no_bundled_transport_says_so() {
     std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
 
     let config = SessionConfig::new(fixture_fonts());
-    let Err(err) = Session::open_with(&format!("{HOST}/opds/"), config) else {
+    let Err(err) = Session::open_with(format!("{HOST}/opds/"), config) else {
         panic!("there is no transport in this build to have opened that with");
     };
     drop(guard);

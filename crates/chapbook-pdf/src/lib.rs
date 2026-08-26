@@ -45,11 +45,42 @@ pub struct PdfBook {
 
 impl PdfBook {
     pub fn open(path: &Path) -> Result<PdfBook> {
+        let data = std::fs::read(path).map_err(|e| ChapbookError::BookOpen {
+            path: path.to_path_buf(),
+            reason: e.to_string(),
+        })?;
+        Self::from_bytes_at(data, path)
+    }
+
+    /// Open from bytes already in memory.
+    ///
+    /// The natural constructor for this format, and the one `open` is
+    /// written in terms of: hayro takes an `Arc<Vec<u8>>`, so a PDF was
+    /// always read whole. Nothing is given up by not having a path except
+    /// the title fallback, which is the file stem.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<PdfBook> {
+        Self::from_bytes_at(bytes, Path::new(""))
+    }
+
+    /// Open from any seekable handle, by reading it. Present for symmetry
+    /// with the zip formats; unlike them it buys nothing, because hayro
+    /// wants the whole file anyway.
+    pub fn read(mut reader: impl chapbook_core::ReadSeek + 'static) -> Result<PdfBook> {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut bytes).map_err(|e| {
+            ChapbookError::BookOpen {
+                path: std::path::PathBuf::new(),
+                reason: e.to_string(),
+            }
+        })?;
+        Self::from_bytes(bytes)
+    }
+
+    fn from_bytes_at(data: Vec<u8>, path: &Path) -> Result<PdfBook> {
         let open_err = |reason: String| ChapbookError::BookOpen {
             path: path.to_path_buf(),
             reason,
         };
-        let data = std::fs::read(path).map_err(|e| open_err(e.to_string()))?;
         let pdf = Pdf::new(Arc::new(data)).map_err(|e| open_err(format!("{e:?}")))?;
         let page_count = pdf.pages().len();
         if page_count == 0 {
