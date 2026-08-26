@@ -275,6 +275,20 @@ with an explicit width lay out for real; the rest stay in flow), CSS
 counters in generated content, absolute positioning (treated as static),
 media overlays, DRM.
 
+## Deferred
+
+Not out of scope — wanted, shaped, and not built yet. Listed separately from
+the section above because that one is a set of decisions and this is a queue.
+
+- **Accessibility** (a11y tree export, screen-reader path). The shape is
+  settled: a `Session` accessor giving the current page's text runs with
+  their rects and locator ranges, which each platform wraps in its own tree
+  — `UIAccessibilityElement`, `AccessibilityNodeInfo`, AT-SPI. Deliberately
+  *not* the display list, which carries glyph indices and no text; see
+  `PLATFORM.md` §7 for why that distinction matters and for the earlier
+  claim it corrects. Additive, so it constrains no boundary and can land
+  whenever it is picked up. Also a legal requirement in some markets.
+
 ## Milestones
 
 M0 scaffold/CI → M1 EPUB+text extraction → M2 stylo cascade → M3 paginated

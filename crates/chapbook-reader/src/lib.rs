@@ -8,7 +8,7 @@
 //! save). Shells — winit, GTK, anything with a keyboard and a pixel
 //! buffer — translate input events into `Session` calls and blit the
 //! [`Session::render`] result. A shell that rasterizes for itself takes
-//! [`Session::display_list`] instead and never touches tiny-skia.
+//! [`Session::frame`] instead and never touches tiny-skia.
 //!
 //! Text units run the full dom→stylo→layout pipeline; comic units fabricate
 //! a one-page [`ChapterLayout`] around a single scaled image fragment, so

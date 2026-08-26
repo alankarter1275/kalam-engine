@@ -513,10 +513,12 @@ them itself. Hyphenation is the proof the category is real: dictionary-based
 - **Bidi correctness** for Arabic/Hebrew — cosmic-text can do it; confirm it
   is exercised and tested rather than assumed.
 - **Accessibility** — no a11y tree export, no screen-reader path. Also a
-  legal requirement in some markets. §7 turns this from a feature into a
-  scheduling constraint: the display list is the material an a11y tree is
-  built from, so keeping it out of the first C ABI decides that v1 cannot
-  have one.
+  legal requirement in some markets. **Deferred**, with the shape settled:
+  §7 corrects an earlier claim that this was an FFI scheduling constraint.
+  It is not. The display list holds glyph indices and no text, so an a11y
+  tree was never built from it; what is missing is a `Session` accessor for
+  the page's text runs and their rects, which is additive and owes the C
+  ABI nothing.
 
 ## 5. Breadth and sync
 
@@ -801,20 +803,58 @@ flags. That is the local half of §5's sync story already in place — an iOS
 shell can mirror those tables into CloudKit with no schema change, and sync
 stays a shell concern rather than an engine one.
 
-### Accessibility constrains the FFI's first version
+### Accessibility is deferred, and is not an FFI question
 
-§4 lists accessibility as a feature shells cannot add from outside. iOS
-sharpens it into a scheduling constraint. A rasterized page is opaque to
-VoiceOver: a reader that is a *picture* of text is unusable with a screen
-reader, and a web view would have given that away for free.
+§4 lists accessibility as a feature shells cannot add from outside, and that
+is still true. A rasterized page is opaque to VoiceOver: a reader that is a
+*picture* of text is unusable with a screen reader, and a web view would
+have given that away for free.
 
-Chapbook can do it — `frame()` already returns a display list whose text
-fragments carry locators, which is exactly the material a
-`UIAccessibilityElement` tree needs. But FFI.md's boundary deliberately keeps
-the display list out of the first C ABI. On Android that was defensible. On
-iOS it makes accessibility unimplementable in v1, and adding it after a
-Contract-tier header exists is the expensive order. The selection loupe and
-the edit menu want the same fragment geometry.
+**This section used to say the display list was the material an
+accessibility tree is built from, and that keeping it out of the first C ABI
+therefore decided v1 could have no screen-reader path. Both halves were
+wrong.**
+
+The display list carries no text. `DisplayOp::GlyphRun` holds a face, a
+size, a weight, a colour, an origin, and `Vec<Glyph>`, where a `Glyph` is
+`{ id, x, y, advance, locator }` and `id` is a *font glyph index*. There is
+no string anywhere in `chapbook-paint/src/display.rs`. The text lives one
+level up, on `LineFragment`, which carries `text: String` and
+`locator_start` — and `build_display_list` drops it on the way down, quite
+correctly, because a rasterizer has no use for it.
+
+Recovering characters from glyph indices would mean reversing the font's
+cmap, which is lossy in exactly the cases that matter: an `fi` ligature is
+one glyph for two characters, contextual Arabic forms collapse several
+glyphs to one letter, and small-caps or oldstyle variants alias. A screen
+reader fed that reads the *wrong* text, which is worse than reading none.
+
+So accessibility never wanted `frame()`. It wants the page's text runs with
+their rects and locator ranges — `LineFragment` material — which is a much
+smaller thing to hold still than the paint vocabulary: no font ids, no
+colours, no glyph arrays, and no `cosmic_text::fontdb::ID` dragged into a
+Contract-tier header. The selection loupe and the edit menu want the same
+runs, and `Page::highlight_rects` already turns a locator range into rects
+internally.
+
+**Two consequences.** Keeping the display list out of the first C ABI costs
+accessibility nothing, so that recommendation is now a cheap yes rather than
+a reluctant trade. And the accessor is *additive* — adding a function to a C
+header breaks no one — so none of this has to happen before a header exists.
+
+**The real gap is a level below the boundary.** `Session` exposes no page
+text with geometry at all: `selected_text` needs a selection to already
+exist, and `search_unit` answers a query. Nothing answers "what text is on
+this page, and where". A Rust shell cannot build an accessibility tree
+today either, so this was never an FFI scheduling constraint — it is a
+missing accessor, fixable in safe Rust and testable in the workspace
+whenever it is picked up.
+
+**Status: deferred**, with the shape settled so that picking it up is cheap.
+The work is one accessor returning `{ text, rect, locator_start,
+locator_end }` per run for the current page, plus whatever each platform
+wraps it in. A GTK shell could verify it against AT-SPI without a device,
+which is the cheapest place to find out whether the shape is right.
 
 **Text identity, two smaller ones.** Nothing reads `UIContentSizeCategory`,
 so Dynamic Type — the accessibility setting Apple users actually change —
@@ -836,8 +876,8 @@ bug.
    longer reaches past its caller for anything. Custody is now the *only*
    reason a `content://` book cannot remember where the reader was. Sequenced here because it is
    the same shape work as §2's remaining piece and lands in the same pass,
-   and because the accessibility finding constrains what the first C ABI
-   may leave out.
+   The accessibility finding no longer constrains what the first C ABI may
+   leave out — see §7.
 3. **Sync clients (§5)** — belongs to the platform, not to each app, and
    annotation interchange rides along.
 4. **Hygiene (§6)** — continuous, never urgent, decides whether any of this

@@ -189,7 +189,10 @@ copies.
 Shells that rasterize themselves still take `frame()` and the display list;
 that path is unchanged and is deliberately *not* in the first C ABI. Three
 `DisplayOp` variants are not hard to expose, but nothing needs them yet,
-and STABILITY.md's Contract tier means whatever ships holds still.
+and STABILITY.md's Contract tier means whatever ships holds still. Exposing
+them would also drag `cosmic_text::fontdb::ID` across a boundary meant to
+name no third-party types — reason enough on its own, and the accessibility
+argument that once pulled the other way has been withdrawn (PLATFORM §7).
 
 **Events.** `set_waker` already takes a callback; the C form is
 `void (*wake)(void* user)` plus a `void*`. The header has to say the thing
@@ -527,10 +530,12 @@ answered in [PLATFORM.md §7](PLATFORM.md). Short version: the pipeline earns
 its place on measured numbers and on locators, and the *edges* — OPDS
 transport, credentials, file custody — do not. (Credentials have since
 been extracted; see PLATFORM §7 for the three decisions that shaped it, all
-of them made for this document's boundary rather than for today's caller.) One finding there reaches back
-into this document: accessibility is built from the display list, so keeping
-the display list out of the first C ABI decides that v1 cannot have a
-screen-reader path.
+of them made for this document's boundary rather than for today's caller.)
+A finding there used to reach back into this document — that accessibility
+is built from the display list, so keeping the list out of the first C ABI
+decided v1 could have no screen-reader path. That was wrong on both counts
+and PLATFORM §7 now says why: the display list holds glyph indices and no
+text at all. Accessibility is deferred and owes this boundary nothing.
 
 **Most of the defect list is not Android's.** The font source being
 unreachable, the missing generic-family mappings, the absent log seam, the
@@ -1255,8 +1260,14 @@ cleanup. That is right about the dependency and wrong about the order:
 
 ## Still to decide
 
-- **Whether `frame()` crosses the boundary at all**, or whether hosts get
-  pixels only. Pixels only, for now, is the recommendation.
+- ~~**Whether `frame()` crosses the boundary at all**~~ — **decided: it does
+  not.** Pixels only. This was held open because accessibility was thought
+  to be built from the display list, which would have made leaving it out a
+  real cost. It is not: the list carries glyph indices and no text (PLATFORM
+  §7). A screen-reader path wants a small text-runs-and-rects accessor
+  instead, which is additive and can arrive whenever accessibility does.
+  Shells that rasterize for themselves still take `frame()` in Rust; that
+  path is unchanged and simply does not cross the C ABI.
 - **Whether an embedded font source ships in every shell binary** or only in
   tests and conformance. Four Crimson Text faces is not nothing. The
   recommendation is that it is always available to tests, and that shells are
