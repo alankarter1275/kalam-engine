@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         };
         let (fonts, images) = session.paint_resources();
-        renderer.render(&frame.list, fonts, images, 1.0, &mut pixmap);
+        renderer.render(&frame.list, fonts, images, 1.0, &mut pixmap.as_mut());
 
         // Panel policy, exactly as any other backend applies it. The
         // display list says where dithering belongs — over images, not

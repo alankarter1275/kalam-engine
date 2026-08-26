@@ -99,7 +99,13 @@ fn main() {
         };
         let mut cpu_only = tiny_skia::Pixmap::new(600, 800).unwrap();
         let (fonts, images) = s.paint_resources();
-        chapbook_render_tinyskia::Renderer::new().render(&only, fonts, images, 1.0, &mut cpu_only);
+        chapbook_render_tinyskia::Renderer::new().render(
+            &only,
+            fonts,
+            images,
+            1.0,
+            &mut cpu_only.as_mut(),
+        );
         let gpu_only = vello.render(&only, fonts, images, 1.0).expect("gpu");
 
         let bounds = |rgba: &[u8], w: u32| {

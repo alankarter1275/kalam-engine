@@ -184,6 +184,16 @@ It also applies the panel policy on the way out — the pixel format set by
 `set_pixel_format`, then the rotation from the metrics — so the pixmap is
 already in panel orientation and the panel's colour depth.
 
+**`session.render_into(dst, width, height, stride) -> bool`** is the same
+picture drawn straight into a buffer you already own — a locked Android
+bitmap, a `CGBitmapContext`, the array behind a WASM `ImageData` — so the
+engine does not allocate one per frame for you to copy out of. Ask
+`session.render_size()` for the dimensions first; it accounts for rotation,
+and `render_into` refuses rather than misdraws if the size does not match.
+Pixels are premultiplied RGBA8888. An unrotated page with `stride ==
+width * 4` costs no allocation and no copy; a rotated page or a padded
+stride is correct but goes through an intermediate.
+
 **`session.frame() -> Option<Frame>`** is the seam. `Frame` carries:
 
 - `list` — a `DisplayList` of paint-neutral ops. There are exactly three:

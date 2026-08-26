@@ -165,18 +165,41 @@ absence of `cb_free_string` — and with it the absence of the single most
 common defect in hand-written C ABIs, a host freeing Rust's allocation with
 the wrong allocator. Nothing crosses the boundary owned.
 
-**Pixels.** `Session::render()` allocates and returns a `Pixmap`. Every
-host platform already owns the buffer it wants drawn into: Android's
+**Pixels — done.** `Session::render()` allocates and returns a `Pixmap`.
+Every host platform already owns the buffer it wants drawn into: Android's
 `AndroidBitmap_lockPixels`, iOS's `CGBitmapContext`, the `Uint8ClampedArray`
-behind a WASM `ImageData`. So the engine wants
+behind a WASM `ImageData`. So the engine now has
 
 ```rust
+pub fn render_size(&self) -> Option<(u32, u32)>;
 pub fn render_into(&mut self, dst: &mut [u8], width: u32, height: u32, stride: usize) -> bool;
 ```
 
-with today's `render()` kept as the wrapper that allocates. This is a real
-change to the engine, not a shim in the binding, and it is what removes the
-engine-side copy on all three targets.
+with `render()` kept as the wrapper that allocates. `render_size` came with
+it, because a host cannot allocate a surface without being told how big one
+is. This is a real change to the engine, not a shim in the binding: it
+reaches down to `chapbook-render-tinyskia`, whose `render` now takes a
+`PixmapMut` so its target can be memory this workspace did not allocate.
+
+**What it is worth, measured rather than assumed.** At iPhone 393×852 @3x —
+a 1179×2556, 12.1 MB surface, the case the table above calls 11.5 MB — over
+60 frames of `fixtures/corpus/moby-dick.epub` on the Linux dev box:
+`render()` then copying into a host buffer, which is what a shell pays
+today, is **26.8 ms/frame**; `render_into` is **25.7 ms/frame**. About 4%.
+
+That is honest and it is smaller than "removes the copy" sounds, because at
+this surface size the copy is a small part of rasterizing a page. The effect
+worth having is the other one: `render()` allocates and zeroes 12.1 MB per
+frame, and `render_into` on the fast path allocates nothing at all. Android
+is the platform that kills a process over exactly that kind of transient
+pressure, and it is the same argument as the cache budget below.
+
+**One caveat in the signature.** `stride` is honoured but only free when it
+equals `width * 4`: tiny-skia cannot rasterize into a padded buffer and
+rotation cannot be done in place, so a rotated page or a padded stride goes
+through an intermediate and is copied row by row. Every named platform hits
+the free path — `ARGB_8888` is tightly packed, a `CGBitmapContext` takes the
+`bytesPerRow` the caller chooses, and `ImageData` is always `width * 4`.
 
 *Not* the same as making the whole path zero-copy, and iOS is where the
 difference bites — see **What Swift asks for that JNI did not** below.
@@ -1242,9 +1265,9 @@ cleanup. That is right about the dependency and wrong about the order:
    ring reachable from the session rather than only from `opds-client`,
    which is this document's second NDK prerequisite), typed sources (done),
    the library directory (still reached for behind the caller's back),
-   `render_into`, a cache budget and `release_caches`, `suspend()`, and the
-   optional `library` feature. The constructor work is finished apart from
-   the library directory, which is one more field on `SessionConfig`. All of it tested in the workspace,
+   `render_into` (done), a cache budget and `release_caches`, `suspend()`,
+   and the optional `library` feature. The constructor work is finished:
+   every capability arrives through `SessionConfig` or `Source`. All of it tested in the workspace,
    none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
    by evidence instead of by guessing. The wasm32 CI check lands here, once
    there is something for it to prove.

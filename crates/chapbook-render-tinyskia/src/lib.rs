@@ -6,7 +6,7 @@
 //! here, by scaling positions and rasterizing glyphs at `font_size * scale`.
 
 use cosmic_text::{CacheKey, CacheKeyFlags, FontSystem, SwashCache};
-use tiny_skia::{Pixmap, PixmapPaint, PremultipliedColorU8};
+use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, PremultipliedColorU8};
 
 // Re-exported so consumers (CLI, viewer) create pixmaps without a direct
 // tiny-skia dependency.
@@ -36,13 +36,18 @@ impl Renderer {
     /// The pixmap should be at least `dl.size * scale` pixels. `images`
     /// resolves `DisplayOp::Image` resources; pass an empty store for
     /// text-only content.
+    ///
+    /// Takes a [`PixmapMut`] rather than an owned `Pixmap` so the target
+    /// can be memory this crate did not allocate — an Android bitmap's
+    /// locked pixels, a `CGBitmapContext`, the buffer behind a WASM
+    /// `ImageData`. An owned pixmap still works: pass `pixmap.as_mut()`.
     pub fn render(
         &mut self,
         dl: &DisplayList,
         fonts: &mut FontSystem,
         images: &ImageStore,
         scale: f32,
-        pixmap: &mut Pixmap,
+        pixmap: &mut PixmapMut<'_>,
     ) {
         for op in &dl.ops {
             match op {
@@ -95,7 +100,7 @@ impl Renderer {
         x: i32,
         y: i32,
         color: Rgba,
-        pixmap: &mut Pixmap,
+        pixmap: &mut PixmapMut<'_>,
     ) {
         use cosmic_text::SwashContent;
 
@@ -172,7 +177,7 @@ fn blend_over(dst: PremultipliedColorU8, color: Rgba, alpha: u8) -> Premultiplie
     PremultipliedColorU8::from_rgba(r.min(out_a), g.min(out_a), b.min(out_a), out_a).unwrap_or(dst)
 }
 
-fn fill_rect(pixmap: &mut Pixmap, rect: &Rect, color: Rgba, scale: f32) {
+fn fill_rect(pixmap: &mut PixmapMut<'_>, rect: &Rect, color: Rgba, scale: f32) {
     if color.is_transparent() {
         return;
     }
@@ -189,7 +194,13 @@ fn fill_rect(pixmap: &mut Pixmap, rect: &Rect, color: Rgba, scale: f32) {
     pixmap.fill_rect(r, &paint, tiny_skia::Transform::identity(), None);
 }
 
-fn draw_image(pixmap: &mut Pixmap, images: &ImageStore, resource: u64, dest: &Rect, scale: f32) {
+fn draw_image(
+    pixmap: &mut PixmapMut<'_>,
+    images: &ImageStore,
+    resource: u64,
+    dest: &Rect,
+    scale: f32,
+) {
     let Some(stored) = images.get(resource) else {
         return;
     };

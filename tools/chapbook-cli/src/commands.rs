@@ -222,7 +222,7 @@ pub fn render(
     )
     .ok_or_else(|| chapbook_core::ChapbookError::Layout("empty page size".into()))?;
     let mut renderer = chapbook_render_tinyskia::Renderer::new();
-    renderer.render(&dl, &mut fonts, &images, scale, &mut pixmap);
+    renderer.render(&dl, &mut fonts, &images, scale, &mut pixmap.as_mut());
     pixmap
         .save_png(out)
         .map_err(|e| chapbook_core::ChapbookError::Io(std::io::Error::other(e)))?;
@@ -552,7 +552,7 @@ fn render_image_book(
         "Crimson Text",
     ))?;
     let mut renderer = chapbook_render_tinyskia::Renderer::new();
-    renderer.render(&dl, &mut fonts, &images, scale, &mut pixmap);
+    renderer.render(&dl, &mut fonts, &images, scale, &mut pixmap.as_mut());
     pixmap
         .save_png(out)
         .map_err(|e| chapbook_core::ChapbookError::Io(std::io::Error::other(e)))?;

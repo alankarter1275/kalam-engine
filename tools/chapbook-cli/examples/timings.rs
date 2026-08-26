@@ -145,7 +145,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let list = chapbook_paint::build_display_list(page, chapbook_core::Rgba::WHITE, &[]);
             let (w, h) = (metrics.size.w as u32, metrics.size.h as u32);
             if let Some(mut pixmap) = chapbook_render_tinyskia::tiny_skia::Pixmap::new(w, h) {
-                render.time(|| renderer.render(&list, &mut fonts, &images, 1.0, &mut pixmap));
+                render.time(|| {
+                    renderer.render(&list, &mut fonts, &images, 1.0, &mut pixmap.as_mut())
+                });
                 let grey = PixelFormat::Grey {
                     levels: 16,
                     dither: true,
