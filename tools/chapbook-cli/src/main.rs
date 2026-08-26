@@ -92,8 +92,13 @@ enum OpdsCommand {
 enum LibCommand {
     /// Import a book into the library
     Import { book: PathBuf },
-    /// List library contents
+    /// List library contents, most recently read first
     Ls,
+    /// Remove a book from the library (annotations are kept)
+    Rm {
+        /// Library id, as shown by `lib ls`
+        id: i64,
+    },
 }
 
 fn parse_theme(s: &str) -> Result<chapbook_core::Theme, String> {
@@ -142,6 +147,7 @@ fn main() -> ExitCode {
         Command::Lib { command } => match command {
             LibCommand::Import { book } => print(commands::lib_import(&book)),
             LibCommand::Ls => print(commands::lib_ls()),
+            LibCommand::Rm { id } => print(commands::lib_rm(id)),
         },
     }
 }

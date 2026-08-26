@@ -670,7 +670,7 @@ impl Session {
                             return Some(id);
                         }
                     }
-                    lib.import(path, book.publication().metadata()).ok()
+                    lib.import(path, book.publication()).ok()
                 });
 
                 let (start_spine, pending_offset) = match (&library, book_id) {

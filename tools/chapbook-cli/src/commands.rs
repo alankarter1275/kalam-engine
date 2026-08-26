@@ -418,7 +418,7 @@ pub fn opds_get(url: &str, out: &Path) -> Result<String> {
 pub fn lib_import(book_path: &Path) -> Result<String> {
     let book = open_publication(book_path)?;
     let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
-    let id = lib.import(book_path, book.metadata())?;
+    let id = lib.import(book_path, book.as_ref())?;
     let record = lib.book(id)?.expect("just imported");
     Ok(format!(
         "imported #{} \"{}\" ({} authors, {} spine items)\n",
@@ -429,9 +429,25 @@ pub fn lib_import(book_path: &Path) -> Result<String> {
     ))
 }
 
+pub fn lib_rm(id: i64) -> Result<String> {
+    let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
+    let Some(record) = lib.book(chapbook_library::BookId(id))? else {
+        return Err(chapbook_core::ChapbookError::Library(format!(
+            "no book #{id} in the library"
+        )));
+    };
+    lib.delete_book(chapbook_library::BookId(id))?;
+    Ok(format!(
+        "removed #{id} \"{}\" (annotations kept: a re-import finds them again)\n",
+        record.title
+    ))
+}
+
 pub fn lib_ls() -> Result<String> {
     let lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
-    let books = lib.books(None)?;
+    // `recent` rather than `books`: a person running `lib ls` is looking
+    // for what they were reading, the same thing a shelf shows.
+    let books = lib.recent(None)?;
     if books.is_empty() {
         return Ok("library is empty — chapbook lib import <book>\n".into());
     }
@@ -441,11 +457,13 @@ pub fn lib_ls() -> Result<String> {
         if !book.authors.is_empty() {
             out.push_str(&format!(" — {}", book.authors.join(", ")));
         }
-        if let Some(position) = lib.position(book.id)? {
-            out.push_str(&format!(
-                "  [{:.0}%]",
-                position.locator.book_progression * 100.0
-            ));
+        // Progress rides on the record now. It used to be a query per
+        // book, which was fine here and quadratic for anything larger.
+        if let Some(progress) = book.progress {
+            out.push_str(&format!("  [{:.0}%]", progress * 100.0));
+        }
+        if book.cover_path.is_some() {
+            out.push_str("  (cover)");
         }
         out.push('\n');
     }

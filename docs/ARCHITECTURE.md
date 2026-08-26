@@ -224,8 +224,11 @@ stays that way.
   `opds-client` wholesale, so consumers inside the workspace name one
   crate.
 - **chapbook-library** — rusqlite (bundled, WAL): books/authors, positions,
-  annotations, opds_sources. Positions are `Locator`s and survive relayout
-  via the char_map.
+  annotations, opds_sources, plus covers kept at import. Positions are
+  `Locator`s and survive relayout via the char_map. `books()` lists in a
+  stable order and `recent()` in reading order; both carry cover, progress
+  and last-read on the record, because a shelf asking per book turns one
+  query into N.
 - **chapbook-reader** — the shared reading session, extracted so viewer
   shells stay thin: source dispatch (`.epub`/`.cbz`/OPDS URL), per-unit
   layout+image caches (text units run the full pipeline; comic units

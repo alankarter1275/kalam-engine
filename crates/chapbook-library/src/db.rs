@@ -125,6 +125,16 @@ const MIGRATIONS: &[&str] = &[
     -- unlocking anything.
     ALTER TABLE opds_sources DROP COLUMN auth_secret;
     ",
+    // v4
+    "
+    -- What a shelf needs and could not ask for. A cover is the thing a
+    -- reader recognises a book by, and every `Publication` can already
+    -- produce one — but `import` only ever saw the metadata, so nothing
+    -- captured it and a browsing UI would have had to reopen every book on
+    -- every paint. NULL means no cover; the file lives beside the managed
+    -- copy under `covers/`.
+    ALTER TABLE books ADD COLUMN cover_path TEXT;
+    ",
 ];
 
 pub(crate) fn open_and_migrate(path: &std::path::Path) -> Result<Connection> {
