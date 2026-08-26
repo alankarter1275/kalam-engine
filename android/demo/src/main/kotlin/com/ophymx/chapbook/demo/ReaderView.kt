@@ -34,15 +34,24 @@ class ReaderView(context: Context, private val session: Session) : View(context)
         // engine lays out at a readable size and rasterizes at the panel's.
         session.setMetrics(w / density, h / density, 24f, density)
         bitmap?.recycle()
-        bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        // Ask the session how big the surface has to be rather than assuming
+        // it is the view's size. Logical units are the view's pixels divided
+        // by the density and the device size is that multiplied back, and
+        // the round trip through a float truncation does not always land on
+        // the pixel it started from. `render_into` refuses a buffer that is
+        // the wrong size — correctly — so a view that guesses draws nothing
+        // and cannot say why.
+        val size = session.renderSize ?: return
+        bitmap = Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888)
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         val target = bitmap ?: return
-        // Straight into the bitmap's own pixels: tiny-skia hands back
-        // premultiplied RGBA8888 and an ARGB_8888 bitmap is premultiplied
-        // RGBA in memory, so the binding memcpys rather than converting.
+        // Straight into the bitmap's own pixels: `AndroidBitmap_lockPixels`
+        // hands back its backing store and the engine rasterizes there.
+        // tiny-skia's output is premultiplied RGBA8888 and that is what
+        // ARGB_8888 holds, so nothing converts and nothing is copied.
         lastRender = session.renderInto(target)
         if (lastRender == 0) canvas.drawBitmap(target, 0f, 0f, null)
     }

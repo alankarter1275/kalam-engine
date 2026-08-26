@@ -14,7 +14,19 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-chapbook-reader = { workspace = true, features = ["cbz", "pdf"] }
+# `library` is named explicitly and that is not redundant: the workspace
+# dependency sets `default-features = false`, so a shell that lists only
+# the formats it reads gets a session that remembers nothing — no
+# position, no annotations, no settings — and nothing says so. It opens,
+# renders and conforms; it just never comes back where it was left.
+# `opds` stays off: it is the only feature that pulls in TLS, and the
+# trust-store question is not this spike's (see `docs/FFI.md`).
+chapbook-reader = { workspace = true, features = ["library", "cbz", "pdf"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
+log = { workspace = true }
+# The backend for `chapbook_core`'s log seam. `default-features = false`
+# turns off `env_filter`'s `regex` feature, which is there to match a
+# filter string this binding never has one of.
+android_logger = { version = "0.15", default-features = false }
