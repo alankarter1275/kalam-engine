@@ -307,24 +307,36 @@ What *is* shared, and is genuinely engine knowledge:
 
 Proposed home: `chapbook_core::input`, Contract tier, no event loop, no I/O.
 
-**Lifecycle.** `save_position()` exists and is the right primitive, but a
-platform needs one call that means *you are about to be killed*: position,
-settings, and any dirty annotation, persisted now. Android's `onStop` is
-the only guaranteed callback there is, and it has a time budget. Call it
-`suspend()`; the reopen path already restores.
+**Lifecycle — done.** `save_position()` was the right primitive but not the
+right call: a platform needs one that means *you are about to be stopped*.
+`suspend()` persists the position — settings and annotations are already
+written when they change, so the position is the only lazily-written state —
+closes the database, and releases the caches, because a stopped app should
+not be holding decoded pages.
 
-iOS wants the same call for a second reason that Android never raises — not
-only *persist now* but *drop your file locks now*. See the iOS section.
+Closing rather than flushing is the iOS half: bundled SQLite takes POSIX
+advisory locks, and an app still holding one on a file in a shared container
+when it suspends is killed by the watchdog. See the iOS section.
+
+The session stays usable afterwards. `onStop` is often followed by `onStart`
+with the process still alive, so the next access reopens the library —
+which is why `Session` keeps the directory it was given rather than only the
+open handle. A session that quietly stopped saving after its first suspend
+would lose every position from then on, so that path has a test.
+
+What `suspend()` does *not* do is stop the loader thread: a page already
+being decoded finishes.
 
 **Power and memory.** Two calls, both driven by the finding above.
 `set_cache_budget(bytes)` is **done** — caches evict least-recently-used
 instead of growing, and lowering the budget evicts on the spot rather than
 at the next page turn, which is what a memory warning needs.
-`release_caches()` for `onTrimMemory` and for an e-ink device that has been
-idle is still open, and is now a small thing: the eviction machinery exists,
-so it is "evict everything but the pinned unit". Neither is
-Android-specific — a Kobo has 256 MB — but Android is where it becomes an
-OOM kill rather than a slow day.
+`release_caches()` is **done** too — everything but the unit on screen, for
+`onTrimMemory` and for an e-ink device that has been idle. It is distinct
+from lowering the budget on purpose: a budget is a steady-state cap, this is
+"right now, as much as you can". Neither is Android-specific — a Kobo has
+256 MB — but Android is where it becomes an OOM kill rather than a slow
+day.
 
 ## The Android spike
 
@@ -1291,9 +1303,10 @@ cleanup. That is right about the dependency and wrong about the order:
    ring reachable from the session rather than only from `opds-client`,
    which is this document's second NDK prerequisite), typed sources (done),
    the library directory (still reached for behind the caller's back),
-   `render_into` (done), a cache budget (done) and `release_caches`,
-   `suspend()`, and the optional `library` feature. The constructor work is
-   finished: every capability arrives through `SessionConfig` or `Source`. All of it tested in the workspace,
+   `render_into` (done), a cache budget and `release_caches` (done),
+   `suspend()` (done), and the optional `library` feature — which is all
+   that is left, besides the log seam. The constructor work is finished:
+   every capability arrives through `SessionConfig` or `Source`. All of it tested in the workspace,
    none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
    by evidence instead of by guessing. The wasm32 CI check lands here, once
    there is something for it to prove.

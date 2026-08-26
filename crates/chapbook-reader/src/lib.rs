@@ -265,6 +265,13 @@ pub struct Session {
     /// Selection anchor and cursor as locator offsets (unordered).
     selection: Option<(u32, u32)>,
     library: Option<chapbook_library::Library>,
+    /// Where the library lives, so [`Session::suspend`] can close it and a
+    /// later access can open it again.
+    library_dir: Option<std::path::PathBuf>,
+    /// Set by [`Session::suspend`]: the database is deliberately closed and
+    /// the next access should reopen rather than treat `None` as "this
+    /// platform has no library".
+    suspended: bool,
     book_id: Option<chapbook_library::BookId>,
     /// Annotations as stored, awaiting resolution against unit text.
     stored: Vec<StoredAnnotation>,
@@ -857,6 +864,8 @@ impl Session {
             waker,
             selection: None,
             library,
+            library_dir,
+            suspended: false,
             book_id,
             stored,
             resolved_highlights: HashMap::new(),
@@ -1138,7 +1147,8 @@ impl Session {
     /// Drop this book's override so it follows the reader's default again,
     /// applying that default now.
     pub fn clear_book_settings(&mut self) {
-        let (Some(library), Some(id)) = (self.library.as_mut(), self.book_id) else {
+        let book_id = self.book_id;
+        let (Some(library), Some(id)) = (self.library_mut(), book_id) else {
             return;
         };
         if let Err(e) = library.clear_reading_settings(id) {
@@ -1168,7 +1178,7 @@ impl Session {
     fn persist_settings(&mut self, scope: SettingsScope) {
         let book_id = self.book_id;
         let settings = self.settings.clone();
-        let Some(library) = self.library.as_mut() else {
+        let Some(library) = self.library_mut() else {
             return;
         };
         let target = match scope {
@@ -1658,7 +1668,7 @@ impl Session {
     /// Recolor a highlight. `None` hands it back to the theme color.
     /// Colors are `#rgb`, `#rrggbb`, or `#rrggbbaa`.
     pub fn set_highlight_color(&mut self, id: i64, color: Option<&str>) {
-        if let Some(library) = self.library.as_mut() {
+        if let Some(library) = self.library_mut() {
             if let Err(e) = library.set_annotation_color(id, color) {
                 eprintln!("chapbook: failed to recolor annotation: {e}");
                 return;
@@ -1699,7 +1709,7 @@ impl Session {
 
     /// Delete an annotation (a soft delete in the library, kept for sync).
     pub fn remove_annotation(&mut self, id: i64) {
-        if let Some(library) = self.library.as_mut() {
+        if let Some(library) = self.library_mut() {
             if let Err(e) = library.delete_annotation(id) {
                 eprintln!("chapbook: failed to delete annotation: {e}");
                 return;
@@ -2068,6 +2078,72 @@ impl Session {
     /// result is in panel orientation and panel color: the metrics'
     /// rotation and the session's pixel format are both applied here.
     /// `None` under the same conditions as a frame.
+    /// Give back everything that can be rebuilt, keeping only the unit on
+    /// screen.
+    ///
+    /// The lever `onTrimMemory` and `didReceiveMemoryWarning` had nothing
+    /// to call. Distinct from lowering the budget: a budget is a
+    /// steady-state cap, this is "right now, as much as you can". Nothing
+    /// dropped here is authoritative — pages are re-read and re-decoded,
+    /// chapters laid out again — so the cost is a slower next page turn,
+    /// not a lost anything.
+    pub fn release_caches(&mut self) {
+        let pinned = self.spine;
+        self.layouts.retain(|spine, _| *spine == pinned);
+        self.images.retain(|spine, _| *spine == pinned);
+        self.loaded_units.retain(|spine, _| *spine == pinned);
+        self.placeholders.retain(|spine| *spine == pinned);
+        self.resolved_highlights.retain(|spine, _| *spine == pinned);
+        self.used_at.retain(|spine, _| *spine == pinned);
+    }
+
+    /// You are about to be stopped: persist, and let go of the database.
+    ///
+    /// Android's `onStop` is the only guaranteed callback there is and it
+    /// has a time budget, so this saves the one piece of state that is
+    /// written lazily — the reading position. Settings and annotations are
+    /// already written when they change.
+    ///
+    /// iOS wants the same call for a second reason Android never raises.
+    /// Bundled SQLite takes POSIX advisory locks, and an app still holding
+    /// one on a file in a *shared* container when it suspends is killed by
+    /// the watchdog with `0xdead10cc`. So this closes the connection rather
+    /// than merely flushing it. A share extension or a widget means an app
+    /// group, and an app group means a shared container, which is when that
+    /// stops being hypothetical.
+    ///
+    /// Caches go too: a stopped app should not be holding decoded pages.
+    ///
+    /// The session stays usable. `onStop` is often followed by `onStart`
+    /// with the process still alive, so the next thing that needs the
+    /// library reopens it. What this does *not* do is stop the loader
+    /// thread; a suspended session with a page still arriving will finish
+    /// decoding it.
+    pub fn suspend(&mut self) {
+        self.save_position();
+        self.release_caches();
+        self.library = None;
+        self.suspended = true;
+    }
+
+    /// The library, reopened if [`suspend`](Self::suspend) closed it.
+    ///
+    /// Every access goes through here, so "the database is shut because we
+    /// were told to let go of it" and "this platform has no library" stay
+    /// distinguishable — both are `None` in the field and only one should
+    /// be retried.
+    fn library_mut(&mut self) -> Option<&mut chapbook_library::Library> {
+        if self.suspended {
+            self.suspended = false;
+            if let Some(dir) = &self.library_dir {
+                self.library = chapbook_library::Library::open(dir)
+                    .map_err(|e| eprintln!("chapbook: library unavailable after resume: {e}"))
+                    .ok();
+            }
+        }
+        self.library.as_mut()
+    }
+
     /// Bytes the layout and image caches currently hold.
     ///
     /// Exact for decoded images, approximate for laid-out chapters — see
@@ -2327,7 +2403,7 @@ impl Session {
                 self.book.publication().spine().len() as u64,
             ),
         };
-        let Some(library) = self.library.as_mut() else {
+        let Some(library) = self.library_mut() else {
             return;
         };
         if let Err(e) = library.set_position(id, &locator) {

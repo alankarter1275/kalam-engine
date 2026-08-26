@@ -203,6 +203,13 @@ rather than at the next page turn. Eviction never drops the unit on screen,
 and everything else is re-read and re-decoded on demand, so the only cost of
 a small budget is a slower page-back.
 
+**Lifecycle.** `session.release_caches()` gives back everything but the page
+on screen — call it when the platform warns about memory. `session.suspend()`
+is the stronger one: persist the position, close the database, drop the
+caches. Call it when the platform says you are about to be stopped, because
+that is the only guaranteed callback and it is on a clock. The session keeps
+working afterwards; the library reopens on the next access.
+
 **`session.frame() -> Option<Frame>`** is the seam. `Frame` carries:
 
 - `list` — a `DisplayList` of paint-neutral ops. There are exactly three:
