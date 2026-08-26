@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
-use chapbook_core::{LayeredLocator, Publication, Quote, ReadingSettings, Result, Theme};
+use chapbook_core::{
+    ChapbookError, LayeredLocator, Publication, Quote, ReadingSettings, Result, Theme,
+};
 
 use crate::db::db_err;
 pub use crate::restore::{restore_position, RestoreTier};
@@ -131,19 +133,44 @@ impl Library {
         })
     }
 
-    /// The default per-user library location (`$CHAPBOOK_LIBRARY_DIR`,
-    /// else XDG data dir).
-    pub fn default_dir() -> PathBuf {
-        if let Ok(dir) = std::env::var("CHAPBOOK_LIBRARY_DIR") {
-            return PathBuf::from(dir);
-        }
-        let base = std::env::var("XDG_DATA_HOME")
+    /// Where this platform keeps a per-user library.
+    ///
+    /// `$CHAPBOOK_LIBRARY_DIR` wins everywhere — tests, packagers and
+    /// anyone with two libraries need one override that does not vary by
+    /// target. Failing that, each desktop platform gets its own
+    /// convention, because the previous single answer was the Linux one
+    /// and only Linux was right:
+    ///
+    /// | | |
+    /// |---|---|
+    /// | Linux, BSD | `$XDG_DATA_HOME/chapbook`, else `~/.local/share/chapbook` |
+    /// | macOS | `~/Library/Application Support/chapbook` |
+    /// | Windows | `%APPDATA%\chapbook`, else `%LOCALAPPDATA%\chapbook` |
+    ///
+    /// **Everything else is an error, deliberately.** Android, iOS and
+    /// wasm have no such variables, and the old code fell through to a
+    /// relative `"."` — writing a library into whatever directory the
+    /// process happened to start in, which is silent, wrong, and very hard
+    /// to diagnose. A platform with a sandbox knows its own answer and
+    /// should say it, which is what `SessionConfig::with_library_dir` is
+    /// for. The same applies to a Unix daemon with no `HOME`.
+    pub fn default_dir() -> Result<PathBuf> {
+        // An empty variable is a mistake, not a request for the CWD.
+        if let Some(dir) = std::env::var_os("CHAPBOOK_LIBRARY_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                PathBuf::from(home).join(".local/share")
-            });
-        base.join("chapbook")
+            .filter(|dir| !dir.as_os_str().is_empty())
+        {
+            return Ok(dir);
+        }
+        platform_dir()
+            .map(|dir| dir.join("chapbook"))
+            .ok_or_else(|| {
+                ChapbookError::Library(
+                    "no default library location on this platform; set \
+                 CHAPBOOK_LIBRARY_DIR or pass SessionConfig::with_library_dir"
+                        .into(),
+                )
+            })
     }
 
     /// Import a book: copy the file into the library, index its metadata,
@@ -787,6 +814,61 @@ impl Library {
     }
 }
 
+/// The per-user data directory this platform uses, before the app name.
+///
+/// `None` where there is no convention to follow — every mobile and wasm
+/// target, and any Unix with no `HOME`.
+#[cfg(all(
+    unix,
+    not(target_os = "macos"),
+    not(target_os = "android"),
+    not(target_os = "ios")
+))]
+fn platform_dir() -> Option<PathBuf> {
+    // XDG Base Directory: a relative `XDG_DATA_HOME` is invalid and the
+    // spec says to ignore it rather than resolve it against the CWD.
+    if let Some(dir) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+    {
+        return Some(dir);
+    }
+    home().map(|home| home.join(".local/share"))
+}
+
+#[cfg(target_os = "macos")]
+fn platform_dir() -> Option<PathBuf> {
+    home().map(|home| home.join("Library/Application Support"))
+}
+
+#[cfg(windows)]
+fn platform_dir() -> Option<PathBuf> {
+    // Roaming first: a library is user data worth following the user to
+    // another machine. `LOCALAPPDATA` is the fallback for a profile with
+    // roaming disabled.
+    std::env::var_os("APPDATA")
+        .or_else(|| std::env::var_os("LOCALAPPDATA"))
+        .map(PathBuf::from)
+        .filter(|dir| !dir.as_os_str().is_empty())
+}
+
+/// Android, iOS, wasm, and anything else: the host has to say.
+#[cfg(not(any(
+    windows,
+    target_os = "macos",
+    all(unix, not(target_os = "android"), not(target_os = "ios"))
+)))]
+fn platform_dir() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(any(unix, windows))]
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|dir| !dir.as_os_str().is_empty())
+}
+
 /// How [`Library::books`] and [`Library::recent`] sort.
 #[derive(Debug, Clone, Copy)]
 enum Order {
@@ -832,4 +914,133 @@ fn cover_extension(media_type: &str) -> &'static str {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod default_dir_tests {
+    use super::*;
+
+    /// These tests *are* about process-global environment, so unlike the
+    /// session tests they still serialize. That is the right place for a
+    /// lock: around the code that reads the environment, not around every
+    /// caller that merely wants a library somewhere.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Set several variables at once, run, restore.
+    ///
+    /// Takes the whole set rather than one at a time because the lock is
+    /// not reentrant, and a per-variable helper deadlocks the moment a
+    /// test needs to pin two of them.
+    fn with_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous: Vec<_> = vars
+            .iter()
+            .map(|(name, _)| (*name, std::env::var_os(name)))
+            .collect();
+        for (name, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        let out = f();
+        for (name, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_override_wins_over_every_platform_convention() {
+        let dir = with_vars(
+            &[("CHAPBOOK_LIBRARY_DIR", Some("/tmp/chapbook-override"))],
+            || Library::default_dir().unwrap(),
+        );
+        assert_eq!(dir, PathBuf::from("/tmp/chapbook-override"));
+    }
+
+    #[test]
+    fn an_empty_override_is_a_mistake_and_not_a_request_for_the_cwd() {
+        let dir = with_vars(&[("CHAPBOOK_LIBRARY_DIR", Some(""))], Library::default_dir);
+        // Whatever this platform answers, it is not the current directory.
+        if let Ok(dir) = dir {
+            assert!(dir.is_absolute(), "{}", dir.display());
+        }
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn linux_follows_xdg_and_ignores_a_relative_data_home() {
+        let dir = with_vars(
+            &[
+                ("CHAPBOOK_LIBRARY_DIR", None),
+                ("XDG_DATA_HOME", Some("/xdg/data")),
+            ],
+            || Library::default_dir().unwrap(),
+        );
+        assert_eq!(dir, PathBuf::from("/xdg/data/chapbook"));
+
+        // The spec says a relative XDG_DATA_HOME is invalid: ignore it
+        // rather than resolve it against the working directory.
+        let dir = with_vars(
+            &[
+                ("CHAPBOOK_LIBRARY_DIR", None),
+                ("XDG_DATA_HOME", Some("relative/data")),
+            ],
+            || Library::default_dir().unwrap(),
+        );
+        assert!(dir.is_absolute(), "{}", dir.display());
+        assert!(dir.ends_with(".local/share/chapbook"), "{}", dir.display());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_uses_application_support_and_not_the_linux_path() {
+        let dir = with_vars(&[("CHAPBOOK_LIBRARY_DIR", None)], || {
+            Library::default_dir().unwrap()
+        });
+        assert!(
+            dir.ends_with("Library/Application Support/chapbook"),
+            "{}",
+            dir.display()
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_uses_appdata_rather_than_falling_into_the_working_directory() {
+        let dir = with_vars(
+            &[
+                ("CHAPBOOK_LIBRARY_DIR", None),
+                ("APPDATA", Some(r"C:\Users\test\AppData\Roaming")),
+            ],
+            || Library::default_dir().unwrap(),
+        );
+        assert_eq!(
+            dir,
+            PathBuf::from(r"C:\Users\test\AppData\Roaming\chapbook")
+        );
+    }
+
+    /// The old code ended `.unwrap_or_else(|_| ".".into())`, so a process
+    /// with no home wrote a library into wherever it happened to start.
+    #[test]
+    #[cfg(unix)]
+    fn no_home_is_an_error_rather_than_the_working_directory() {
+        let result = with_vars(
+            &[
+                ("CHAPBOOK_LIBRARY_DIR", None),
+                ("XDG_DATA_HOME", None),
+                ("HOME", None),
+            ],
+            Library::default_dir,
+        );
+        let Err(err) = result else {
+            panic!("nowhere to put a library is an error, not a path");
+        };
+        assert!(err.to_string().contains("CHAPBOOK_LIBRARY_DIR"), "{err}");
+    }
 }

@@ -134,9 +134,10 @@ Everything else the constructor implicitly reaches for should come in the
 same way, because each is an environment assumption that only holds on a
 desktop: the library directory (today `CHAPBOOK_LIBRARY_DIR`, or XDG, or
 `$HOME`), the font source, and OPDS credentials. A builder, not eleven
-arguments. `SessionConfig` is that builder, and it already carries the font
-source, `chapbook_core::CredentialStore` and the `HttpClient`; the library
-directory and typed sources are the two fields it still wants.
+arguments. `SessionConfig` is that builder, and it now carries all of them:
+the font source, `chapbook_core::CredentialStore`, the `HttpClient` and the
+library directory, with the source itself typed as `Source`. Nothing in the
+constructor reaches past the caller any more.
 
 **Errors.** `ChapbookError` becomes a stable numbered enum, returned as a
 negative `int32_t`, with a per-session "last error message" the host can
@@ -562,13 +563,22 @@ question left, and still the first thing to check on a device; if it cannot,
 the answer is CoreText enumeration or bundled faces, and a font source
 carries either.
 
-**The library directory accidentally works, in the wrong place.**
-`Library::default_dir()` falls back to `$HOME/.local/share/chapbook`, and iOS
-*does* set `HOME`, to the app's container. So unlike Android it needs no
-environment variable to function — it just puts the database somewhere Apple
+**The library directory used to accidentally work, in the wrong place.**
+`Library::default_dir()` fell back to `$HOME/.local/share/chapbook`, and iOS
+*does* set `HOME`, to the app's container. So unlike Android it needed no
+environment variable to function — it just put the database somewhere Apple
 would not, outside `Library/Application Support`, with the backup and
-purgeability implications that carry. Working by accident is worth noticing
-precisely because it will not raise an error.
+purgeability implications that carry. Working by accident was worth noticing
+precisely because it would not have raised an error.
+
+Fixed from both ends. `default_dir()` now has a per-platform arm — XDG on
+Linux, `Library/Application Support` on macOS, `%APPDATA%` on Windows — and
+returns an *error* anywhere with no convention rather than a relative path,
+so iOS and Android no longer resolve to somewhere plausible-looking by
+accident. And `SessionConfig::with_library_dir` lets a host name its own
+container, which is the only correct answer on a sandboxed platform: the
+old code was reachable solely through an environment variable, which a
+phone has no way to set.
 
 **iOS is the more honest test of the C ABI.** Android went through JNI, which
 is a layer of its own with its own conventions; Swift consumes a C header
@@ -755,8 +765,9 @@ file in a *shared* container when it suspends is killed by the watchdog with
 arises the moment there is a share extension or a widget, because those mean
 an app group, and an app group means a shared container. That makes it a
 constraint on where the database lives, decided now, rather than a bug found
-later — and a second reason the accidental `$HOME/.local/share/chapbook`
-location is worth correcting to `Library/Application Support`.
+later. The engine side of that is now in place: `with_library_dir` takes
+whatever container the app group resolves to, and there is no `$HOME`
+fallback left to land in by accident.
 
 **CoreText enumeration is a narrower fallback than it sounds.** If
 `/System/Library/Fonts` proves unreadable from the sandbox, "CoreText

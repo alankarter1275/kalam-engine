@@ -417,7 +417,7 @@ pub fn opds_get(url: &str, out: &Path) -> Result<String> {
 /// EPUB, so importing a comic died inside the zip reader.
 pub fn lib_import(book_path: &Path) -> Result<String> {
     let book = open_publication(book_path)?;
-    let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
+    let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir()?)?;
     let id = lib.import(book_path, book.as_ref())?;
     let record = lib.book(id)?.expect("just imported");
     Ok(format!(
@@ -430,7 +430,7 @@ pub fn lib_import(book_path: &Path) -> Result<String> {
 }
 
 pub fn lib_rm(id: i64) -> Result<String> {
-    let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
+    let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir()?)?;
     let Some(record) = lib.book(chapbook_library::BookId(id))? else {
         return Err(chapbook_core::ChapbookError::Library(format!(
             "no book #{id} in the library"
@@ -444,7 +444,7 @@ pub fn lib_rm(id: i64) -> Result<String> {
 }
 
 pub fn lib_ls() -> Result<String> {
-    let lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir())?;
+    let lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir()?)?;
     // `recent` rather than `books`: a person running `lib ls` is looking
     // for what they were reading, the same thing a shelf shows.
     let books = lib.recent(None)?;

@@ -17,9 +17,6 @@ use chapbook_core::{
 };
 use chapbook_reader::{HttpClient, HttpError, HttpRequest, HttpResponse, Session, SessionConfig};
 
-/// Tests share `CHAPBOOK_LIBRARY_DIR`, which is process-global.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 const HOST: &str = "https://comics.example.com";
 const STALE: &str = "Bearer stale-token";
 const FRESH: &str = "Bearer fresh-token";
@@ -135,19 +132,17 @@ fn fixture_fonts() -> chapbook_core::FontSource {
 
 #[test]
 fn a_rejected_credential_is_renewed_and_the_open_retries() {
-    let guard = ENV_LOCK.lock().unwrap();
     let dir = isolated_dir("renew");
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
 
     let http = PickyHttp::default();
     let store = Arc::new(RefreshingStore::default());
     let config = SessionConfig::new(fixture_fonts())
+        .with_library_dir(&dir)
         .with_credentials(store.clone())
         .with_transport(Arc::new(http.clone()));
 
     let session = Session::open_with(format!("{HOST}/opds/"), config).unwrap();
     assert_eq!(session.spine_len(), 3, "the PSE stream's three pages");
-    drop(guard);
 
     // The store was asked twice: once cheaply, once because the server
     // said no. One renewal, not a loop.
@@ -167,19 +162,17 @@ fn a_rejected_credential_is_renewed_and_the_open_retries() {
 
 #[test]
 fn a_store_with_nothing_to_offer_surfaces_the_authentication_document() {
-    let guard = ENV_LOCK.lock().unwrap();
     let dir = isolated_dir("none");
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
 
     let http = PickyHttp::default();
     let config = SessionConfig::new(fixture_fonts())
+        .with_library_dir(&dir)
         .with_credentials(Arc::new(NoCredentials))
         .with_transport(Arc::new(http.clone()));
 
     let Err(err) = Session::open_with(format!("{HOST}/opds/"), config) else {
         panic!("a session with no credentials must not open a private catalog");
     };
-    drop(guard);
 
     // The shell needs the server's document to build a login dialog from,
     // so the error must carry it rather than collapsing to "failed".
@@ -193,12 +186,11 @@ fn a_store_with_nothing_to_offer_surfaces_the_authentication_document() {
 
 #[test]
 fn a_locked_store_does_not_spend_a_retry() {
-    let guard = ENV_LOCK.lock().unwrap();
     let dir = isolated_dir("locked");
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
 
     let http = PickyHttp::default();
     let config = SessionConfig::new(fixture_fonts())
+        .with_library_dir(&dir)
         .with_credentials(Arc::new(LockedStore))
         .with_transport(Arc::new(http.clone()));
 
@@ -206,7 +198,6 @@ fn a_locked_store_does_not_spend_a_retry() {
         Session::open_with(format!("{HOST}/opds/"), config).is_err(),
         "a locked store is not a credential"
     );
-    drop(guard);
 
     // Locked is not Missing, but it is not a credential either: the
     // request goes out unauthenticated once and stops. Re-prompting the
@@ -219,9 +210,7 @@ fn a_locked_store_does_not_spend_a_retry() {
 
 #[test]
 fn a_local_book_needs_no_transport_at_all() {
-    let guard = ENV_LOCK.lock().unwrap();
     let dir = isolated_dir("local");
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
 
     // No `with_transport`, and nothing constructs one: the bundled ureq
     // default is lazy, so a shell that only opens local books never pays
@@ -230,9 +219,12 @@ fn a_local_book_needs_no_transport_at_all() {
         .join("../../fixtures/epub/minimal.epub")
         .to_string_lossy()
         .into_owned();
-    let session = Session::open_with(path, SessionConfig::new(fixture_fonts())).unwrap();
+    let session = Session::open_with(
+        path,
+        SessionConfig::new(fixture_fonts()).with_library_dir(&dir),
+    )
+    .unwrap();
     assert!(session.spine_len() > 0);
-    drop(guard);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -243,15 +235,12 @@ fn a_local_book_needs_no_transport_at_all() {
 #[test]
 #[cfg(not(feature = "ureq"))]
 fn a_build_with_no_bundled_transport_says_so() {
-    let guard = ENV_LOCK.lock().unwrap();
     let dir = isolated_dir("no-transport");
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
 
-    let config = SessionConfig::new(fixture_fonts());
+    let config = SessionConfig::new(fixture_fonts()).with_library_dir(&dir);
     let Err(err) = Session::open_with(format!("{HOST}/opds/"), config) else {
         panic!("there is no transport in this build to have opened that with");
     };
-    drop(guard);
 
     let message = err.to_string();
     assert!(message.contains("with_transport"), "{message}");

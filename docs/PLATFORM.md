@@ -790,7 +790,8 @@ and Android, which is the whole point of having one. Keep it.
 
 Three adjustments, all shell-visible rather than schema-visible: the database
 belongs in `Library/Application Support` rather than the `$HOME` fallback it
-lands in by accident, it needs an explicit backup-exclusion decision, and it
+used to land in by accident (`default_dir()` now has a per-platform arm and
+refuses to guess where there is no convention), it needs an explicit backup-exclusion decision, and it
 must not hold file locks across suspension once a share extension or widget
 puts it in a shared container.
 
@@ -830,9 +831,9 @@ bug.
    session API into SDK shape, which is also what §2's remaining piece
    (typed sources and injectable I/O instead of `open(&str)`) needs.
 2. **The edges (§7)** — file custody is what remains. The credential store,
-   the transport and typed sources are all done, arriving through
-   `SessionConfig` or `Source`; the library directory is the last thing
-   still reached for behind the caller's back. Custody is now the *only*
+   the transport, typed sources and the library directory are all done,
+   arriving through `SessionConfig` or `Source`, so the constructor no
+   longer reaches past its caller for anything. Custody is now the *only*
    reason a `content://` book cannot remember where the reader was. Sequenced here because it is
    the same shape work as §2's remaining piece and lands in the same pass,
    and because the accessibility finding constrains what the first C ABI

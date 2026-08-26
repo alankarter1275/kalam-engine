@@ -319,6 +319,17 @@ pub struct SessionConfig {
     /// to fetch, and the whole TLS stack is out of the build.
     #[cfg(feature = "opds")]
     pub transport: Option<Arc<dyn HttpClient>>,
+    /// Where the library, the managed book copies, the covers and the PSE
+    /// page cache live. `None` asks
+    /// [`Library::default_dir`](chapbook_library::Library::default_dir),
+    /// which knows the convention for each desktop platform and refuses to
+    /// guess anywhere else.
+    ///
+    /// A sandboxed host knows its own answer and nothing else can: Android
+    /// hands an app `context.getFilesDir()`, iOS wants
+    /// `Library/Application Support`, and a browser has no filesystem at
+    /// all. None of those are reachable through an environment variable.
+    pub library_dir: Option<std::path::PathBuf>,
 }
 
 impl SessionConfig {
@@ -328,6 +339,7 @@ impl SessionConfig {
             credentials: Arc::new(NoCredentials),
             #[cfg(feature = "opds")]
             transport: None,
+            library_dir: None,
         }
     }
 
@@ -342,13 +354,20 @@ impl SessionConfig {
         self.transport = Some(transport);
         self
     }
+
+    /// Keep the library somewhere this host chose.
+    pub fn with_library_dir(mut self, dir: impl Into<std::path::PathBuf>) -> SessionConfig {
+        self.library_dir = Some(dir.into());
+        self
+    }
 }
 
 impl std::fmt::Debug for SessionConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut out = f.debug_struct("SessionConfig");
         out.field("fonts", &self.fonts)
-            .field("credentials", &"<dyn CredentialStore>");
+            .field("credentials", &"<dyn CredentialStore>")
+            .field("library_dir", &self.library_dir);
         #[cfg(feature = "opds")]
         out.field(
             "transport",
@@ -566,11 +585,24 @@ impl Session {
             credentials,
             #[cfg(feature = "opds")]
             transport,
+            library_dir,
         } = config;
-        let mut library =
-            chapbook_library::Library::open(&chapbook_library::Library::default_dir())
+
+        // Resolved once, and used for the library and the page cache both.
+        // A platform with no default is not a failure to open a book: the
+        // session reads on without a library, exactly as it does when the
+        // database itself cannot be opened.
+        let library_dir = match library_dir {
+            Some(dir) => Some(dir),
+            None => chapbook_library::Library::default_dir()
+                .map_err(|e| eprintln!("chapbook: {e}"))
+                .ok(),
+        };
+        let mut library = library_dir.as_ref().and_then(|dir| {
+            chapbook_library::Library::open(dir)
                 .map_err(|e| eprintln!("chapbook: library unavailable: {e}"))
-                .ok();
+                .ok()
+        });
 
         let (book, book_id, start_spine, pending_offset, same_edition): (
             OpenBook,
@@ -591,7 +623,15 @@ impl Session {
                     // per-user API key, and a catalog that moves its path must
                     // not lose its login. See `chapbook_core::credential`.
                     let key = chapbook_core::CredentialKey::http_origin(source);
-                    let cache = chapbook_library::Library::default_dir().join("pse-cache");
+                    // Unlike the library, a page stream cannot do without
+                    // this: every page is a fetch that has to land somewhere.
+                    let Some(cache) = library_dir.as_ref().map(|dir| dir.join("pse-cache")) else {
+                        return Err(chapbook_core::ChapbookError::Library(
+                            "no library location for the page cache; pass \
+                         SessionConfig::with_library_dir"
+                                .into(),
+                        ));
+                    };
                     let store = credentials.as_ref();
 
                     // One transport, however many clients the auth flow needs.

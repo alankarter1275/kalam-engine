@@ -41,9 +41,9 @@
 //! ```
 //!
 //! For [`Check::PositionSurvivesARestart`] the closure must reopen the
-//! *same* library — the position is persisted, so a factory that points
-//! `CHAPBOOK_LIBRARY_DIR` at a fresh temporary directory each call cannot
-//! observe it. That check reports [`Outcome::Skipped`] rather than failing
+//! *same* library — the position is persisted, so a factory that hands
+//! `SessionConfig::with_library_dir` a fresh temporary directory each call
+//! cannot observe it. That check reports [`Outcome::Skipped`] rather than failing
 //! when the book has no library record at all.
 //!
 //! The harness only ever calls the public API. It is written to be read as
@@ -53,8 +53,8 @@
 //!
 //! It is not read-only. Checking that a position survives a restart means
 //! saving one, so a run moves the stored reading position for the book it
-//! is pointed at — give the factory a scratch `CHAPBOOK_LIBRARY_DIR` if
-//! that is not welcome.
+//! is pointed at — give the factory a scratch `with_library_dir` if that
+//! is not welcome.
 
 use std::fmt;
 use std::time::{Duration, Instant};

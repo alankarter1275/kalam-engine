@@ -11,8 +11,8 @@
 //!
 //! Note that this reads and writes the real library, because
 //! `PositionSurvivesARestart` has to: it moves the saved reading position
-//! for the book you point it at. Set `CHAPBOOK_LIBRARY_DIR` to a scratch
-//! directory if that matters.
+//! for the book you point it at. Pass `SessionConfig::with_library_dir` a
+//! scratch directory if that matters.
 
 use std::time::Duration;
 

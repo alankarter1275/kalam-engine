@@ -90,12 +90,17 @@ since none of these failures announce themselves. `session.font_families()`
 lists what the session can match, which is what a font-family picker needs.
 
 Opening also imports or matches the book in the library, which is how
-step 5 has somewhere to put a position. The library lives under
-`CHAPBOOK_LIBRARY_DIR` when that is set and in the XDG data directory
-otherwise; if it cannot be opened at all, the session says so on stderr
-and reads on without one. A shell that wants no library — a preview pane,
-a test — should point that variable at a scratch directory rather than
-look for a switch, because there isn't one.
+step 5 has somewhere to put a position. Say where it lives with
+`SessionConfig::with_library_dir`; leaving it unset asks
+`Library::default_dir()`, which is `$CHAPBOOK_LIBRARY_DIR` when set, else
+each desktop platform's own convention — the XDG data directory on Linux,
+`~/Library/Application Support` on macOS, `%APPDATA%` on Windows. Anywhere
+with no such convention (Android, iOS, wasm, a daemon with no `HOME`) it
+is an error rather than a guess, because the guess it used to make was a
+relative path and a library in whatever directory the process started in.
+If the library cannot be opened at all the session says so on stderr and
+reads on without one. A shell that wants no library — a preview pane, a
+test — points `with_library_dir` at a scratch directory.
 
 ## 2. Metrics
 

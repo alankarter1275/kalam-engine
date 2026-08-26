@@ -12,11 +12,6 @@ use std::path::{Path, PathBuf};
 use chapbook_core::{BookKind, Format, Source};
 use chapbook_reader::{Session, SessionConfig};
 
-/// Path sources reach the library, which is keyed off a process-global env
-/// var. Bytes and handles do not, but the lock is cheap and the tests are
-/// clearer for not having to say which is which.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn fixture(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures")
@@ -43,11 +38,11 @@ fn scratch(name: &str) -> PathBuf {
 /// Open with an isolated library, so a path source cannot pick up a
 /// position another test stored.
 fn open(source: impl Into<Source>, name: &str) -> chapbook_core::Result<Session> {
-    let guard = ENV_LOCK.lock().unwrap();
     let dir = scratch(name);
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
-    let opened = Session::open_with(source, SessionConfig::new(fixture_fonts()));
-    drop(guard);
+    let opened = Session::open_with(
+        source,
+        SessionConfig::new(fixture_fonts()).with_library_dir(&dir),
+    );
     let _ = std::fs::remove_dir_all(&dir);
     opened
 }

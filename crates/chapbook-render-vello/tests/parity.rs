@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 
 use chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
-use chapbook_reader::Session;
+use chapbook_reader::{Session, SessionConfig};
 use chapbook_render_vello::{RenderedPage, VelloRenderer};
 
 fn fixture(rel: &str) -> String {
@@ -52,9 +52,11 @@ fn session(name: &str, source: &str) -> Session {
     let dir =
         std::env::temp_dir().join(format!("chapbook-vello-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    // Safety: these tests are single-threaded per process for this reason.
-    unsafe { std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir) };
-    Session::open(source, fixture_fonts()).unwrap()
+    Session::open_with(
+        source,
+        SessionConfig::new(fixture_fonts()).with_library_dir(&dir),
+    )
+    .unwrap()
 }
 
 /// `None` when the machine has no adapter at all — the test then skips.

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chapbook_reader::conformance::{self, Check, Harness, Outcome};
-use chapbook_reader::Session;
+use chapbook_reader::{Session, SessionConfig};
 
 fn fixture(rel: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -19,10 +19,6 @@ fn fixture(rel: &str) -> String {
         .to_string_lossy()
         .into_owned()
 }
-
-/// The library dir is process-global env, and tests run in parallel: hold
-/// the lock across set-and-open, exactly as `tests/session.rs` does.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// A factory the harness can call repeatedly. Each call reopens the *same*
 /// library dir, which is what `PositionSurvivesARestart` needs in order to
@@ -46,11 +42,11 @@ fn factory(name: &'static str, source: String) -> impl FnMut() -> Session {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     move || {
-        let guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
-        let session = Session::open(&source, fixture_fonts()).unwrap();
-        drop(guard);
-        session
+        Session::open_with(
+            source.as_str(),
+            SessionConfig::new(fixture_fonts()).with_library_dir(&dir),
+        )
+        .unwrap()
     }
 }
 

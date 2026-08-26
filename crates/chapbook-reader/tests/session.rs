@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use chapbook_core::{BookKind, EdgeSizes, PageMetrics, Rotation, Size};
-use chapbook_reader::Session;
+use chapbook_reader::{Session, SessionConfig};
 
 fn fixture(rel: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,14 +14,12 @@ fn fixture(rel: &str) -> String {
         .into_owned()
 }
 
-/// Each test gets its own library dir: tests run in parallel threads and
-/// the env var is process-global, so serialize env mutation behind a lock
-/// and only touch the var while holding it.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Open a session against a per-test library dir. The env var is
-/// process-global and tests run in parallel, so the set-and-open pair
-/// holds a lock.
+/// Open a session against a per-test library dir.
+///
+/// This used to set `CHAPBOOK_LIBRARY_DIR` behind a mutex, because the only
+/// way to place a library was a process-global variable and these tests run
+/// in parallel. `SessionConfig::with_library_dir` is an argument, so the
+/// lock is gone and so is the serialization.
 fn open_isolated(name: &str, source: &str) -> Session {
     open_library(name, source, true)
 }
@@ -43,18 +41,23 @@ fn reopen_isolated(name: &str, source: &str) -> Session {
 }
 
 fn open_library(name: &str, source: &str, fresh: bool) -> Session {
-    let guard = ENV_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!(
-        "chapbook-session-test-{}-{name}",
-        std::process::id()
-    ));
+    let dir = library_dir(name);
     if fresh {
         let _ = std::fs::remove_dir_all(&dir);
     }
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
-    let session = Session::open(source, fixture_fonts()).unwrap();
-    drop(guard);
-    session
+    Session::open_with(
+        source,
+        SessionConfig::new(fixture_fonts()).with_library_dir(dir),
+    )
+    .unwrap()
+}
+
+/// A library dir of this test's own, stable across a reopen.
+fn library_dir(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "chapbook-session-test-{}-{name}",
+        std::process::id()
+    ))
 }
 
 /// Drive the async load path to completion: render (queues the load),
@@ -1102,12 +1105,11 @@ fn a_session_can_move_between_threads() {
 /// than a corner.
 #[test]
 fn a_session_with_no_faces_is_refused_at_construction() {
-    let guard = ENV_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("chapbook-fontless-{}", std::process::id()));
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
     let empty = chapbook_core::FontSource::embedded("/nonexistent/fonts", "Nothing");
-    let result = Session::open(&fixture("epub/minimal.epub"), empty);
-    drop(guard);
+    let result = Session::open_with(
+        fixture("epub/minimal.epub"),
+        SessionConfig::new(empty).with_library_dir(library_dir("fontless")),
+    );
 
     let err = result.err().expect("a fontless session must not open");
     let message = err.to_string();
@@ -1132,34 +1134,26 @@ fn the_session_can_enumerate_the_families_it_was_given() {
 }
 
 /// The host capabilities a session used to reach for on its own now arrive
-/// through `SessionConfig`. This covers the plumbing; the OPDS credential
-/// flow itself is not reachable from a test yet, because `Session` still
-/// builds its own `ureq` transport rather than taking one (docs/FFI.md,
-/// step 2). When the transport becomes injectable, the retry path in
-/// `open_with` is the thing to test here.
+/// through `SessionConfig`. This covers the plumbing; the credential retry
+/// flow itself lives in `transport.rs`, which can drive it now that the
+/// transport is injectable too.
 #[test]
 fn a_session_takes_its_host_capabilities_explicitly() {
     use chapbook_core::{Credential, CredentialKey, CredentialStore, Freshness, MemoryCredentials};
-    use chapbook_reader::SessionConfig;
 
-    let guard = ENV_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!(
-        "chapbook-session-test-{}-config",
-        std::process::id()
-    ));
-    std::env::set_var("CHAPBOOK_LIBRARY_DIR", &dir);
-
+    let dir = library_dir("config");
     let store = std::sync::Arc::new(MemoryCredentials::new());
     let key = CredentialKey::http_origin("https://cat.example.com/opds/abc123secret/").unwrap();
     store
         .store(&key, &Credential::basic("reader", "pw"))
         .unwrap();
 
-    let config = SessionConfig::new(fixture_fonts()).with_credentials(store.clone());
+    let config = SessionConfig::new(fixture_fonts())
+        .with_credentials(store.clone())
+        .with_library_dir(&dir);
     // A store in the config is not a store the local path consults.
     let session = Session::open_with(fixture("epub/minimal.epub"), config).unwrap();
     assert!(session.spine_len() > 0);
-    drop(guard);
 
     // And the config's Debug is safe to log: no secret in it.
     let shown = format!("{:?}", SessionConfig::new(fixture_fonts()));
