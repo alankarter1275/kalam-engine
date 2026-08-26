@@ -255,13 +255,13 @@ impl Library {
                 let name = format!("{id}.{}", cover_extension(&cover.media_type));
                 let path = self.covers_dir.join(name);
                 std::fs::write(&path, &cover.data)
-                    .map_err(|e| eprintln!("chapbook: keeping no cover for #{id}: {e}"))
+                    .map_err(|e| log::warn!("keeping no cover for #{id}: {e}"))
                     .ok()
                     .map(|()| path)
             }
             Ok(None) => None,
             Err(e) => {
-                eprintln!("chapbook: keeping no cover for #{id}: {e}");
+                log::warn!("keeping no cover for #{id}: {e}");
                 None
             }
         };

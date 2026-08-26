@@ -46,6 +46,7 @@ _image-book = []
 
 [dependencies]
 chapbook-core = { workspace = true }
+log = { workspace = true }
 chapbook-epub = { workspace = true }
 chapbook-cbz = { workspace = true, optional = true }
 chapbook-pdf = { workspace = true, optional = true }

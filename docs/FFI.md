@@ -602,6 +602,8 @@ text at all. Accessibility is deferred and owes this boundary nothing.
 unreachable, the missing generic-family mappings, the absent log seam, the
 unbounded caches, and conformance needing an opener rather than a handle are
 all properties of `chapbook-reader`, found on Android and true everywhere.
+(All but the last are now fixed; the log seam is the `log` crate, which was
+already in the graph, so the engine gained a voice for no new dependency.)
 iOS should confirm them in passing, not rediscover them.
 
 **The dependency graph is identical to Linux's.** `cargo tree --target
@@ -1304,9 +1306,11 @@ cleanup. That is right about the dependency and wrong about the order:
    which is this document's second NDK prerequisite), typed sources (done),
    the library directory (still reached for behind the caller's back),
    `render_into` (done), a cache budget and `release_caches` (done),
-   `suspend()` (done), and the optional `library` feature — which is all
-   that is left, besides the log seam. The constructor work is finished:
-   every capability arrives through `SessionConfig` or `Source`. All of it tested in the workspace,
+   `suspend()` (done), the log seam (done — the `log` crate, plus
+   `chapbook_core::log_to_stderr` for shells that want a terminal), and the
+   optional `library` feature, which is all that is left. The constructor
+   work is finished: every capability arrives through `SessionConfig` or
+   `Source`. All of it tested in the workspace,
    none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
    by evidence instead of by guessing. The wasm32 CI check lands here, once
    there is something for it to prove.

@@ -30,6 +30,9 @@ use chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
 use chapbook_reader::Session;
 
 fn main() {
+    // The engine reports through `log` so a device shell can route it
+    // somewhere a person will look; a terminal shell wants stderr.
+    chapbook_core::log_to_stderr();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let gpu = args.iter().any(|a| a == "--gpu");
     let Some(source) = args.into_iter().find(|a| !a.starts_with("--")) else {

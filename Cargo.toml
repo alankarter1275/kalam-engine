@@ -142,6 +142,10 @@ arboard = { version = "3", default-features = false, features = [
 libc = "0.2"
 slotmap = "1"
 thiserror = "2"
+# Diagnostics. Already in the graph via cosmic-text and fontdb, so the
+# engine gaining a voice costs no new dependency — and every host has a
+# backend already: android_logger, oslog, console_log, env_logger.
+log = "0.4"
 clap = { version = "4", features = ["derive"] }
 
 # Dev

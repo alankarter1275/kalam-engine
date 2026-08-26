@@ -107,6 +107,9 @@ fn parse_theme(s: &str) -> Result<chapbook_core::Theme, String> {
 }
 
 fn main() -> ExitCode {
+    // The engine reports through `log`; a dev CLI wants it on stderr where
+    // the rest of its output already goes.
+    chapbook_core::log_to_stderr();
     let cli = Cli::parse();
     let print = |result: chapbook_core::Result<String>| -> ExitCode {
         match result {

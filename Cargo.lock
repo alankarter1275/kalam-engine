@@ -499,6 +499,7 @@ dependencies = [
 name = "chapbook-core"
 version = "0.1.0"
 dependencies = [
+ "log",
  "thiserror 2.0.20",
 ]
 
@@ -548,6 +549,7 @@ name = "chapbook-library"
 version = "0.1.0"
 dependencies = [
  "chapbook-core",
+ "log",
  "rusqlite",
  "sha1",
 ]
@@ -603,6 +605,7 @@ dependencies = [
  "chapbook-render-tinyskia",
  "cosmic-text",
  "image",
+ "log",
 ]
 
 [[package]]

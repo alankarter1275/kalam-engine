@@ -447,11 +447,11 @@ fn authorize(
         }
         CredentialLookup::Missing => false,
         CredentialLookup::Locked => {
-            eprintln!("chapbook: credentials for {key} are stored but locked right now");
+            log::warn!("credentials for {key} are stored but locked right now");
             false
         }
         CredentialLookup::Failed(reason) => {
-            eprintln!("chapbook: credential store failed for {key}: {reason}");
+            log::warn!("credential store failed for {key}: {reason}");
             false
         }
     }
@@ -637,12 +637,12 @@ impl Session {
         let library_dir = match library_dir {
             Some(dir) => Some(dir),
             None => chapbook_library::Library::default_dir()
-                .map_err(|e| eprintln!("chapbook: {e}"))
+                .map_err(|e| log::warn!("reading without a library: {e}"))
                 .ok(),
         };
         let mut library = library_dir.as_ref().and_then(|dir| {
             chapbook_library::Library::open(dir)
-                .map_err(|e| eprintln!("chapbook: library unavailable: {e}"))
+                .map_err(|e| log::warn!("library unavailable: {e}"))
                 .ok()
         });
 
@@ -764,10 +764,7 @@ impl Session {
                                 book.publication().spine(),
                                 |i| unit_locator_text(book.publication(), i),
                             );
-                            eprintln!(
-                                "chapbook: resuming at unit {} ({tier:?})",
-                                locator.spine_index + 1
-                            );
+                            log::info!("resuming at unit {} ({tier:?})", locator.spine_index + 1);
                             (locator.spine_index, Some(locator.char_offset))
                         }
                         _ => (0, None),
@@ -783,7 +780,7 @@ impl Session {
         let stored = match (&library, book_id) {
             (Some(lib), Some(id)) => lib
                 .annotations(id)
-                .map_err(|e| eprintln!("chapbook: failed to read annotations: {e}"))
+                .map_err(|e| log::warn!("failed to read annotations: {e}"))
                 .unwrap_or_default()
                 .into_iter()
                 .map(|a| {
@@ -941,7 +938,7 @@ impl Session {
                     );
                 }
                 Err(message) => {
-                    eprintln!("chapbook: page {} failed to load: {message}", spine + 1);
+                    log::error!("page {} failed to load: {message}", spine + 1);
                     self.load_errors.insert(spine, message);
                 }
             }
@@ -1152,7 +1149,7 @@ impl Session {
             return;
         };
         if let Err(e) = library.clear_reading_settings(id) {
-            eprintln!("chapbook: failed to clear book settings: {e}");
+            log::error!("failed to clear book settings: {e}");
             return;
         }
         let settings = library.effective_settings(None);
@@ -1190,7 +1187,7 @@ impl Session {
             },
         };
         if let Err(e) = library.set_reading_settings(target, &settings) {
-            eprintln!("chapbook: failed to save settings: {e}");
+            log::error!("failed to save settings: {e}");
         }
     }
 
@@ -1544,7 +1541,7 @@ impl Session {
             .library
             .as_mut()?
             .add_annotation(book_id, AnnotationKind::Bookmark, &start, None, None, None)
-            .map_err(|e| eprintln!("chapbook: failed to save bookmark: {e}"))
+            .map_err(|e| log::error!("failed to save bookmark: {e}"))
             .ok()?;
         let spine = self.spine;
         self.stored.push(StoredAnnotation {
@@ -1572,7 +1569,7 @@ impl Session {
             .library
             .as_mut()?
             .add_annotation(book_id, kind, &start_loc, Some(&end_loc), Some(text), None)
-            .map_err(|e| eprintln!("chapbook: failed to save annotation: {e}"))
+            .map_err(|e| log::error!("failed to save annotation: {e}"))
             .ok()?;
         let spine = self.spine;
         let text = Some(text.to_string());
@@ -1670,7 +1667,7 @@ impl Session {
     pub fn set_highlight_color(&mut self, id: i64, color: Option<&str>) {
         if let Some(library) = self.library_mut() {
             if let Err(e) = library.set_annotation_color(id, color) {
-                eprintln!("chapbook: failed to recolor annotation: {e}");
+                log::error!("failed to recolor annotation: {e}");
                 return;
             }
         }
@@ -1711,7 +1708,7 @@ impl Session {
     pub fn remove_annotation(&mut self, id: i64) {
         if let Some(library) = self.library_mut() {
             if let Err(e) = library.delete_annotation(id) {
-                eprintln!("chapbook: failed to delete annotation: {e}");
+                log::error!("failed to delete annotation: {e}");
                 return;
             }
         }
@@ -2137,7 +2134,7 @@ impl Session {
             self.suspended = false;
             if let Some(dir) = &self.library_dir {
                 self.library = chapbook_library::Library::open(dir)
-                    .map_err(|e| eprintln!("chapbook: library unavailable after resume: {e}"))
+                    .map_err(|e| log::warn!("library unavailable after resume: {e}"))
                     .ok();
             }
         }
@@ -2407,7 +2404,7 @@ impl Session {
             return;
         };
         if let Err(e) = library.set_position(id, &locator) {
-            eprintln!("chapbook: failed to save position: {e}");
+            log::error!("failed to save position: {e}");
         }
     }
 

@@ -203,6 +203,16 @@ rather than at the next page turn. Eviction never drops the unit on screen,
 and everything else is re-read and re-decoded on demand, so the only cost of
 a small budget is a slower page-back.
 
+**Diagnostics.** The engine reports through the `log` crate and installs no
+backend, so by default it says nothing. Install one early — `android_logger`,
+`oslog`, `console_log`, `env_logger`, whatever the platform already has — or
+call `chapbook_core::log_to_stderr()` for a terminal. Records carry the
+emitting crate as their target, so `chapbook_reader` and `chapbook_library`
+filter apart. `error` means something the reader asked for did not happen or
+state was lost; `warn` means degraded but nothing lost; `info` is worth
+knowing and not a problem. A session at rest is silent — nothing is logged
+per frame or per page turn.
+
 **Lifecycle.** `session.release_caches()` gives back everything but the page
 on screen — call it when the platform warns about memory. `session.suspend()`
 is the stronger one: persist the position, close the database, drop the
