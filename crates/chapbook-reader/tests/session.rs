@@ -1572,3 +1572,69 @@ mod lifecycle {
         );
     }
 }
+
+/// A restored position lands in `frame()`, because an offset cannot become
+/// a page until the unit has laid out. Nothing obliges a shell to paint
+/// before it navigates, though — a batched turn, or the conformance
+/// harness, walks with no frame in between — and the restore was then
+/// applied to whatever unit the reader had reached by the time one
+/// arrived, resolving one chapter's offset against another chapter's
+/// pages and moving the reader without being asked.
+///
+/// Found by the Android spike, but nothing about it is Android: running
+/// `examples/conform` twice against the same library failed the second
+/// time, because the first run left a position for the second to restore.
+/// "The end of the book stands still" was the check that broke — a
+/// `frame()` there moved the reader backwards, and the turn that had just
+/// refused then worked.
+///
+/// Swept over stopping points rather than aimed at one, because whether a
+/// misapplied offset is *visible* depends on where it happens to land: an
+/// offset from unit 4 resolved against unit 9 sometimes names the page the
+/// reader was already on. The bug is the same either way, so the test
+/// asks the invariant at every stop instead of picking a lucky one.
+#[test]
+fn a_restore_does_not_follow_the_reader_into_another_unit() {
+    let source = fixture("corpus/accessible_epub_3.epub");
+    let saved = {
+        let mut s = open_isolated("restore-follows", &source);
+        s.set_metrics(metrics());
+        for _ in 0..6 {
+            s.next_page();
+            let _ = s.frame();
+        }
+        let at = s.position();
+        assert!(at.spine > 0 || at.page > 0, "moved off the first page");
+        s.save_position();
+        at
+    };
+
+    // One session per stopping point: the pending restore is consumed by
+    // the first frame, so each session affords exactly one observation.
+    for turns in 1..40 {
+        let mut s = reopen_isolated("restore-follows", &source);
+        s.set_metrics(metrics());
+        assert_eq!(s.spine(), saved.spine, "reopened in the restored unit");
+
+        // Walk without ever painting, so the restore is still pending.
+        for _ in 0..turns {
+            if !s.next_page() {
+                break;
+            }
+        }
+        let before = s.position();
+        if before.spine == saved.spine {
+            continue; // still in the restored unit: landing there is correct
+        }
+
+        let _ = s.frame();
+        assert_eq!(
+            s.position(),
+            before,
+            "after {turns} turns, a pending restore from unit {} moved the \
+             reader inside unit {}",
+            saved.spine,
+            before.spine
+        );
+    }
+}

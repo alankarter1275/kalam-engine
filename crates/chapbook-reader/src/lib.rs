@@ -260,7 +260,16 @@ pub struct Session {
     spine: usize,
     page: usize,
     /// Restored char offset, turned into a page once the unit lays out.
-    pending_offset: Option<u32>,
+    ///
+    /// Paired with the unit it was captured in, and *only* applied while
+    /// the reader is still there. A restore lands in `frame()`, because
+    /// the offset cannot become a page until the unit has laid out, and
+    /// nothing obliges a shell to paint before it navigates: a batched
+    /// turn, or a harness, can walk the whole book first. Unpaired, the
+    /// offset then resolved against whatever unit the reader had reached
+    /// and moved them backwards inside it — see
+    /// `a_restore_does_not_follow_the_reader_into_another_unit`.
+    pending_offset: Option<(usize, u32)>,
     /// Worker for image-book units (comics, PDFs); `None` for EPUBs.
     #[cfg(feature = "_image-book")]
     loader: Option<Loader>,
@@ -315,8 +324,9 @@ pub struct Session {
     /// jumps push; ordinary page turns don't.
     back_stack: Vec<Locator>,
     /// Fragment to land on once the target unit has laid out — the
-    /// anchor-flavored sibling of `pending_offset`.
-    pending_anchor: Option<String>,
+    /// anchor-flavored sibling of `pending_offset`, unit-paired for the
+    /// same reason.
+    pending_anchor: Option<(usize, String)>,
 }
 
 /// The library's handle on the open book.
@@ -899,7 +909,7 @@ impl Session {
             registered_fonts: HashSet::new(),
             spine: start_spine,
             page: 0,
-            pending_offset,
+            pending_offset: pending_offset.map(|offset| (start_spine, offset)),
             #[cfg(feature = "_image-book")]
             loader,
             loaded_units: HashMap::new(),
@@ -1405,8 +1415,8 @@ impl Session {
         let same_unit = spine == self.spine;
         self.spine = spine;
         self.page = 0;
-        self.pending_offset = offset;
-        self.pending_anchor = anchor;
+        self.pending_offset = offset.map(|offset| (spine, offset));
+        self.pending_anchor = anchor.map(|anchor| (spine, anchor));
         self.selection = None;
         self.mark(if same_unit {
             FrameIntent::PageTurn
@@ -2029,19 +2039,26 @@ impl Session {
         self.metrics?;
         // Resolve a restored offset, or a jump's anchor, once the unit
         // has laid out.
-        if let Some(fragment) = self.pending_anchor.take() {
-            let spine = self.spine;
-            match self.layout_unit(spine) {
-                Some(layout) => {
-                    // A fragment that isn't in the unit lands at its start.
-                    self.page = layout.anchors.get(&fragment).copied().unwrap_or(0);
+        // Both of these are dropped rather than deferred once the reader
+        // has left the unit they were captured in. A pending landing is a
+        // statement about one unit, and the reader having navigated away
+        // supersedes it — carrying it along would resolve an offset from
+        // one chapter against the pages of another.
+        if let Some((spine, fragment)) = self.pending_anchor.take() {
+            if spine == self.spine {
+                match self.layout_unit(spine) {
+                    Some(layout) => {
+                        // A fragment that isn't in the unit lands at its start.
+                        self.page = layout.anchors.get(&fragment).copied().unwrap_or(0);
+                    }
+                    None => self.pending_anchor = Some((spine, fragment)),
                 }
-                None => self.pending_anchor = Some(fragment),
             }
         }
-        if let Some(offset) = self.pending_offset {
-            let spine = self.spine;
-            if let Some(layout) = self.layout_unit(spine) {
+        if let Some((spine, offset)) = self.pending_offset {
+            if spine != self.spine {
+                self.pending_offset = None;
+            } else if let Some(layout) = self.layout_unit(spine) {
                 self.page = layout.page_of(offset);
                 self.pending_offset = None;
             }
