@@ -35,11 +35,15 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    resolve_in_text, BookKind, CredentialStore, FontReport, FontSource, Format, LayeredLocator,
-    Locator, NoCredentials, PageMetrics, PixelFormat, Point, Publication, ReadingSettings, Rect,
-    Result, Rgba, Rotation, Source, SpineItem, TocEntry,
+    BookKind, CredentialStore, FontReport, FontSource, Format, Locator, NoCredentials, PageMetrics,
+    PixelFormat, Point, Publication, ReadingSettings, Rect, Result, Rotation, Source, TocEntry,
 };
+// Annotations are the only thing that captures a locator, resolves one
+// against unit text, or paints a stored colour.
+#[cfg(feature = "library")]
+use chapbook_core::{resolve_in_text, LayeredLocator, Rgba, SpineItem};
 use chapbook_layout::{cascade, dom, ChapterLayout};
+#[cfg(feature = "library")]
 use chapbook_library::AnnotationKind;
 use chapbook_paint::{Frame, FrameIntent, ImageStore, Selection};
 
@@ -49,6 +53,7 @@ use chapbook_paint::{Frame, FrameIntent, ImageStore, Selection};
 // in, and the bundled CPU backend.
 pub use chapbook_core;
 // Annotation kinds and library records surface in this crate's own API.
+#[cfg(feature = "library")]
 pub use chapbook_library;
 pub use chapbook_paint;
 pub use chapbook_render_tinyskia;
@@ -135,6 +140,9 @@ pub struct SearchHit {
     pub match_range: (u32, u32),
 }
 
+// Annotations are the library's: without a place to store them there
+// is nothing for these to describe. See the `library` feature.
+#[cfg(feature = "library")]
 /// A stored highlight resolved into the open book's locator space.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Highlight {
@@ -150,6 +158,7 @@ pub struct Highlight {
     pub color: Option<String>,
 }
 
+#[cfg(feature = "library")]
 /// One stored annotation as recorded — enough to list every mark in a book
 /// without resolving any of them against unit text.
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +175,7 @@ pub struct AnnotationSummary {
     pub color: Option<String>,
 }
 
+#[cfg(feature = "library")]
 /// An annotation as the library stores it, plus where it lands in this
 /// book's spine. Resolution into offsets waits for the unit's text.
 struct StoredAnnotation {
@@ -185,7 +195,8 @@ struct StoredAnnotation {
 }
 
 /// Book-wide char counts around the current unit — what
-/// [`LayeredLocator::capture`] needs beyond the offset itself.
+/// `LayeredLocator::capture` needs beyond the offset itself.
+#[cfg(feature = "library")]
 struct UnitCharContext {
     /// The current unit's locator text.
     text: String,
@@ -264,21 +275,28 @@ pub struct Session {
     waker: WakerCell,
     /// Selection anchor and cursor as locator offsets (unordered).
     selection: Option<(u32, u32)>,
+    #[cfg(feature = "library")]
     library: Option<chapbook_library::Library>,
     /// Where the library lives, so [`Session::suspend`] can close it and a
     /// later access can open it again.
+    #[cfg(feature = "library")]
     library_dir: Option<std::path::PathBuf>,
     /// Set by [`Session::suspend`]: the database is deliberately closed and
     /// the next access should reopen rather than treat `None` as "this
     /// platform has no library".
+    #[cfg(feature = "library")]
     suspended: bool,
-    book_id: Option<chapbook_library::BookId>,
+    #[cfg(feature = "library")]
+    book_id: OpenedBookId,
     /// Annotations as stored, awaiting resolution against unit text.
+    #[cfg(feature = "library")]
     stored: Vec<StoredAnnotation>,
     /// Resolved per unit, cached: the locator space of a unit doesn't move
     /// under relayout, so this survives font-size and theme changes.
+    #[cfg(feature = "library")]
     resolved_highlights: HashMap<usize, Vec<Highlight>>,
     /// The open file is the edition the positions were captured against.
+    #[cfg(feature = "library")]
     same_edition: bool,
     /// Handed out for units with no images of their own, so
     /// [`Session::image_store`] can return a reference either way.
@@ -300,6 +318,16 @@ pub struct Session {
     /// anchor-flavored sibling of `pending_offset`.
     pending_anchor: Option<String>,
 }
+
+/// The library's handle on the open book.
+///
+/// `Option<Infallible>` without the `library` feature: always `None`, zero
+/// sized, and impossible to construct — so the open path keeps one shape
+/// instead of growing a `cfg` at every step that merely passes it along.
+#[cfg(feature = "library")]
+type OpenedBookId = Option<chapbook_library::BookId>;
+#[cfg(not(feature = "library"))]
+type OpenedBookId = Option<std::convert::Infallible>;
 
 /// What a session keeps cached when the host does not say.
 ///
@@ -634,21 +662,26 @@ impl Session {
         // A platform with no default is not a failure to open a book: the
         // session reads on without a library, exactly as it does when the
         // database itself cannot be opened.
+        #[cfg(feature = "library")]
         let library_dir = match library_dir {
             Some(dir) => Some(dir),
             None => chapbook_library::Library::default_dir()
                 .map_err(|e| log::warn!("reading without a library: {e}"))
                 .ok(),
         };
+        #[cfg(not(feature = "library"))]
+        let _ = library_dir;
+        #[cfg(feature = "library")]
         let mut library = library_dir.as_ref().and_then(|dir| {
             chapbook_library::Library::open(dir)
                 .map_err(|e| log::warn!("library unavailable: {e}"))
                 .ok()
         });
 
+        #[cfg_attr(not(feature = "library"), allow(unused_variables))]
         let (book, book_id, start_spine, pending_offset, same_edition): (
             OpenBook,
-            Option<chapbook_library::BookId>,
+            OpenedBookId,
             usize,
             Option<u32>,
             bool,
@@ -739,7 +772,16 @@ impl Session {
                 let path = source_path.as_path();
                 let book = book_at_path(format_of_path(path), path)?;
 
+                // Matching a book into the library, restoring where the
+                // reader was, and importing it if it is new: all of it is
+                // the library's, and without one the book simply opens at
+                // the beginning.
+                #[cfg(not(feature = "library"))]
+                let (book_id, start_spine, pending_offset, same_edition) = (None, 0, None, true);
+
+                #[cfg(feature = "library")]
                 let mut same_edition = true;
+                #[cfg(feature = "library")]
                 let book_id = library.as_mut().and_then(|lib| {
                     let fingerprint = chapbook_library::Library::fingerprint_of_file(path).ok()?;
                     if let Ok(Some(id)) = lib.find_by_fingerprint(&fingerprint) {
@@ -755,6 +797,7 @@ impl Session {
                     lib.import(path, book.publication()).ok()
                 });
 
+                #[cfg(feature = "library")]
                 let (start_spine, pending_offset) = match (&library, book_id) {
                     (Some(lib), Some(id)) => match lib.position(id) {
                         Ok(Some(stored)) => {
@@ -777,6 +820,7 @@ impl Session {
 
         // Highlights load with the book; endpoints resolve lazily, per
         // unit, once that unit's locator text is available.
+        #[cfg(feature = "library")]
         let stored = match (&library, book_id) {
             (Some(lib), Some(id)) => lib
                 .annotations(id)
@@ -827,11 +871,15 @@ impl Session {
             )
         });
         // The book's override if it has one, else the reader's default,
-        // else the built-in defaults.
+        // else the built-in defaults. Without a library there is nowhere
+        // for an override to have been stored, so the defaults it is.
+        #[cfg(feature = "library")]
         let settings = library
             .as_ref()
             .map(|lib| lib.effective_settings(book_id))
             .unwrap_or_default();
+        #[cfg(not(feature = "library"))]
+        let settings = ReadingSettings::default();
 
         let (fonts, font_report) = chapbook_layout::build_font_system(&fonts)?;
 
@@ -860,12 +908,19 @@ impl Session {
             placeholders: HashSet::new(),
             waker,
             selection: None,
+            #[cfg(feature = "library")]
             library,
+            #[cfg(feature = "library")]
             library_dir,
+            #[cfg(feature = "library")]
             suspended: false,
+            #[cfg(feature = "library")]
             book_id,
+            #[cfg(feature = "library")]
             stored,
+            #[cfg(feature = "library")]
             resolved_highlights: HashMap::new(),
+            #[cfg(feature = "library")]
             same_edition,
             empty_images: ImageStore::default(),
             pending: FrameIntent::default(),
@@ -1143,6 +1198,7 @@ impl Session {
 
     /// Drop this book's override so it follows the reader's default again,
     /// applying that default now.
+    #[cfg(feature = "library")]
     pub fn clear_book_settings(&mut self) {
         let book_id = self.book_id;
         let (Some(library), Some(id)) = (self.library_mut(), book_id) else {
@@ -1173,21 +1229,28 @@ impl Session {
     }
 
     fn persist_settings(&mut self, scope: SettingsScope) {
-        let book_id = self.book_id;
-        let settings = self.settings.clone();
-        let Some(library) = self.library_mut() else {
-            return;
-        };
-        let target = match scope {
-            SettingsScope::Global => None,
-            // No library record, nothing to hang an override on.
-            SettingsScope::ThisBook => match book_id {
-                Some(id) => Some(id),
-                None => return,
-            },
-        };
-        if let Err(e) = library.set_reading_settings(target, &settings) {
-            log::error!("failed to save settings: {e}");
+        // Settings still apply; there is simply nowhere to write them
+        // down, so they last as long as the session does.
+        #[cfg(not(feature = "library"))]
+        let _ = scope;
+        #[cfg(feature = "library")]
+        {
+            let book_id = self.book_id;
+            let settings = self.settings.clone();
+            let Some(library) = self.library_mut() else {
+                return;
+            };
+            let target = match scope {
+                SettingsScope::Global => None,
+                // No library record, nothing to hang an override on.
+                SettingsScope::ThisBook => match book_id {
+                    Some(id) => Some(id),
+                    None => return,
+                },
+            };
+            if let Err(e) = library.set_reading_settings(target, &settings) {
+                log::error!("failed to save settings: {e}");
+            }
         }
     }
 
@@ -1520,6 +1583,7 @@ impl Session {
     /// id. `None` without a text selection, without a library (OPDS
     /// streams have no local record), or on a comic — no text layer, so
     /// nothing to anchor to.
+    #[cfg(feature = "library")]
     pub fn add_highlight(&mut self) -> Option<i64> {
         self.add_ranged(AnnotationKind::Highlight, None)
     }
@@ -1527,12 +1591,14 @@ impl Session {
     /// Attach a note to the current selection. The quoted text is kept as
     /// the annotation's text, the note body as its own record — a note is a
     /// highlight that says something.
+    #[cfg(feature = "library")]
     pub fn add_note(&mut self, body: &str) -> Option<i64> {
         self.add_ranged(AnnotationKind::Note, Some(body))
     }
 
     /// Bookmark the current page. A point, not a range, so it needs no
     /// selection — but it does need a text unit to anchor in.
+    #[cfg(feature = "library")]
     pub fn add_bookmark(&mut self) -> Option<i64> {
         let offset = self.current_offset();
         let (start, _) = self.capture_endpoints(offset, offset)?;
@@ -1558,6 +1624,7 @@ impl Session {
         Some(id)
     }
 
+    #[cfg(feature = "library")]
     fn add_ranged(&mut self, kind: AnnotationKind, body: Option<&str>) -> Option<i64> {
         let (start, end) = self.selected_range()?;
         let quote = self.selected_text()?;
@@ -1601,6 +1668,7 @@ impl Session {
 
     /// Every mark in the book, as stored — no unit text is read, so this
     /// is cheap enough for a list. Ordered by position in the book.
+    #[cfg(feature = "library")]
     pub fn annotations(&self) -> Vec<AnnotationSummary> {
         let mut all: Vec<AnnotationSummary> = self
             .stored
@@ -1626,6 +1694,7 @@ impl Session {
     /// cached. Empty while that text is unavailable — an image book's unit
     /// resolves only once its page has loaded. Bookmarks are points and
     /// paint nothing, so they aren't here.
+    #[cfg(feature = "library")]
     pub fn highlights(&mut self, spine: usize) -> &[Highlight] {
         if !self.resolved_highlights.contains_key(&spine) {
             // Extracting a unit's text is not free; skip it entirely when
@@ -1648,6 +1717,7 @@ impl Session {
     /// The stored highlight under a point in panel coordinates — what a
     /// tap needs to select, recolor, or delete one by touching it. Only
     /// inside the marked text, like a link.
+    #[cfg(feature = "library")]
     pub fn highlight_at(&mut self, x: f32, y: f32) -> Option<i64> {
         let (px, py) = self.metrics.map_or((x, y), |m| m.panel_to_page(x, y));
         let (spine, page) = (self.spine, self.page);
@@ -1664,6 +1734,7 @@ impl Session {
 
     /// Recolor a highlight. `None` hands it back to the theme color.
     /// Colors are `#rgb`, `#rrggbb`, or `#rrggbbaa`.
+    #[cfg(feature = "library")]
     pub fn set_highlight_color(&mut self, id: i64, color: Option<&str>) {
         if let Some(library) = self.library_mut() {
             if let Err(e) = library.set_annotation_color(id, color) {
@@ -1687,6 +1758,7 @@ impl Session {
     }
 
     /// Jump to a stored annotation. `false` if its unit can't be read.
+    #[cfg(feature = "library")]
     pub fn goto_annotation(&mut self, id: i64) -> bool {
         let Some((target, start)) = self
             .stored
@@ -1705,6 +1777,7 @@ impl Session {
     }
 
     /// Delete an annotation (a soft delete in the library, kept for sync).
+    #[cfg(feature = "library")]
     pub fn remove_annotation(&mut self, id: i64) {
         if let Some(library) = self.library_mut() {
             if let Err(e) = library.delete_annotation(id) {
@@ -1724,6 +1797,7 @@ impl Session {
         }
     }
 
+    #[cfg(feature = "library")]
     fn resolve_highlights(&self, spine: usize, text: &str) -> Vec<Highlight> {
         self.stored
             .iter()
@@ -1748,6 +1822,7 @@ impl Session {
     }
 
     /// Full layered locators for a selection's endpoints.
+    #[cfg(feature = "library")]
     fn capture_endpoints(&self, start: u32, end: u32) -> Option<(LayeredLocator, LayeredLocator)> {
         let href = self
             .book
@@ -1801,6 +1876,7 @@ impl Session {
 
     /// Char counts around the current unit, extracted over the whole
     /// spine. One pass serves any number of captures in the same unit.
+    #[cfg(feature = "library")]
     fn unit_char_context(&self) -> UnitCharContext {
         let mut ctx = UnitCharContext {
             text: String::new(),
@@ -1824,6 +1900,7 @@ impl Session {
     // ---- Rendering ----
 
     /// The extent of a resolved highlight on the current page.
+    #[cfg(feature = "library")]
     fn highlight_range(&self, id: i64) -> Option<(u32, u32)> {
         self.resolved_highlights
             .get(&self.spine)?
@@ -1854,6 +1931,7 @@ impl Session {
     /// highlight landing while a selection is live must not lose its
     /// region just because `Annotation` outranks `Selection` — both name
     /// where they changed, so the frame reports the union of the two.
+    #[cfg(feature = "library")]
     fn mark_range(&mut self, intent: FrameIntent, start: u32, end: u32) {
         match self.range_damage(start, end) {
             Some(region) => self.mark_rect(intent, region),
@@ -1865,6 +1943,8 @@ impl Session {
 
     /// Record a change confined to a region the engine already knows in
     /// page coordinates, rather than one it has to derive from locators.
+    // Highlights state a region, and so does a page image arriving.
+    #[cfg(any(feature = "library", feature = "_image-book"))]
     fn mark_rect(&mut self, intent: FrameIntent, region: Rect) {
         self.pending = self.pending.max(intent);
         if self.pending_damage.unstated {
@@ -1878,6 +1958,7 @@ impl Session {
 
     /// The area a locator range covers on the current page, or `None` when
     /// it lies on another page and so disturbs nothing here.
+    #[cfg(feature = "library")]
     fn range_damage(&self, start: u32, end: u32) -> Option<Rect> {
         let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
         page.rects_for_range(start, end)
@@ -1967,7 +2048,13 @@ impl Session {
         }
         let (spine, page_idx) = (self.spine, self.page);
         // Stored highlights first, the live selection on top of them.
+        // Without a library nothing is stored, so the live selection is
+        // the only thing that paints.
+        #[cfg(not(feature = "library"))]
+        let mut selections: Vec<Selection> = Vec::new();
+        #[cfg(feature = "library")]
         let highlight_color = self.settings.theme.highlight();
+        #[cfg(feature = "library")]
         let mut selections: Vec<Selection> = self
             .highlights(spine)
             .iter()
@@ -2090,6 +2177,7 @@ impl Session {
         self.images.retain(|spine, _| *spine == pinned);
         self.loaded_units.retain(|spine, _| *spine == pinned);
         self.placeholders.retain(|spine| *spine == pinned);
+        #[cfg(feature = "library")]
         self.resolved_highlights.retain(|spine, _| *spine == pinned);
         self.used_at.retain(|spine, _| *spine == pinned);
     }
@@ -2119,8 +2207,13 @@ impl Session {
     pub fn suspend(&mut self) {
         self.save_position();
         self.release_caches();
-        self.library = None;
-        self.suspended = true;
+        // Without a library there is no connection to let go of, and
+        // nothing was lazily written that needs flushing first.
+        #[cfg(feature = "library")]
+        {
+            self.library = None;
+            self.suspended = true;
+        }
     }
 
     /// The library, reopened if [`suspend`](Self::suspend) closed it.
@@ -2129,6 +2222,7 @@ impl Session {
     /// were told to let go of it" and "this platform has no library" stay
     /// distinguishable — both are `None` in the field and only one should
     /// be retried.
+    #[cfg(feature = "library")]
     fn library_mut(&mut self) -> Option<&mut chapbook_library::Library> {
         if self.suspended {
             self.suspended = false;
@@ -2373,38 +2467,43 @@ impl Session {
     /// Capture the position as a full layered locator and persist it.
     /// Comics persist page-unit progression (see `chapbook_core::locator`).
     pub fn save_position(&mut self) {
-        let Some(id) = self.book_id else {
-            return;
-        };
-        let offset = self
-            .layouts
-            .get(&self.spine)
-            .and_then(|l| l.char_map.get(self.page).copied())
-            .unwrap_or(0);
-        let Ok(item) = self.book.publication().spine_item(self.spine) else {
-            return;
-        };
-        let href = item.href.clone();
-        let locator = match self.book.publication().kind() {
-            BookKind::Epub => {
-                let ctx = self.unit_char_context();
-                LayeredLocator::capture(&href, self.spine, &ctx.text, offset, ctx.prior, ctx.total)
+        #[cfg(feature = "library")]
+        {
+            let Some(id) = self.book_id else {
+                return;
+            };
+            let offset = self
+                .layouts
+                .get(&self.spine)
+                .and_then(|l| l.char_map.get(self.page).copied())
+                .unwrap_or(0);
+            let Ok(item) = self.book.publication().spine_item(self.spine) else {
+                return;
+            };
+            let href = item.href.clone();
+            let locator = match self.book.publication().kind() {
+                BookKind::Epub => {
+                    let ctx = self.unit_char_context();
+                    LayeredLocator::capture(
+                        &href, self.spine, &ctx.text, offset, ctx.prior, ctx.total,
+                    )
+                }
+                // Image books: the progression unit is pages.
+                BookKind::Comic | BookKind::Pdf => LayeredLocator::capture(
+                    &href,
+                    self.spine,
+                    "",
+                    0,
+                    self.spine as u64,
+                    self.book.publication().spine().len() as u64,
+                ),
+            };
+            let Some(library) = self.library_mut() else {
+                return;
+            };
+            if let Err(e) = library.set_position(id, &locator) {
+                log::error!("failed to save position: {e}");
             }
-            // Image books: the progression unit is pages.
-            BookKind::Comic | BookKind::Pdf => LayeredLocator::capture(
-                &href,
-                self.spine,
-                "",
-                0,
-                self.spine as u64,
-                self.book.publication().spine().len() as u64,
-            ),
-        };
-        let Some(library) = self.library_mut() else {
-            return;
-        };
-        if let Err(e) = library.set_position(id, &locator) {
-            log::error!("failed to save position: {e}");
         }
     }
 

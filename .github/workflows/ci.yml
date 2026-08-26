@@ -66,12 +66,17 @@ jobs:
     # `opds` without `ureq` is the device shape — OPDS parsing with the
     # host's own transport and no TLS stack in the build — so it is listed
     # alongside `opds,ureq` rather than only implied by the default build.
+    #
+    # The empty entry is now the EPUB-only profile: no library, and so no
+    # rusqlite and no bundled SQLite. It is the smallest thing chapbook
+    # builds and the one a browser forces.
     name: check (chapbook-reader feature matrix)
     runs-on: ubuntu-latest
     strategy:
       matrix:
         features:
           - ""
+          - "library"
           - "cbz"
           - "pdf"
           - "opds"
@@ -79,6 +84,7 @@ jobs:
           - "cbz,pdf"
           - "cbz,opds"
           - "pdf,opds"
+          - "library,cbz,pdf"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
@@ -86,6 +92,28 @@ jobs:
           toolchain: ${{ env.RUST_PIN }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
+
+  wasm-profile:
+    # The EPUB-only profile — no library, no loader thread, no networking —
+    # checked for wasm32. Not a build: no linker, no wasm-bindgen, no Node.
+    #
+    # What it catches is narrow, and worth saying, because a job that looks
+    # like it proves more than it does is worse than no job. It does *not*
+    # prove SQLite is gone: `chapbook-library` compiles for wasm32 perfectly
+    # well and merely fails to work, which is why the `library` feature
+    # exists and why the dependency count is the evidence there. What this
+    # catches is a new ambient dependency quietly closing the door — an
+    # `std::fs` call, an `Instant::now`, a thread spawned on the EPUB path.
+    name: check (wasm32, EPUB-only profile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p chapbook-reader --no-default-features --target wasm32-unknown-unknown
 
   licenses:
     # chapbook is MIT OR Apache-2.0, but the graph is not uniformly either —

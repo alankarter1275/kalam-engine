@@ -16,14 +16,23 @@ authors.workspace = true
 # third-party crates to 196, and takes the entire TLS stack (rustls, ring,
 # webpki) and the entire PDF stack (hayro plus its JBIG2, JPEG2000, CCITT
 # and PostScript decoders) out of the build.
-default = ["cbz", "pdf", "opds", "ureq"]
+default = ["library", "cbz", "pdf", "opds", "ureq"]
+# The local bookshelf: imported books, reading positions, annotations,
+# saved catalogs. Off, the session reads but remembers nothing — every book
+# opens at the beginning and marks cannot be stored — and rusqlite and
+# bundled SQLite leave the build with it. That is the profile a browser
+# forces, since there is no filesystem for a database to live in, and the
+# one a stripped e-ink build wants.
+library = ["dep:chapbook-library"]
 # Local CBZ comic archives.
 cbz = ["dep:chapbook-cbz", "_comic", "_image-book"]
 # PDF, rasterized by hayro, with its extracted text layer.
 pdf = ["dep:chapbook-pdf", "_image-book"]
 # OPDS catalogs and OPDS-PSE streamed comics. This is the only feature
 # that brings in networking.
-opds = ["dep:chapbook-opds", "_comic", "_image-book"]
+# Requires `library`: a page stream caches to disk, and the directory it
+# caches into is the library's.
+opds = ["dep:chapbook-opds", "library", "_comic", "_image-book"]
 # The bundled desktop transport, and the only thing that pulls in a TLS
 # stack. `opds` without this is the configuration a host with its own
 # networking wants — iOS `URLSession`, Android `WorkManager`, WASM `fetch` —
@@ -53,7 +62,7 @@ chapbook-pdf = { workspace = true, optional = true }
 chapbook-opds = { workspace = true, optional = true, default-features = false }
 chapbook-layout = { workspace = true }
 chapbook-paint = { workspace = true }
-chapbook-library = { workspace = true }
+chapbook-library = { workspace = true, optional = true }
 chapbook-render-tinyskia = { workspace = true }
 cosmic-text = { workspace = true }
 image = { workspace = true }

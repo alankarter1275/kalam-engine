@@ -1308,9 +1308,9 @@ cleanup. That is right about the dependency and wrong about the order:
    `render_into` (done), a cache budget and `release_caches` (done),
    `suspend()` (done), the log seam (done — the `log` crate, plus
    `chapbook_core::log_to_stderr` for shells that want a terminal), and the
-   optional `library` feature, which is all that is left. The constructor
-   work is finished: every capability arrives through `SessionConfig` or
-   `Source`. All of it tested in the workspace,
+   optional `library` feature (done). Step 2 is complete: every capability
+   arrives through `SessionConfig` or `Source`, and every profile the
+   device targets need is a feature away. All of it tested in the workspace,
    none of it FFI. This is PLATFORM §2's session-lifecycle item, arrived at
    by evidence instead of by guessing. The wasm32 CI check lands here, once
    there is something for it to prove.
@@ -1370,6 +1370,18 @@ build wants, which is the second reason to define it whether or not a browser
 ever runs it. Concretely it implies a `library` feature on `chapbook-reader`,
 default on, that a device or browser build turns off.
 
+**Done, and measured.** `--no-default-features` is the EPUB-only profile:
+250 dependency edges against 259 with the library and 313 for the default
+build, with `rusqlite` and `libsqlite3-sys` — a C build, not just a crate —
+gone entirely. Without it a session reads but remembers nothing: every book
+opens at the beginning, marks cannot be stored, and settings last as long as
+the session does. Those are the honest consequences of having nowhere to
+write, not degradations to apologise for.
+
+`opds` requires `library`, which is worth stating because it is not obvious:
+a page stream caches to disk, and the directory it caches into is the
+library's.
+
 The argument against was never the port, it was that a browser build becomes a
 fourth target to keep green forever. The answer to that is proportion: **check
 it in CI, do not ship it from CI.** A `cargo check --target
@@ -1378,8 +1390,10 @@ wasm-bindgen and no Node, and it catches exactly the regressions that would
 quietly close the door — a new ambient `std::fs` call, an `Instant::now`, a
 thread. Building and deploying the page itself stays manual and occasional.
 
-That job should land *with* the optional-library work and not before. Today it
-would pass while proving nothing, because `chapbook-library` compiles for
+That job landed with the optional-library work, and its comment says what it
+does and does not prove — because the concern below was right and does not go
+away just because the feature exists. It would pass while proving nothing about
+SQLite, because `chapbook-library` compiles for
 wasm32 perfectly well and merely fails to work — and this repo has already
 been bitten once by a CI job that ran happily and checked nothing.
 
