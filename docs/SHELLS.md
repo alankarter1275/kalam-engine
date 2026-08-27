@@ -136,7 +136,8 @@ The verbs below are the direct route and stay supported. Above them sits
   and **`Session::apply(action)`** applies one, returning the same
   did-anything-move `bool` the verbs below do. Translate your platform's
   events into an `Action` and a binding is written once rather than once
-  per shell.
+  per shell. `Action` is `#[non_exhaustive]`: bookmarks and a jump to the
+  table of contents are plainly coming, so match with a fallback arm.
 - **`KeyMap`** is the default binding table, and it already knows what no
   desktop shell has ever exercised: `Key::TurnPrev`/`TurnNext` are the
   bezel buttons on a Kobo or a PocketBook, and the volume keys Android

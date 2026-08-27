@@ -336,6 +336,15 @@ for unmodified presses only. Leaving them out is also the choice that keeps
 `KeyMap::action`'s signature addable-to later, which the Contract tier
 cares about more than the convenience does.
 
+**`Action` and `Key` are `#[non_exhaustive]`.** Not a decision so much as
+the admission that they close only if every reader intent is guessed up
+front; bookmarks, search and a jump to the table of contents are plainly
+coming. The attribute is what makes those additive later, and adding it
+later would itself have been a break, so it goes in while there is one
+caller outside the tests. It also matches what `Action::from_name`
+returning `Option` already asks of the string path: a host ignores what it
+does not recognise.
+
 **Arrow keys are bound logically, not physically**, so `ArrowRight` is the
 next page in an RTL book too. The two conventions cannot both be the
 default and neither is obviously right; this one at least agrees with what

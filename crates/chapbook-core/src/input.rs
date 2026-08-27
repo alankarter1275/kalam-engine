@@ -27,7 +27,14 @@ use crate::page::PageMetrics;
 /// reader's chrome belongs to the shell — and it is here because deciding
 /// *that the middle of the page opens the menu* is the same policy
 /// decision as deciding the other two thirds turn pages.
+///
+/// `#[non_exhaustive]`, because this set closes only if every reader
+/// intent is guessed up front — bookmarks, search, a jump to the table
+/// of contents are all plainly coming. A host matches with a fallback
+/// arm, which is what [`Action::from_name`] returning `Option` already
+/// asks of the string path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Action {
     /// Forward one page in reading order.
     NextPage,
@@ -196,7 +203,12 @@ impl TapZones {
 /// shell — they are where an app's own commands live, and an engine that
 /// claimed `Ctrl` would collide with every one of them. Consult the map
 /// for unmodified presses only.
+///
+/// `#[non_exhaustive]`: a device with a button nobody here has held is
+/// always possible, so a host matches with a fallback arm and ignores
+/// what it does not recognise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Key {
     ArrowLeft,
     ArrowRight,

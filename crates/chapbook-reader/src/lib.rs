@@ -1324,6 +1324,9 @@ impl Session {
                 true
             }
             Action::ToggleMenu => false,
+            // `Action` is `#[non_exhaustive]`. An intent this engine has
+            // no verb for is one the shell may still want to act on.
+            _ => false,
         }
     }
 
