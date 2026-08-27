@@ -313,6 +313,18 @@ typedef void (*cb_log_fn)(cb_log_level level, const char *target, const char *me
  * The page box, in logical units, plus the scale that turns it into
  * device pixels. Laying out at logical size and rasterizing at device
  * size is what keeps text a readable size on a dense panel.
+ *
+ * **`width` and `height` are the page in *reading* orientation, not the
+ * panel you paint into.** They are the same thing only while `rotation`
+ * is `CB_ROTATION_NONE`. On a quarter or three-quarter turn the axes
+ * swap, so a host with a 600x800 view that wants a turned page passes
+ * 800x600 here and gets 600x800 back from `cb_session_render_size`.
+ *
+ * Passing the view's own dimensions on a turn is not an error and will
+ * not be reported as one: the page simply paginates to the wrong aspect,
+ * and because you allocate from `cb_session_render_size` there is no
+ * mismatch left for anything to catch. Rotation is a property of the
+ * output; it must never change what the text reflows to.
  */
 typedef struct cb_metrics {
     float width;

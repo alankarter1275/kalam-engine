@@ -1567,7 +1567,7 @@ from a path, from bytes or from a file descriptor; metrics, navigation,
 position; title and book kind; settings; `render_size` and `render_into`;
 `suspend`, `release_caches` and the cache numbers; the font report; the
 waker with `poll_loaded`; and the log sink. The six boundary questions
-above were answered by the spike, so most of this was transcription. Seven
+above were answered by the spike, so most of this was transcription. Eight
 things were not.
 
 **The last-error string cannot hang off the session, and the reason is the
@@ -1653,12 +1653,60 @@ having. Verified the way the rest of it was: a C program with no Rust in it
 watching `chapbook_reader: library unavailable: Not a directory` arrive from
 inside the engine.
 
+**`cb_rotation` shipped in the header before anyone had turned it.** Every
+case in `tests/abi.rs` set `CB_ROTATION_NONE`, so a knob the header
+advertises had never been exercised from C in any language — and
+`render_into` takes a *different* path for a turned page, through a
+temporary copied row by row. Rotation was covered below the boundary
+(`chapbook-paint`'s unit tests, the session's own turned-panel test, and
+the conformance harness's `RotationIsNotAReflow`, which ran on a device at
+rung 4) and not across it. It is now: a quarter turn, `render_size`
+swapping 600x800 to 800x600, the page count unmoved, the rotated copy path
+writing real pixels, and the unrotated buffer refused rather than
+half-filled.
+
+The header also never said the thing a host most needs to know, which is
+that `cb_metrics.width`/`height` are the page in **reading** orientation
+rather than the panel. A 600x800 view wanting a turned page passes
+800x600. Getting that backwards is not an error and is not reported as
+one — the page just paginates to the wrong aspect, and since the host
+allocates from `render_size` there is no mismatch left for anything to
+catch. That is the same "sent to look in the wrong place" failure as the
+`render_into` status above, and it is now a paragraph in the struct's
+comment. Comment-only, so no ABI surface moved, but the header is a golden
+and the diff is one every downstream host reads.
+
 **What is deliberately not in it.** The display list, for the reasons
 already given. Search, the table of contents, links and annotations, for a
 different one: Contract tier means what ships holds still, so the first
 header carries what five rungs on a real device actually demonstrated a
 reader needs. Every one of those is additive later and none is blocked by
-anything here. The file-descriptor door is `#[cfg(unix)]` — a descriptor is
+anything here.
+
+**And the input model, which is the one worth writing down** — it was
+built after this list and so was missing from it, which left a host unable
+to tell "considered and excluded" from "forgotten". Excluded, and by the
+same argument that produced the rest of the header: the first cut carries
+what real rungs demonstrated, and the input model has been demonstrated on
+zero of them. One desktop shell drives it, and a desktop shell cannot
+exercise the bezel buttons `Key::TurnPrev`/`TurnNext` exist for, and did
+not exercise reading direction until the book started declaring it.
+`chapbook-jni` sits on `chapbook-reader` rather than on this ABI —
+deliberately, because JNI is already a C ABI — so Android can drive the
+whole model and report defects without the header moving. That layering
+was chosen for a different reason and pays here.
+
+The cost is real and belongs on the record: iOS *is* a C ABI consumer, so
+until this crosses, a Swift host hardcodes thirds the way `ReaderView.kt`
+does today. One release of that is the price of not freezing a shape
+nothing has held. When it crosses, the shape is roughly `cb_action` and
+`cb_key` enums, a `cb_tap_zones` struct with a **free**
+`cb_tap_action_at` — it needs no session, which is unlike every other
+entry point here and worth knowing before it is written — a single
+`cb_key_default_action` rather than an opaque mutable keymap, since the
+value is the default table and not the mutability, `cb_session_apply`
+returning a `cb_action_outcome`, and `cb_session_back`/`can_go_back`,
+which the ABI does not have today. The file-descriptor door is `#[cfg(unix)]` — a descriptor is
 what Android and iOS hand out, and Windows has no analogue worth guessing at
 from this side of the boundary.
 

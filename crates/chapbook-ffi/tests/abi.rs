@@ -321,6 +321,86 @@ fn a_book_opens_paginates_and_turns() {
 }
 
 #[test]
+fn a_quarter_turn_swaps_the_buffer_and_leaves_the_pagination_alone() {
+    // Until this test, `cb_rotation` was a knob no caller in any language
+    // had ever turned across the boundary: every case in this file set
+    // `CB_ROTATION_NONE`, and `cb_session_render_into` takes a different
+    // path for a turned page — through a temporary, copied row by row.
+    let session = open("rotate", "epub/minimal.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+
+    let (mut w, mut h) = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_render_size(session, &mut w, &mut h) },
+        cb_status::CB_OK
+    );
+    assert_eq!((w, h), (600, 800), "the page box, unrotated");
+    let mut upright_pages = 0usize;
+    assert_eq!(
+        unsafe { cb_session_page_count(session, &mut upright_pages) },
+        cb_status::CB_OK
+    );
+
+    // Same page box, quarter turn. `width`/`height` stay in *reading*
+    // orientation — that is what the header now says in as many words —
+    // so this is deliberately the same 600x800 as above.
+    let turned = cb_metrics {
+        rotation: cb_rotation::CB_ROTATION_QUARTER,
+        ..metrics()
+    };
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, turned) },
+        cb_status::CB_OK
+    );
+    assert_eq!(
+        unsafe { cb_session_render_size(session, &mut w, &mut h) },
+        cb_status::CB_OK
+    );
+    assert_eq!((w, h), (800, 600), "the axes swap on the way out");
+
+    // And the text did not reflow to fit the panel: rotation is a
+    // property of the output. A host that saw the page count move here
+    // would be looking at a locator bug, not a paint one.
+    let mut turned_pages = 0usize;
+    assert_eq!(
+        unsafe { cb_session_page_count(session, &mut turned_pages) },
+        cb_status::CB_OK
+    );
+    assert_eq!(turned_pages, upright_pages, "a turn is not a relayout");
+
+    let stride = w as usize * 4;
+    let mut surface = vec![0u8; stride * h as usize];
+    assert_eq!(
+        unsafe {
+            cb_session_render_into(session, surface.as_mut_ptr(), surface.len(), w, h, stride)
+        },
+        cb_status::CB_OK
+    );
+    assert!(
+        surface.iter().any(|b| *b != 0),
+        "the rotated copy path actually wrote something"
+    );
+    assert_eq!(
+        &surface[0..4],
+        &[255, 255, 255, 255],
+        "top-left is still opaque paper after the turn"
+    );
+
+    // The buffer the *unrotated* size would have asked for is now the
+    // wrong shape, and has to be refused rather than half-filled.
+    let mut wrong = vec![0u8; 600 * 4 * 800];
+    assert_eq!(
+        unsafe { cb_session_render_into(session, wrong.as_mut_ptr(), wrong.len(), 600, 800, 2400) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
 fn pixels_come_back_in_a_buffer_the_caller_owns() {
     let session = open("pixels", "epub/illustrated.epub");
     assert_eq!(
