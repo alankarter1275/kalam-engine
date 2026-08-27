@@ -3,9 +3,9 @@
 //! The unit tests in `src/source.rs` build zip headers by hand, which
 //! proves the arithmetic and not much else — a hand-built header is a
 //! restatement of the code that reads it. This runs the same function over
-//! real archives from real producers (Standard Ebooks, the EPUB 3 samples,
-//! the CBZ fixtures, a PDF) and is the test that would actually catch a
-//! wrong offset.
+//! real archives — the checked-in fixtures always, and the downloaded
+//! corpus (Standard Ebooks, the EPUB 3 samples) under `--ignored` — and is
+//! the test that would actually catch a wrong offset.
 
 use std::path::{Path, PathBuf};
 
@@ -50,9 +50,16 @@ fn assert_all(paths: &[PathBuf], expected: Format) {
 
 #[test]
 fn every_epub_fixture_is_recognised_as_one() {
-    let mut all = books("epub", "epub");
-    all.extend(books("corpus", "epub"));
-    assert_all(&all, Format::Epub);
+    assert_all(&books("epub", "epub"), Format::Epub);
+}
+
+/// The same question asked of books nobody here produced. Separate and
+/// ignored because `fixtures/corpus/` is a download, not a checked-in
+/// fixture — folded into the test above it made a clean checkout fail.
+#[test]
+#[ignore = "requires fixtures/fetch-corpus.sh"]
+fn every_corpus_book_is_recognised_as_an_epub() {
+    assert_all(&books("corpus", "epub"), Format::Epub);
 }
 
 #[test]

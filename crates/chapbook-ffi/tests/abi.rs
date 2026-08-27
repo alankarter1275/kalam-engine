@@ -529,7 +529,10 @@ fn a_reading_position_survives_a_close_and_reopen() {
         eprintln!("skipped: this build has no library, so nothing persists");
         return;
     }
-    let path = fixture("corpus/accessible_epub_3.epub");
+    // `long.epub`, so six turns land somewhere a reopen has to actually
+    // find again — in a two-page book the position restores correctly by
+    // accident.
+    let path = fixture("epub/long.epub");
     let dir = std::env::temp_dir().join(format!("chapbook-ffi-restore-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("library dir");

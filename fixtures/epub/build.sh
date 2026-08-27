@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Rebuild the checked-in .epub fixtures from their source directories.
 # EPUB requires the `mimetype` entry first and stored (uncompressed).
+#
+# long.epub is not built here and has no source directory: it is generated
+# filler, long enough to paginate, and lives in build-long.py instead.
 set -euo pipefail
 cd "$(dirname "$0")"
 

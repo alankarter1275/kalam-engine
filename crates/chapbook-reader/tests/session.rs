@@ -1593,9 +1593,14 @@ mod lifecycle {
 /// offset from unit 4 resolved against unit 9 sometimes names the page the
 /// reader was already on. The bug is the same either way, so the test
 /// asks the invariant at every stop instead of picking a lucky one.
+///
+/// Reads `long.epub` because the invariant needs units to be wrong about:
+/// eight of them, four to five pages each. It read a corpus book until
+/// that turned out to mean the test only ran for whoever had run
+/// `fixtures/fetch-corpus.sh` — which was nobody in CI.
 #[test]
 fn a_restore_does_not_follow_the_reader_into_another_unit() {
-    let source = fixture("corpus/accessible_epub_3.epub");
+    let source = fixture("epub/long.epub");
     let saved = {
         let mut s = open_isolated("restore-follows", &source);
         s.set_metrics(metrics());
@@ -1637,6 +1642,50 @@ fn a_restore_does_not_follow_the_reader_into_another_unit() {
             before.spine
         );
     }
+}
+
+/// What `long.epub` is for, stated as a test.
+///
+/// The restore sweep above needs a book it can walk out of: several units,
+/// each several pages, and enough pages in total that walking past the end
+/// is reachable. That is a property of a generated fixture, so it can drift
+/// silently when somebody retunes `fixtures/epub/build-long.py` — and the
+/// sweep would not fail, it would just stop covering anything, because
+/// every stop would land in the unit it started in and `continue`.
+#[test]
+fn the_long_book_is_long_enough_to_walk_out_of() {
+    let mut s = open_isolated("long-shape", &fixture("epub/long.epub"));
+    s.set_metrics(metrics());
+
+    let mut pages_in = vec![0usize; s.spine_len()];
+    let mut total = 0usize;
+    loop {
+        let at = s.position();
+        pages_in[at.spine] = at.page + 1;
+        total += 1;
+        assert!(total < 500, "walk did not terminate");
+        if !s.next_page() {
+            break;
+        }
+        let _ = s.frame();
+    }
+
+    assert!(
+        s.spine_len() >= 6,
+        "units to be wrong about: {}",
+        s.spine_len()
+    );
+    assert!(
+        pages_in.iter().all(|&p| p >= 2),
+        "every unit must span pages, or a turn always changes unit: {pages_in:?}"
+    );
+    // The sweep walks up to 39 turns and wants the last of them to pile up
+    // against the end of the book, which is where a misapplied offset was
+    // visible as the end moving.
+    assert!(
+        (12..39).contains(&total),
+        "a book the sweep can both cross and overrun: {total} pages"
+    );
 }
 
 #[test]
