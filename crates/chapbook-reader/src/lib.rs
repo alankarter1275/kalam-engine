@@ -35,8 +35,9 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    BookKind, CredentialStore, FontReport, FontSource, Format, Locator, NoCredentials, PageMetrics,
-    PixelFormat, Point, Publication, ReadingSettings, Rect, Result, Rotation, Source, TocEntry,
+    Action, BookKind, CredentialStore, FontReport, FontSource, Format, Locator, NoCredentials,
+    PageMetrics, PixelFormat, Point, Publication, ReadingSettings, Rect, Result, Rotation, Source,
+    TocEntry,
 };
 // Annotations are the only thing that captures a locator, resolves one
 // against unit text, or paints a stored colour.
@@ -348,6 +349,17 @@ type OpenedBookId = Option<std::convert::Infallible>;
 /// existed the answer was "everything, forever", which measured at 676 MB
 /// after forty pages of a comic with no way to give any of it back.
 pub const DEFAULT_CACHE_BUDGET: usize = 192 * 1024 * 1024;
+
+/// How far one [`Action::FontUp`] or [`Action::FontDown`] moves the base
+/// font size, in CSS px.
+///
+/// The magnitude is the engine's rather than the shell's on purpose: the
+/// action carries a direction and nothing else, so every shell steps by
+/// the same amount and a reader who changes device finds the same ladder.
+/// Two px over the 10–40 range `adjust_font` clamps to is sixteen stops,
+/// which is fine-grained enough to land on a comfortable size and coarse
+/// enough that reaching either end is a few presses.
+pub const FONT_STEP_PX: f32 = 2.0;
 
 /// What a session needs from its host, instead of assuming a desktop.
 ///
@@ -1089,6 +1101,15 @@ impl Session {
         self.layout_unit(spine).map_or(0, |l| l.pages.len())
     }
 
+    /// The page geometry in force, or `None` before a shell has set any.
+    ///
+    /// A shell needs it back to ask [`chapbook_core::TapZones`] what a tap
+    /// means: the zones are fractions of a page, and the rotation they
+    /// undo is here rather than in the shell's own bookkeeping.
+    pub fn metrics(&self) -> Option<PageMetrics> {
+        self.metrics
+    }
+
     /// Set page geometry (window size in CSS px + margins + dpi scale).
     /// A change relayouts, keeping the reading position via the char map.
     pub fn set_metrics(&mut self, metrics: PageMetrics) {
@@ -1261,6 +1282,48 @@ impl Session {
             if let Err(e) = library.set_reading_settings(target, &settings) {
                 log::error!("failed to save settings: {e}");
             }
+        }
+    }
+
+    // ---- Input ----
+
+    /// Apply a reader intent from [`chapbook_core::input`]. Returns
+    /// whether anything changed and the shell should redraw — the same
+    /// answer, and for the same reason, that [`Session::next_page`] gives.
+    ///
+    /// This is the second half of the input seam: shells translate native
+    /// events into an [`Action`] and the engine applies it, so a tap zone
+    /// or a key binding is written once instead of once per platform.
+    ///
+    /// [`Action::ToggleMenu`] is the exception and always returns `false`.
+    /// A reader's chrome belongs to the shell, so there is nothing here to
+    /// toggle; a shell that binds it should match for it before calling
+    /// this, not read the `false` as "nothing happened".
+    pub fn apply(&mut self, action: Action) -> bool {
+        match action {
+            Action::NextPage => self.next_page(),
+            Action::PrevPage => self.prev_page(),
+            Action::NextUnit => self.next_unit(),
+            Action::PrevUnit => self.prev_unit(),
+            Action::Back => self.back(),
+            // `adjust_font` clamps, so at either stop this correctly says
+            // nothing moved rather than asking for a redraw of the same
+            // page at the same size.
+            Action::FontUp | Action::FontDown => {
+                let before = self.settings.base_font_px;
+                let step = if action == Action::FontUp {
+                    FONT_STEP_PX
+                } else {
+                    -FONT_STEP_PX
+                };
+                self.adjust_font(step);
+                self.settings.base_font_px != before
+            }
+            Action::CycleTheme => {
+                self.cycle_theme();
+                true
+            }
+            Action::ToggleMenu => false,
         }
     }
 

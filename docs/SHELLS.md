@@ -29,10 +29,8 @@ let mut session = Session::open(&source, fonts)?;  // 1. open, with fonts
 session.set_metrics(metrics);                      // 2. say how big a page is
 loop {
     // 3. turn input into Session calls
-    match input() {
-        Key::Right => { session.next_page(); }
-        Key::Left  => { session.prev_page(); }
-        _ => {}
+    if let Some(action) = keys.action(engine_key(event)?) {
+        session.apply(action);
     }
     // 4. ask what to draw, and draw it
     if let Some(pixmap) = session.render() {
@@ -129,6 +127,39 @@ reader's place when the page box changed, and it skips the relayout
 entirely when only the rotation did.
 
 ## 3. Input
+
+The verbs below are the direct route and stay supported. Above them sits
+`chapbook_core::input`, which is what to reach for first:
+
+- **`Action`** is the vocabulary — `NextPage`, `PrevPage`, `NextUnit`,
+  `PrevUnit`, `Back`, `FontUp`, `FontDown`, `CycleTheme`, `ToggleMenu` —
+  and **`Session::apply(action)`** applies one, returning the same
+  did-anything-move `bool` the verbs below do. Translate your platform's
+  events into an `Action` and a binding is written once rather than once
+  per shell.
+- **`KeyMap`** is the default binding table, and it already knows what no
+  desktop shell has ever exercised: `Key::TurnPrev`/`TurnNext` are the
+  bezel buttons on a Kobo or a PocketBook, and the volume keys Android
+  readers borrow are bound too. Your job is one function from your
+  platform's key names to `Key`; `bind` and `unbind` adjust the rest.
+- **`TapZones::action_at(x, y, &metrics)`** is the tap policy: three
+  vertical bands in the reading direction, taking *panel* coordinates and
+  undoing the rotation for you, so this is the one hit test you do not
+  have to put through `panel_to_page` yourself.
+
+`ToggleMenu` is the one action `apply` always refuses, because a reader's
+chrome is yours and the engine has none. Match for it before calling, and
+do not read the `false` as "nothing happened".
+
+What is deliberately *not* here is a gesture recognizer. Your platform
+ships a better one than this repo would, and its conventions — fling
+velocity, edge slop, the long-press timeout someone set in accessibility
+settings — are what your app is judged on. Recognize the gesture natively,
+then say what it meant.
+
+`chapbook-viewer-gtk` is the worked example. Its `engine_key` is the whole
+of its keyboard translation, it unbinds `m` because it has no menu to
+toggle, and it gives `TapZones` an inert middle band for the same reason.
 
 Navigation, in rough order of how often a shell wires it up:
 

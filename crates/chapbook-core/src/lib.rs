@@ -12,6 +12,7 @@ mod diagnostics;
 mod error;
 mod font;
 mod geometry;
+mod input;
 mod locator;
 mod page;
 mod panel;
@@ -32,6 +33,7 @@ pub use font::{
     ScriptTag,
 };
 pub use geometry::{EdgeSizes, Point, Rect, Rgba, Size};
+pub use input::{Action, Key, KeyMap, ReadingDirection, TapZones};
 pub use locator::{
     book_progression, find_quote_nearest, resolve_in_text, LayeredLocator, Locator, Quote,
     ResolvedOffset, LOCATOR_VERSION, QUOTE_CONTEXT_CHARS,

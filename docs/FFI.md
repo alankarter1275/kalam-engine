@@ -305,7 +305,84 @@ What *is* shared, and is genuinely engine knowledge:
   A default binding table that already knows about them is the difference
   between porting and reverse-engineering.
 
-Proposed home: `chapbook_core::input`, Contract tier, no event loop, no I/O.
+Home: `chapbook_core::input`, Contract tier, no event loop, no I/O.
+**Built** — all three, as sketched, with ten tests and four decisions the
+sketch did not make.
+
+**Reading direction had to become a type before anything could consult it.**
+The tap-zone bullet says the policy "depends on reading direction, which is
+engine knowledge", and nothing in the workspace had a way to say which one a
+book was: `page-progression-direction` is not parsed, and `Ltr`/`Rtl` appear
+nowhere in core, epub or reader. So `ReadingDirection` is declared here,
+where the only consumer is, with a note that the spine should produce it
+when it learns the attribute — rather than in `book.rs` next to a
+`Publication` that cannot currently fill it in. RTL is one mirrored
+coordinate, not a second set of comparisons, and the test asserts the two
+directions are reflections of each other rather than checking each by hand.
+
+**`action_at` takes panel coordinates, not page coordinates.** The sketch's
+signature is unchanged, but the meaning of `x, y` is the numbers a touch
+event actually carries, and the rotation is undone inside via
+`PageMetrics::panel_to_page` — which already existed, with a doc comment
+saying it is there "so input arrives in the space the page was laid out
+in", and which nothing called. A shell drawing to a turned panel would
+otherwise have had to know to call it, and the failure mode is a reader
+whose page turns are ninety degrees out. That case is a test.
+
+**Modifiers are deliberately absent from `Key`.** Chorded shortcuts are
+where an app's own commands live, and an engine that claimed `Ctrl` would
+collide with every one of them; the rule is that a shell consults the map
+for unmodified presses only. Leaving them out is also the choice that keeps
+`KeyMap::action`'s signature addable-to later, which the Contract tier
+cares about more than the convenience does.
+
+**Arrow keys are bound logically, not physically**, so `ArrowRight` is the
+next page in an RTL book too. The two conventions cannot both be the
+default and neither is obviously right; this one at least agrees with what
+the tap zones resolve to. Written down because it is the kind of decision
+that otherwise gets rediscovered as a bug report.
+
+The vocabulary is short on purpose — every `Key` variant is bound by
+`KeyMap::default`, and a test asserts it, because a name at the Contract
+tier that means nothing anywhere is surface bought for nothing. Writing the
+tests found one defect: a band configured to zero width still claimed the
+last column of the page, because the far edge of a band is inclusive and
+`>= 1.0 - 0.0` is true at `x == w`. Documented as disabled, behaving as
+one-pixel-wide.
+
+**The other half — `Session::apply(Action)` — is done too, and the return
+value is where the design work was.** `apply` gives the same
+did-anything-move `bool` the navigation verbs give, which meant the font
+actions could not simply return `true`: `adjust_font` clamps to 10–40, so
+at either stop a shell would have been told to repaint an identical page
+forever. It compares the size across the call instead. `ToggleMenu` is the
+one action that always returns `false`, and the doc comment says in as many
+words that a shell must not read that as "nothing happened" — the engine has
+no chrome, so the shell is expected to have matched for it first. The step
+size is the engine's rather than each shell's, as `FONT_STEP_PX`, so a
+reader who changes device finds the same ladder.
+
+**`chapbook-viewer-gtk` is the first shell over it**, and converting it is
+what showed the seam pays. Its keyboard handling went from a fourteen-arm
+match on GDK keyval names to `engine_key` — a translation function with no
+opinions in it — plus `KeyMap`, and it gained the arrow-key and Backspace
+bindings it never had by doing nothing. It also gained tap zones, which it
+had none of: a click in the left or right third turns a page now, resolved
+in `drag_end` when the press neither followed a link nor grew into a
+selection. Two places where the shell customizes rather than accepts are
+worth noting as the demonstration that the map is a map: it unbinds `m`,
+because it has no menu, and it gives `TapZones` an inert middle band for
+the same reason.
+
+Converting it also found a small standing bug. The old handler called
+`queue_draw` after every bound key; it now redraws only when `apply` says
+something moved, so the end of the book stops repainting the same page.
+That is the return value the reader has documented since the fbdev shell
+got it wrong, finally being used by the shell that was ignoring it.
+
+What is left is Android: `ReaderView.kt` still divides its width by three
+by hand, and the winit viewer still hand-translates too. Both are step 4
+below.
 
 **Lifecycle — done.** `save_position()` was the right primitive but not the
 right call: a platform needs one that means *you are about to be stopped*.
@@ -1566,12 +1643,16 @@ cleanup. That is right about the dependency and wrong about the order:
    with no Rust toolchain at all.
 4. **`chapbook-android`, and the input model.** The AAR, the demo app, and
    `chapbook_core::input` — which lands here because a touchscreen is where
-   tap zones can actually be judged. *Not started. `chapbook-jni` and the
-   two Gradle modules already exist and stay as they are — see* What became
-   of `chapbook-jni` *— so what is left is the AAR as a published artifact
-   and the input model itself: an `Action` enum, `TapZones::action_at`, and
-   a key map that already knows about Kobo and PocketBook page-turn
-   buttons, replacing `ReaderView`'s hardcoded thirds.*
+   tap zones can actually be judged. *Started. `chapbook-jni` and the two
+   Gradle modules already exist and stay as they are — see* What became of
+   `chapbook-jni` *— and `chapbook_core::input` now exists: `Action`,
+   `ReadingDirection`, `TapZones::action_at`, and a `KeyMap` that already
+   knows about Kobo and PocketBook page-turn buttons — with
+   `Session::apply(Action)` under it and `chapbook-viewer-gtk` converted to
+   both, which is what proves the seam on a real shell before Android has
+   to trust it. What is left is `ReaderView`'s hardcoded thirds replaced by
+   the policy, the winit viewer's hand-translation likewise, and the AAR as
+   a published artifact.*
 5. **The browser demo.** Last, because Android has a user and a demo has an
    audience, and because by this point step 2 has already done all of its
    work for it.

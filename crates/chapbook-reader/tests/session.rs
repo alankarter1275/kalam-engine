@@ -1638,3 +1638,86 @@ fn a_restore_does_not_follow_the_reader_into_another_unit() {
         );
     }
 }
+
+#[test]
+fn actions_route_to_the_verbs_a_shell_would_have_called_by_hand() {
+    use chapbook_core::Action;
+
+    let mut s = open_isolated("epub-apply-nav", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+
+    let start = s.locator();
+    assert!(s.apply(Action::NextPage), "the book has somewhere to go");
+    let after = s.locator();
+    assert_ne!(after, start, "and it went there");
+
+    assert!(s.apply(Action::PrevPage));
+    assert_eq!(s.locator(), start, "back where it started");
+
+    // The honest `false` a shell's redraw check depends on: nothing before
+    // the first page, so nothing moved and nothing needs repainting.
+    assert!(!s.apply(Action::PrevPage), "no page before the first");
+    assert_eq!(s.locator(), start);
+
+    if s.spine_len() > 1 {
+        assert!(s.apply(Action::NextUnit));
+        assert_eq!(s.page(), 0, "a unit skip lands on its first page");
+        assert!(s.apply(Action::PrevUnit));
+    }
+    assert!(!s.apply(Action::PrevUnit), "no unit before the first");
+}
+
+#[test]
+fn font_actions_step_by_the_engines_amount_and_stop_at_the_clamp() {
+    use chapbook_core::Action;
+    use chapbook_reader::FONT_STEP_PX;
+
+    let mut s = open_isolated("epub-apply-font", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+
+    let start = s.settings().base_font_px;
+    assert!(s.apply(Action::FontUp));
+    assert_eq!(s.settings().base_font_px, start + FONT_STEP_PX);
+    assert!(s.apply(Action::FontDown));
+    assert_eq!(s.settings().base_font_px, start, "and back down again");
+
+    // `adjust_font` clamps, so at the stop `apply` has to say nothing
+    // moved rather than ask for a redraw of an identical page. Bounded
+    // well above the number of steps the 10–40 range can hold.
+    let mut steps = 0;
+    while s.apply(Action::FontDown) {
+        steps += 1;
+        assert!(steps < 100, "the clamp never arrived");
+    }
+    let floor = s.settings().base_font_px;
+    assert!(!s.apply(Action::FontDown), "still refused at the floor");
+    assert_eq!(s.settings().base_font_px, floor, "and did not drift");
+    assert!(s.apply(Action::FontUp), "the other direction still moves");
+}
+
+#[test]
+fn cycling_the_theme_is_an_action_and_the_menu_is_not_the_engines() {
+    use chapbook_core::{Action, Theme};
+
+    let mut s = open_isolated("epub-apply-misc", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+
+    let start = s.settings().theme;
+    assert!(s.apply(Action::CycleTheme));
+    assert_eq!(s.settings().theme, start.cycle());
+
+    // Three variants, so the cycle comes home and every step redraws.
+    assert!(s.apply(Action::CycleTheme));
+    assert!(s.apply(Action::CycleTheme));
+    assert_eq!(s.settings().theme, start);
+    assert_eq!(Theme::default().cycle().cycle().cycle(), Theme::default());
+
+    // The engine has no chrome to toggle. `false` here means "not mine",
+    // and the shell is expected to have matched for it first.
+    let before = s.locator();
+    assert!(!s.apply(Action::ToggleMenu));
+    assert_eq!(s.locator(), before, "and it touched nothing on the way");
+}

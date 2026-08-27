@@ -5,16 +5,25 @@
 //! file is GTK plumbing only.
 //!
 //! Sources: an `.epub` or `.cbz` path, or an OPDS URL (page-streamed
-//! comic). Keys match the winit shell: Right/PageDown/space next page ·
-//! Left/PageUp previous · n/p unit · +/- font size · t theme · c copy
-//! selection · h highlight it · b back · q/Escape quit. Mouse press-drag
-//! over text selects; a press on a link follows it.
+//! comic).
+//!
+//! Input goes through `chapbook_core::input` rather than being spelled out
+//! here: this file translates a GDK keyval into a `Key` and a click into a
+//! point, and `KeyMap`/`TapZones` decide what either one means. So the
+//! bindings are the engine's defaults — arrows/PageUp/PageDown/space turn
+//! pages, n/p skip units, +/- size the text, t cycles the theme, b and
+//! Backspace go back — and a Kobo's bezel buttons would already work if
+//! GDK delivered them. Tapping the left or right third turns a page too.
+//!
+//! What stays this shell's own is what is not an `Action`: c copies the
+//! selection, h highlights it, q/Escape quit. Mouse press-drag over text
+//! selects; a press on a link follows it.
 //!
 //! Rendering: the session rasterizes with tiny-skia at device pixels; the
 //! draw func converts premultiplied RGBA → cairo ARGB32 and paints it at
 //! 1/scale so logical (CSS px) coordinates match GTK's.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::cairo;
@@ -22,7 +31,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
+use chapbook_core::{EdgeSizes, Key, KeyMap, PageMetrics, Rotation, Size, TapZones};
 use chapbook_reader::Session;
 
 pub fn run() -> glib::ExitCode {
@@ -123,35 +132,31 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
         let session = session.clone();
         let area = area.downgrade();
         let window_weak = window.downgrade();
+        // This shell has no chrome, so there is nothing to hand
+        // `ToggleMenu` to. Unbinding it is the honest version of leaving
+        // `m` bound to a key press that does nothing.
+        let mut keys = KeyMap::default();
+        keys.unbind(Key::Char('m'));
         let key = gtk::EventControllerKey::new();
         key.connect_key_pressed(move |_, keyval, _, _| {
             let mut s = session.borrow_mut();
-            match keyval.name().as_deref() {
-                Some("Right") | Some("Page_Down") | Some("space") => {
-                    s.next_page();
-                }
-                Some("Left") | Some("Page_Up") => {
-                    s.prev_page();
-                }
-                Some("n") => {
-                    s.next_unit();
-                }
-                Some("p") => {
-                    s.prev_unit();
-                }
-                Some("plus") | Some("equal") => s.adjust_font(2.0),
-                Some("minus") => s.adjust_font(-2.0),
-                Some("t") => s.cycle_theme(),
-                Some("b") => {
-                    s.back();
-                }
+            let name = keyval.name();
+            // Shell-owned keys first, and they are exactly the ones that
+            // are not reading actions: the clipboard, the annotation
+            // store and the window belong to the app. Everything the
+            // engine can do for itself falls through to the key map.
+            let moved = match name.as_deref() {
                 Some("h") => {
                     // The stored highlight replaces the selection that
                     // made it.
                     s.add_highlight();
                     s.selection_clear();
+                    true
                 }
-                Some("Escape") if s.selected_range().is_some() => s.selection_clear(),
+                Some("Escape") if s.selected_range().is_some() => {
+                    s.selection_clear();
+                    true
+                }
                 Some("c") => {
                     // gdk owns the clipboard for us; nothing to redraw.
                     if let (Some(window), Some(text)) = (window_weak.upgrade(), s.selected_text()) {
@@ -167,28 +172,48 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                     }
                     return glib::Propagation::Stop;
                 }
-                _ => return glib::Propagation::Proceed,
-            }
+                name => match name.and_then(engine_key).and_then(|k| keys.action(k)) {
+                    Some(action) => s.apply(action),
+                    None => return glib::Propagation::Proceed,
+                },
+            };
             drop(s);
-            if let Some(area) = area.upgrade() {
-                area.queue_draw();
+            // Repaint only if something changed. That is what `apply`'s
+            // return value is for, and it is why the end of the book no
+            // longer redraws the same page on every press.
+            if moved {
+                if let Some(area) = area.upgrade() {
+                    area.queue_draw();
+                }
             }
             glib::Propagation::Stop
         });
         window.add_controller(key);
     }
 
-    // ---- Selection (press-drag) ----
+    // ---- Links, selection and tap zones (press-drag) ----
     {
-        let session = session.clone();
         let area_weak = area.downgrade();
         let drag = gtk::GestureDrag::new();
         drag.set_button(1);
+        // Set when a press starts a selection rather than following a
+        // link. A press that then never moves is a tap, and `drag_end`
+        // asks the engine what a tap at that point means.
+        let tap = Rc::new(Cell::new(false));
+        // Thirds, with an inert middle: this shell has no menu, so the
+        // band that would open one is bound to nothing rather than to an
+        // action `apply` would refuse.
+        let zones = TapZones {
+            middle: None,
+            ..TapZones::default()
+        };
         {
             let session = session.clone();
             let area_weak = area_weak.clone();
+            let tap = tap.clone();
             drag.connect_drag_begin(move |_, x, y| {
                 let mut s = session.borrow_mut();
+                tap.set(false);
                 // A press on a link follows it rather than starting a
                 // selection there.
                 if let Some(href) = s.link_at(x as f32, y as f32) {
@@ -201,22 +226,65 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                     }
                 }
                 s.selection_begin(x as f32, y as f32);
+                tap.set(true);
                 drop(s);
                 if let Some(area) = area_weak.upgrade() {
                     area.queue_draw();
                 }
             });
         }
-        drag.connect_drag_update(move |gesture, dx, dy| {
-            if let Some((sx, sy)) = gesture.start_point() {
-                session
-                    .borrow_mut()
-                    .selection_drag((sx + dx) as f32, (sy + dy) as f32);
-                if let Some(area) = area_weak.upgrade() {
-                    area.queue_draw();
+        {
+            let session = session.clone();
+            let area_weak = area_weak.clone();
+            drag.connect_drag_update(move |gesture, dx, dy| {
+                if let Some((sx, sy)) = gesture.start_point() {
+                    session
+                        .borrow_mut()
+                        .selection_drag((sx + dx) as f32, (sy + dy) as f32);
+                    if let Some(area) = area_weak.upgrade() {
+                        area.queue_draw();
+                    }
                 }
-            }
-        });
+            });
+        }
+        {
+            let session = session.clone();
+            let area_weak = area_weak.clone();
+            drag.connect_drag_end(move |gesture, dx, dy| {
+                // A press that wandered, or that caught text on the way,
+                // was a selection and the drag handlers already have it.
+                // The slop is a mouse's, not a finger's — a touchscreen
+                // shell wants its platform's own threshold here.
+                const SLOP: f64 = 4.0;
+                if !tap.replace(false) || dx.abs() > SLOP || dy.abs() > SLOP {
+                    return;
+                }
+                let Some((x, y)) = gesture.start_point() else {
+                    return;
+                };
+                let mut s = session.borrow_mut();
+                if s.selected_range().is_some() {
+                    return;
+                }
+                // The press anchored an empty selection; drop it before
+                // turning, so the anchor does not outlive the page.
+                s.selection_clear();
+                // The metrics come back from the session rather than from
+                // this file's own bookkeeping, which is what lets
+                // `action_at` undo a rotation the shell never tracked.
+                let Some(metrics) = s.metrics() else { return };
+                let Some(action) = zones.action_at(x as f32, y as f32, &metrics) else {
+                    return;
+                };
+                let moved = s.apply(action);
+                drop(s);
+                if moved {
+                    if let Some(area) = area_weak.upgrade() {
+                        area.queue_draw();
+                    }
+                }
+            });
+        }
         area.add_controller(drag);
     }
 
@@ -247,4 +315,41 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
     }
 
     window.present();
+}
+
+/// A GDK keyval name in the engine's key vocabulary, or `None` for a key
+/// no reader binds.
+///
+/// The whole of this shell's keyboard translation. What each key *does* is
+/// `KeyMap`'s answer, not this function's, which is the split that lets a
+/// binding be written once instead of once per shell.
+///
+/// `Key::TurnPrev`/`TurnNext` have no case here on purpose: a desktop has
+/// no bezel buttons to deliver, and inventing a GDK name for one would be
+/// a guess. A port to hardware that has them adds two lines here and
+/// changes nothing else.
+fn engine_key(name: &str) -> Option<Key> {
+    Some(match name {
+        "Right" => Key::ArrowRight,
+        "Left" => Key::ArrowLeft,
+        "Up" => Key::ArrowUp,
+        "Down" => Key::ArrowDown,
+        "Page_Down" => Key::PageDown,
+        "Page_Up" => Key::PageUp,
+        "space" => Key::Space,
+        "BackSpace" => Key::Backspace,
+        // GDK names the punctuation; the map binds the character.
+        "plus" => Key::Char('+'),
+        "equal" => Key::Char('='),
+        "minus" => Key::Char('-'),
+        // Anything else is a key map's `Char`, if it is one character at
+        // all — every other GDK name ("Shift_L", "F11") is several.
+        _ => {
+            let mut chars = name.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => Key::Char(c.to_ascii_lowercase()),
+                _ => return None,
+            }
+        }
+    })
 }
