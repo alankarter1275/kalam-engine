@@ -1432,12 +1432,13 @@ justified it.
 ## Building the C ABI
 
 `chapbook-ffi` exists, at `crates/chapbook-ffi`, with `include/chapbook.h`
-beside it. Thirty-eight entry points over one opaque `cb_session*`: open
+beside it. Forty-three entry points over one opaque `cb_session*`: open
 from a path, from bytes or from a file descriptor; metrics, navigation,
 position; title and book kind; settings; `render_size` and `render_into`;
-`suspend`, `release_caches` and the cache numbers; the font report; and the
-waker with `poll_loaded`. The six boundary questions above were answered by
-the spike, so most of this was transcription. Five things were not.
+`suspend`, `release_caches` and the cache numbers; the font report; the
+waker with `poll_loaded`; and the log sink. The six boundary questions
+above were answered by the spike, so most of this was transcription. Seven
+things were not.
 
 **The last-error string cannot hang off the session, and the reason is the
 interesting part.** The proposal above says "a per-session last error
@@ -1455,9 +1456,9 @@ raised it — but the truth: each one has preconditions C cannot check and
 Rust cannot verify. The C declaration cbindgen emits is identical either
 way, so this costs a host nothing and makes the obligation visible on the
 Rust side, where the next person adding a function will see it. The
-follow-on is that clippy then wants a `# Safety` section on all thirty-six.
+follow-on is that clippy then wants a `# Safety` section on all thirty-eight.
 They get one section, at crate level, because cbindgen copies doc comments
-into the header and a header repeating the same paragraph thirty-six times
+into the header and a header repeating the same paragraph thirty-eight times
 is a worse artifact rather than a safer one.
 
 **The conventions had to become tests, and one of them was already broken.**
