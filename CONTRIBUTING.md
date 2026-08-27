@@ -58,8 +58,9 @@ Nothing that runs by default may read `fixtures/corpus/`. That directory is
 a download, so a test that wants it passes for whoever last ran
 `fixtures/fetch-corpus.sh` and fails on a clean checkout and in CI — three
 tests had drifted into it. Reaching for the corpus puts a test behind
-`#[ignore = "requires fixtures/fetch-corpus.sh"]`. Run the
-ignored ones with `fixtures/fetch-corpus.sh` and then
+`#[ignore = "requires fixtures/fetch-corpus.sh"]`;
+`chapbook-core/tests/fixture_discipline.rs` enforces that, and says so when
+you forget. Run the ignored ones with `fixtures/fetch-corpus.sh` and then
 `cargo test --workspace -- --ignored`.
 
 When what a test actually needs is *length* rather than a real-world
