@@ -11,7 +11,7 @@
 use std::ffi::{c_char, c_void};
 
 use chapbook_reader::chapbook_core::{
-    EdgeSizes, Format, PageMetrics, Rotation, Size, Source, Theme,
+    EdgeSizes, Format, PageMetrics, Rotation, Size, Source, TapZones, Theme,
 };
 use chapbook_reader::Session;
 
@@ -22,6 +22,12 @@ use crate::error::{cb_status, clear_last_error, fail, from_error, guard};
 /// An open book. Opaque.
 pub struct cb_session {
     pub(crate) inner: Session,
+    /// The tap policy for this session — beside the session rather than a
+    /// free-standing struct so the one field a host must *not* choose, the
+    /// reading direction, is read off the book on every configuration and
+    /// can never be handed in wrong. That shape was settled on a device:
+    /// see `docs/FFI.md`, *What the touchscreen settled*.
+    pub(crate) zones: TapZones,
 }
 
 /// Which reader opens the bytes. `CB_FORMAT_GUESS` decides from the bytes
@@ -177,7 +183,10 @@ fn open_with(source: Source, config: *mut cb_config) -> *mut cb_session {
     match Session::open_with(source, config.inner) {
         Ok(inner) => {
             clear_last_error();
-            Box::into_raw(Box::new(cb_session { inner }))
+            // The default bands, in the direction the book declares;
+            // everything else waits for `cb_session_set_tap_zones`.
+            let zones = TapZones::new(inner.reading_direction());
+            Box::into_raw(Box::new(cb_session { inner, zones }))
         }
         Err(e) => {
             from_error(&e);

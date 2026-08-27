@@ -433,9 +433,9 @@ well, which was not the reason for it: GTK's `Propagation::Stop`/`Proceed`
 is the same bit Android's `onKeyDown` returns, so the handler now proceeds
 on `Unhandled` instead of swallowing every bound key unconditionally.
 
-What is left is Android: `ReaderView.kt` still divides its width by three
-by hand, and the winit viewer still hand-translates too. Both are step 4
-below.
+Android followed — `ReaderView.kt`'s hardcoded thirds are gone, and what
+that swap found is in *What the touchscreen settled* below. What is left
+is the winit viewer, which still hand-translates.
 
 **Lifecycle — done.** `save_position()` was the right primitive but not the
 right call: a platform needs one that means *you are about to be stopped*.
@@ -1607,11 +1607,12 @@ justified it.
 ## Building the C ABI
 
 `chapbook-ffi` exists, at `crates/chapbook-ffi`, with `include/chapbook.h`
-beside it. Forty-three entry points over one opaque `cb_session*`: open
+beside it. Forty-nine entry points over one opaque `cb_session*`: open
 from a path, from bytes or from a file descriptor; metrics, navigation,
 position; title and book kind; settings; `render_size` and `render_into`;
 `suspend`, `release_caches` and the cache numbers; the font report; the
-waker with `poll_loaded`; and the log sink. The six boundary questions
+waker with `poll_loaded`; the log sink; and the input model — tap zones,
+the default key table, reading direction and `cb_session_apply`. The six boundary questions
 above were answered by the spike, so most of this was transcription. Eight
 things were not.
 
@@ -1728,30 +1729,43 @@ header carries what five rungs on a real device actually demonstrated a
 reader needs. Every one of those is additive later and none is blocked by
 anything here.
 
-**And the input model, which is the one worth writing down** — it was
-built after this list and so was missing from it, which left a host unable
-to tell "considered and excluded" from "forgotten". Excluded, and by the
-same argument that produced the rest of the header: the first cut carries
-what real rungs demonstrated, and the input model has been demonstrated on
-zero of them. One desktop shell drives it, and a desktop shell cannot
-exercise the bezel buttons `Key::TurnPrev`/`TurnNext` exist for, and did
-not exercise reading direction until the book started declaring it.
-`chapbook-jni` sits on `chapbook-reader` rather than on this ABI —
-deliberately, because JNI is already a C ABI — so Android can drive the
-whole model and report defects without the header moving. That layering
-was chosen for a different reason and pays here.
+**And the input model, which was excluded until a touchscreen had driven
+it, and crossed once one had.** This paragraph used to record the
+exclusion and the argument for it: the first cut carries what real rungs
+demonstrated, and the input model had been demonstrated on zero of them.
+The Android run closed that argument — taps resolved through the engine's
+bands on a device, the volume keys turned pages, and `ActionOutcome`
+earned its third value in front of a systemui window dump — so the model
+crosses now, before iOS consumes the header, which is the consumer the
+exclusion was deferring to. Six entry points:
+`cb_session_reading_direction`, `cb_session_set_tap_zones`,
+`cb_session_tap_action`, `cb_key_default_action`,
+`cb_char_default_action`, and `cb_session_apply` returning a
+`cb_action_outcome`.
 
-The cost is real and belongs on the record: iOS *is* a C ABI consumer, so
-until this crosses, a Swift host hardcodes thirds the way `ReaderView.kt`
-does today. One release of that is the price of not freezing a shape
-nothing has held. When it crosses, the shape is roughly `cb_action` and
-`cb_key` enums, a `cb_tap_zones` struct with a **free**
-`cb_tap_action_at` — it needs no session, which is unlike every other
-entry point here and worth knowing before it is written — a single
-`cb_key_default_action` rather than an opaque mutable keymap, since the
-value is the default table and not the mutability, `cb_session_apply`
-returning a `cb_action_outcome`, and `cb_session_back`/`can_go_back`,
-which the ABI does not have today. The file-descriptor door is `#[cfg(unix)]` — a descriptor is
+Where the device evidence overruled this document's own sketch, the
+evidence won. The sketch wanted a free `cb_tap_action_at` over a
+`cb_tap_zones` struct; the zones live on the session instead, because the
+struct's direction field is the one thing a host must *not* fill in, and
+JNI landing the same call found the shape — configure bands, and the
+direction is re-read from the book so a tap cannot be resolved against
+the wrong edge. Actions cross as `cb_action` enum values rather than the
+names JNI uses, and both are right for their boundary: Kotlin mirrors a
+Rust enum whose ordinals can move in any commit, while this header is a
+frozen artifact whose values are permanent — and on iOS it ships inside
+the same XCFramework as the library it describes, so the two cannot skew.
+`CB_ACTION_NONE` is the value zero so "this tap meant nothing" is
+falsy in C, and keys that are characters take their own entry point,
+because a Unicode scalar is not a member of a closed set.
+`cb_key_default_action` is free of any session, as sketched: the value is
+the default table — it already knows a Kobo's bezel buttons — not the
+mutability, and a host that rebinds keeps its overrides on its own side.
+`cb_session_back`/`can_go_back` were sketched and are *not* there:
+`CB_ACTION_BACK` through `cb_session_apply` already answers both, and
+`CB_OUTCOME_UNHANDLED` at the bottom of the trail is precisely the
+answer `can_go_back` would have existed to precompute.
+
+The file-descriptor door is `#[cfg(unix)]` — a descriptor is
 what Android and iOS hand out, and Windows has no analogue worth guessing at
 from this side of the boundary.
 

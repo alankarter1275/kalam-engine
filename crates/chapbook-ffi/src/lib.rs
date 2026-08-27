@@ -30,9 +30,9 @@
 //! Every entry point that takes a pointer is declared `unsafe`, because
 //! every one of them has preconditions C cannot check and Rust cannot
 //! verify. They are the same preconditions in each case, which is why they
-//! are stated here once rather than repeated on all thirty-six — cbindgen
+//! are stated here once rather than repeated on all forty-two — cbindgen
 //! copies doc comments into `chapbook.h`, and a header carrying the same
-//! paragraph thirty-six times is a worse artifact, not a safer one.
+//! paragraph forty-two times is a worse artifact, not a safer one.
 //!
 //! A caller must ensure that:
 //!
@@ -86,13 +86,14 @@
 #![allow(non_camel_case_types)]
 // The safety contract is identical across every entry point and is stated
 // in full in the module documentation above, under *Safety*. Repeating it
-// per function would duplicate it into the generated header thirty-six
+// per function would duplicate it into the generated header forty-two
 // times, which makes the deliverable worse rather than the code safer.
 #![allow(clippy::missing_safety_doc)]
 
 mod abi;
 mod config;
 mod error;
+mod input;
 mod logging;
 mod session;
 
@@ -103,6 +104,11 @@ pub use config::{
     cb_font_source_host, cb_font_source_set_generics,
 };
 pub use error::cb_status;
+pub use input::{
+    cb_action, cb_action_outcome, cb_char_default_action, cb_key, cb_key_default_action,
+    cb_reading_direction, cb_session_apply, cb_session_reading_direction, cb_session_set_tap_zones,
+    cb_session_tap_action,
+};
 pub use logging::{cb_log, cb_log_enabled, cb_log_fn, cb_log_level, cb_set_log_callback};
 pub use session::*;
 

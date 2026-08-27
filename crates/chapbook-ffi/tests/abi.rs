@@ -665,3 +665,212 @@ fn the_bytes_decide_the_format_not_the_name() {
     assert_eq!(kind, cb_book_kind::CB_BOOK_EPUB, "sniffed as EPUB");
     unsafe { cb_session_close(session) };
 }
+
+// ---- Input ----
+
+/// The tap helper every input test wants: what does a tap here mean.
+fn tap(session: *const cb_session, x: f32, y: f32) -> cb_action {
+    let mut action = cb_action::CB_ACTION_TOGGLE_MENU;
+    assert_eq!(
+        unsafe { cb_session_tap_action(session, x, y, &mut action) },
+        cb_status::CB_OK,
+        "tap at ({x}, {y}): {}",
+        last_error()
+    );
+    action
+}
+
+#[test]
+fn taps_resolve_through_the_book_and_not_the_shell() {
+    // The same tap, on the same page box, means the opposite thing in an
+    // RTL book — and the direction is nowhere in the calls a host makes,
+    // which is the point: a shell that could pass a direction would pass
+    // `Ltr` on every platform it ships to.
+    let session = open("tap-ltr", "epub/minimal.epub");
+
+    // Before metrics there are no thirds to land in.
+    let mut action = cb_action::CB_ACTION_NONE;
+    assert_eq!(
+        unsafe { cb_session_tap_action(session, 100.0, 400.0, &mut action) },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut direction = cb_reading_direction::CB_DIRECTION_RTL;
+    assert_eq!(
+        unsafe { cb_session_reading_direction(session, &mut direction) },
+        cb_status::CB_OK
+    );
+    assert_eq!(direction, cb_reading_direction::CB_DIRECTION_LTR);
+
+    assert_eq!(tap(session, 100.0, 400.0), cb_action::CB_ACTION_PREV_PAGE);
+    assert_eq!(tap(session, 500.0, 400.0), cb_action::CB_ACTION_NEXT_PAGE);
+    assert_eq!(tap(session, 300.0, 400.0), cb_action::CB_ACTION_TOGGLE_MENU);
+    // NaN is not a coordinate, and must not quietly resolve to a band.
+    assert_eq!(
+        unsafe { cb_session_tap_action(session, f32::NAN, 400.0, &mut action) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    unsafe { cb_session_close(session) };
+
+    let rtl = open("tap-rtl", "epub/rtl.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(rtl, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut direction = cb_reading_direction::CB_DIRECTION_LTR;
+    assert_eq!(
+        unsafe { cb_session_reading_direction(rtl, &mut direction) },
+        cb_status::CB_OK
+    );
+    assert_eq!(direction, cb_reading_direction::CB_DIRECTION_RTL);
+    assert_eq!(tap(rtl, 100.0, 400.0), cb_action::CB_ACTION_NEXT_PAGE);
+    assert_eq!(tap(rtl, 500.0, 400.0), cb_action::CB_ACTION_PREV_PAGE);
+    unsafe { cb_session_close(rtl) };
+}
+
+#[test]
+fn a_turned_panel_does_not_turn_the_tap_zones() {
+    // Taps arrive in panel coordinates and the rotation is undone inside,
+    // so a host drawing to a turned panel forwards what the touch event
+    // carries. The failure this guards is a reader whose page turns are
+    // ninety degrees out — which is what forwarding these coordinates
+    // through unrotated zones would produce (300 of 800 is the middle).
+    let session = open("tap-turned", "epub/minimal.epub");
+    let mut turned = metrics();
+    turned.width = 800.0;
+    turned.height = 600.0;
+    turned.rotation = cb_rotation::CB_ROTATION_QUARTER;
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, turned) },
+        cb_status::CB_OK
+    );
+    // The panel is 600x800. Reading runs down it, so the bottom of the
+    // panel is the next-page edge and the top the previous-page edge.
+    assert_eq!(tap(session, 300.0, 700.0), cb_action::CB_ACTION_NEXT_PAGE);
+    assert_eq!(tap(session, 300.0, 100.0), cb_action::CB_ACTION_PREV_PAGE);
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn the_middle_band_is_the_hosts_to_configure() {
+    let session = open("tap-zones", "epub/minimal.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+
+    // A host with its own menu gesture makes the middle inert.
+    assert_eq!(
+        unsafe { cb_session_set_tap_zones(session, 0.4, 0.4, cb_action::CB_ACTION_NONE) },
+        cb_status::CB_OK
+    );
+    assert_eq!(tap(session, 300.0, 400.0), cb_action::CB_ACTION_NONE);
+    assert_eq!(tap(session, 100.0, 400.0), cb_action::CB_ACTION_PREV_PAGE);
+
+    // Or binds it to something else entirely.
+    assert_eq!(
+        unsafe { cb_session_set_tap_zones(session, 0.3, 0.3, cb_action::CB_ACTION_CYCLE_THEME) },
+        cb_status::CB_OK
+    );
+    assert_eq!(tap(session, 300.0, 400.0), cb_action::CB_ACTION_CYCLE_THEME);
+
+    // A fraction outside the page, or one that is not a number, is a
+    // mistake worth hearing about, not a policy.
+    assert_eq!(
+        unsafe { cb_session_set_tap_zones(session, 1.5, 0.3, cb_action::CB_ACTION_NONE) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    assert_eq!(
+        unsafe { cb_session_set_tap_zones(session, f32::NAN, 0.3, cb_action::CB_ACTION_NONE) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    // And the refused configuration did not half-apply.
+    assert_eq!(tap(session, 300.0, 400.0), cb_action::CB_ACTION_CYCLE_THEME);
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn the_default_key_table_answers_without_a_session() {
+    // The table is the value, not the mutability: it already knows the
+    // bezel buttons on a Kobo and the volume keys an Android reader
+    // borrows, with no session in sight.
+    assert_eq!(
+        cb_key_default_action(cb_key::CB_KEY_PAGE_DOWN),
+        cb_action::CB_ACTION_NEXT_PAGE
+    );
+    assert_eq!(
+        cb_key_default_action(cb_key::CB_KEY_TURN_PREV),
+        cb_action::CB_ACTION_PREV_PAGE
+    );
+    assert_eq!(
+        cb_key_default_action(cb_key::CB_KEY_VOLUME_UP),
+        cb_action::CB_ACTION_PREV_PAGE
+    );
+
+    assert_eq!(
+        cb_char_default_action('n' as u32),
+        cb_action::CB_ACTION_NEXT_UNIT
+    );
+    // ASCII case is folded here, so a host need not care.
+    assert_eq!(
+        cb_char_default_action('N' as u32),
+        cb_action::CB_ACTION_NEXT_UNIT
+    );
+    assert_eq!(
+        cb_char_default_action('x' as u32),
+        cb_action::CB_ACTION_NONE
+    );
+    // A surrogate is not a scalar value, and answers nothing rather than
+    // panicking on the way to a char.
+    assert_eq!(cb_char_default_action(0xD800), cb_action::CB_ACTION_NONE);
+}
+
+#[test]
+fn apply_answers_repaint_and_consumed_separately() {
+    let session = open("apply", "epub/illustrated.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut outcome = cb_action_outcome::CB_OUTCOME_CHANGED;
+
+    // The case the outcome type was built for, straight from the Android
+    // device run: at unit 0 page 0 a previous-page does not move, and the
+    // event is still the reader's — a host that forwards it gets the
+    // system's volume slider drawn over the book.
+    assert_eq!(
+        unsafe { cb_session_apply(session, cb_action::CB_ACTION_PREV_PAGE, &mut outcome) },
+        cb_status::CB_OK
+    );
+    assert_eq!(outcome, cb_action_outcome::CB_OUTCOME_UNCHANGED);
+
+    assert_eq!(
+        unsafe { cb_session_apply(session, cb_action::CB_ACTION_NEXT_PAGE, &mut outcome) },
+        cb_status::CB_OK
+    );
+    assert_eq!(outcome, cb_action_outcome::CB_OUTCOME_CHANGED);
+
+    // The engine has no chrome, and an empty back trail is the platform's
+    // Back to take — both hand the event back to the host.
+    assert_eq!(
+        unsafe { cb_session_apply(session, cb_action::CB_ACTION_TOGGLE_MENU, &mut outcome) },
+        cb_status::CB_OK
+    );
+    assert_eq!(outcome, cb_action_outcome::CB_OUTCOME_UNHANDLED);
+    assert_eq!(
+        unsafe { cb_session_apply(session, cb_action::CB_ACTION_BACK, &mut outcome) },
+        cb_status::CB_OK
+    );
+    assert_eq!(outcome, cb_action_outcome::CB_OUTCOME_UNHANDLED);
+
+    // NONE is a bug in the caller, not a quiet no-op.
+    assert_eq!(
+        unsafe { cb_session_apply(session, cb_action::CB_ACTION_NONE, &mut outcome) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    unsafe { cb_session_close(session) };
+}

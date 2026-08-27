@@ -94,6 +94,210 @@ typedef int32_t cb_status;
 #endif // __cplusplus
 
 /**
+ * Which physical edge reading starts from. The book declares it — EPUB's
+ * `page-progression-direction` — and the engine consults it; it crosses
+ * the boundary so a host can *show* it, which is the only way a reader
+ * can tell a correctly-flipped RTL book from a bug, and so a host's own
+ * gestures (a page-turn swipe, say) can agree with the tap zones.
+ */
+enum cb_reading_direction
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * Left to right: the previous page is off the left edge.
+     */
+    CB_DIRECTION_LTR = 0,
+    /**
+     * Right to left: the previous page is off the right edge.
+     */
+    CB_DIRECTION_RTL = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum cb_reading_direction cb_reading_direction;
+#else
+typedef uint32_t cb_reading_direction;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
+ * A reader intent. Hosts produce these — from a tap zone, a key lookup,
+ * or their own UI — and hand them to [`cb_session_apply`]; a host never
+ * needs to interpret one.
+ *
+ * `CB_ACTION_NONE` is not an action: it is the "nothing" value
+ * [`cb_session_tap_action`] and the key lookups answer with, and
+ * [`cb_session_set_tap_zones`] accepts for a band that does nothing.
+ * Applying it is an error, not a no-op.
+ *
+ * The set is open — bookmarks, search, a jump to the table of contents
+ * are plainly coming — and new values are only ever appended. Values in
+ * this header are permanent, so a host may persist them.
+ */
+enum cb_action
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    CB_ACTION_NONE = 0,
+    /**
+     * Forward one page in reading order.
+     */
+    CB_ACTION_NEXT_PAGE = 1,
+    /**
+     * Back one page in reading order.
+     */
+    CB_ACTION_PREV_PAGE = 2,
+    /**
+     * Forward one spine unit (chapter), landing on its first page.
+     */
+    CB_ACTION_NEXT_UNIT = 3,
+    /**
+     * Back one spine unit.
+     */
+    CB_ACTION_PREV_UNIT = 4,
+    /**
+     * Return to where a followed link was taken from.
+     */
+    CB_ACTION_BACK = 5,
+    /**
+     * Raise the base font size one step. The step is the engine's, so a
+     * reader who changes device finds the same ladder.
+     */
+    CB_ACTION_FONT_UP = 6,
+    /**
+     * Lower the base font size one step.
+     */
+    CB_ACTION_FONT_DOWN = 7,
+    /**
+     * Advance the color theme one place in its cycle.
+     */
+    CB_ACTION_CYCLE_THEME = 8,
+    /**
+     * Show or hide the host's own chrome. The engine has no menu, so
+     * applying this always comes back `CB_OUTCOME_UNHANDLED`: it exists
+     * because *the middle of the page opens the menu* is the same policy
+     * decision as *the outer thirds turn pages*.
+     */
+    CB_ACTION_TOGGLE_MENU = 9,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum cb_action cb_action;
+#else
+typedef uint32_t cb_action;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
+ * A key, in the vocabulary the engine binds — not a platform keycode.
+ *
+ * A host translates its own stable codes into this: Android's
+ * `KEYCODE_*`, the HID usages iOS and macOS report on hardware
+ * keyboards, GDK keyvals. The translation has no opinions in it; the
+ * opinions are in the table behind [`cb_key_default_action`]. Printable
+ * characters are not here — they go through [`cb_char_default_action`].
+ *
+ * Modifiers are deliberately absent: chorded shortcuts are where a
+ * host's own commands live, and an engine that claimed `Ctrl` would
+ * collide with every one of them. Consult the table for unmodified
+ * presses only.
+ *
+ * Zero is deliberately unassigned, so a zeroed variable never names a
+ * key. The set is open, like [`cb_action`], and grows the same way.
+ */
+enum cb_key
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    CB_KEY_ARROW_LEFT = 1,
+    CB_KEY_ARROW_RIGHT = 2,
+    CB_KEY_ARROW_UP = 3,
+    CB_KEY_ARROW_DOWN = 4,
+    CB_KEY_PAGE_UP = 5,
+    CB_KEY_PAGE_DOWN = 6,
+    CB_KEY_SPACE = 7,
+    CB_KEY_BACKSPACE = 8,
+    /**
+     * A dedicated previous-page button. Kobo and PocketBook put two on
+     * the bezel; they arrive as `KEY_PAGEUP`, `KEY_PREV` or a function
+     * key depending on the model and the kernel, which is exactly the
+     * reverse-engineering a host should not have to repeat.
+     */
+    CB_KEY_TURN_PREV = 9,
+    /**
+     * A dedicated next-page button.
+     */
+    CB_KEY_TURN_NEXT = 10,
+    /**
+     * Volume up, which Android readers conventionally borrow for page
+     * turns. Only forward it here if the host has already decided to
+     * take it from the system — and note that iOS offers no way to.
+     */
+    CB_KEY_VOLUME_UP = 11,
+    /**
+     * Volume down.
+     */
+    CB_KEY_VOLUME_DOWN = 12,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum cb_key cb_key;
+#else
+typedef uint32_t cb_key;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
+ * What the engine did with an action — two answers, because a host needs
+ * both and can derive neither from the other: *should I repaint*, and
+ * *did the reader consume this event*.
+ *
+ * The second answer is what a host owes its platform. Android's
+ * `onKeyDown` must return `true` on `CHANGED` **and** `UNCHANGED`, or the
+ * last page of every book gets the system volume slider drawn over it;
+ * iOS's responder chain is the same shape — call `super` only on
+ * `UNHANDLED`. `UNHANDLED` is also what `CB_ACTION_BACK` returns at the
+ * bottom of the back trail, deliberately: that is exactly where the
+ * platform's own Back should take over, so a host forwards the gesture
+ * unconditionally instead of shadowing the history to know when to stop.
+ *
+ * Unlike [`cb_action`] this set is closed: consumed and repainting are
+ * two bits, and the fourth corner — declining an event while demanding a
+ * repaint — describes nothing.
+ */
+enum cb_action_outcome
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * Applied, and the position, size or theme moved. Consume the event
+     * and repaint.
+     */
+    CB_OUTCOME_CHANGED = 0,
+    /**
+     * Applied, and nothing moved — the last page, or the font at its
+     * stop. Consume the event anyway; do not repaint.
+     */
+    CB_OUTCOME_UNCHANGED = 1,
+    /**
+     * Not the engine's. Let the event through to the platform.
+     */
+    CB_OUTCOME_UNHANDLED = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum cb_action_outcome cb_action_outcome;
+#else
+typedef uint32_t cb_action_outcome;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * Severity, matching `log`'s own ordering so the numbers are not a second
  * thing to remember.
  *
@@ -481,6 +685,97 @@ cb_status cb_config_set_cache_budget(struct cb_config *config, size_t bytes);
  * Passing null is a no-op.
  */
 void cb_config_free(struct cb_config *config);
+
+/**
+ * Which edge the open book reads from.
+ */
+cb_status cb_session_reading_direction(const struct cb_session *session,
+                                       cb_reading_direction *direction);
+
+/**
+ * Reconfigure the tap bands: how wide the previous- and next-page bands
+ * are, as fractions of the page width, and what a tap between them does —
+ * `CB_ACTION_NONE` for a middle band that does nothing, which is what a
+ * host running its own menu gesture wants. Until this is called, a
+ * session has the default policy: thirds, with the middle
+ * `CB_ACTION_TOGGLE_MENU`.
+ *
+ * The reading direction is deliberately not a parameter. It is the
+ * book's, and is re-read here, so a host cannot flip a book by
+ * configuring it. Bands overlapping resolve to the previous-page side;
+ * a zero-width band is disabled, and its space goes to the middle.
+ */
+cb_status cb_session_set_tap_zones(struct cb_session *session,
+                                   float prev_fraction,
+                                   float next_fraction,
+                                   cb_action middle);
+
+/**
+ * What a tap at a point means, or `CB_ACTION_NONE` for nothing.
+ *
+ * `x` and `y` are **logical units** in **panel** coordinates — the
+ * numbers a touch event actually carries, in the same space
+ * `cb_session_set_metrics` was given. On iOS a `UITouch` location is
+ * already logical: pass it as is. On Android a `MotionEvent` is in view
+ * pixels: divide by density first, or every tap on a dense screen lands
+ * in the last band and nothing errors. A rotated panel is undone on this
+ * side, so a host never applies the inverse itself.
+ *
+ * The bands were resolved against the book's reading direction when they
+ * were configured, which is why the answer is the session's to give:
+ * the same tap on the same box means previous-page in an English book
+ * and next-page in a Hebrew one.
+ *
+ * `CB_ERR_UNAVAILABLE` until metrics are set — a session with no page
+ * box cannot say where its thirds are.
+ */
+cb_status cb_session_tap_action(const struct cb_session *session,
+                                float x,
+                                float y,
+                                cb_action *action);
+
+/**
+ * What a key does in the default table, or `CB_ACTION_NONE` for one this
+ * reader does not bind — in which case the host should handle the press
+ * itself rather than swallow it.
+ *
+ * Free of any session, because the value is the default table itself: it
+ * already knows the bezel buttons on a Kobo and the volume keys an
+ * Android reader borrows, which is the difference between porting a
+ * shell and reverse-engineering one. A host that lets readers rebind
+ * keys keeps its overrides on its own side and falls back to this.
+ *
+ * Arrow keys are bound *logically* — `CB_KEY_ARROW_RIGHT` is the next
+ * page in both reading directions — which at least agrees with what the
+ * tap zones resolve to.
+ */
+cb_action cb_key_default_action(cb_key key);
+
+/**
+ * What a printable character does in the default table, or
+ * `CB_ACTION_NONE`. The other half of [`cb_key_default_action`], split
+ * out because a character is a Unicode scalar and not a member of a
+ * closed set.
+ *
+ * `codepoint` is a Unicode scalar value. The table binds lowercase
+ * letters; ASCII uppercase is folded here so a host need not care, and
+ * anything that is not a scalar value answers `CB_ACTION_NONE`.
+ * Unmodified presses only, as above.
+ */
+cb_action cb_char_default_action(uint32_t codepoint);
+
+/**
+ * Apply a reader intent, and learn both of the things a host needs to
+ * know about what happened — see [`cb_action_outcome`].
+ *
+ * `CB_ACTION_NONE` is refused as `CB_ERR_INVALID_ARGUMENT` rather than
+ * treated as a quiet no-op: a host holding `NONE` has a tap or a key
+ * that meant nothing, and applying it anyway is a bug worth hearing
+ * about on the spot.
+ */
+cb_status cb_session_apply(struct cb_session *session,
+                           cb_action action,
+                           cb_action_outcome *outcome);
 
 /**
  * Send the engine's diagnostics to `callback` at `max_level` and above.
