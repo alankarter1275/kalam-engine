@@ -10,6 +10,34 @@ data class Position(val spine: Int, val page: Int)
 data class RenderSize(val width: Int, val height: Int)
 
 /**
+ * What the engine did with an action, and what you owe the platform back.
+ *
+ * Two questions, not one, and neither implies the other. [needsRedraw] says
+ * whether to `invalidate()`. [consumed] says what to return from
+ * `onKeyDown`/`onKeyUp` — and getting *that* wrong is expensive here,
+ * because the default key map binds the volume keys to page turns: a
+ * reader that answers "nothing changed" on the last page hands the press
+ * back and Android draws its volume slider over the book.
+ */
+enum class ActionOutcome {
+    /** Applied, and something moved. Repaint, and consume the event. */
+    Changed,
+
+    /** Applied, nothing moved — last page, font at its stop. Still yours. */
+    Unchanged,
+
+    /**
+     * Not the engine's: `toggle-menu` always, and `back` with an empty
+     * trail. Let the event through, which is how the system Back leaves
+     * the reader without this side tracking the history to know when.
+     */
+    Unhandled;
+
+    val needsRedraw: Boolean get() = this == Changed
+    val consumed: Boolean get() = this != Unhandled
+}
+
+/**
  * One open book.
  *
  * Held by the app for as long as it is reading, and [close]d exactly once.
@@ -122,6 +150,49 @@ class Session private constructor(private var handle: Long) : AutoCloseable {
      * `chapbook-jni`.
      */
     fun renderInto(bitmap: Bitmap): Int = Native.renderInto(handle, bitmap)
+
+    /**
+     * Which edge this book reads from: `"ltr"` or `"rtl"`.
+     *
+     * The book declares it — EPUB's `page-progression-direction` — and the
+     * tap zones already use it. This is here so a shell can show that it
+     * did, because a correctly flipped RTL book and a bug look the same
+     * from the outside.
+     */
+    val readingDirection: String get() = Native.readingDirection(handle)
+
+    /**
+     * Reconfigure the tap bands as fractions of the page width. [middle] is
+     * an action name, or `""` for a band that does nothing.
+     *
+     * There is no direction parameter on purpose: that one is the book's.
+     */
+    fun setTapZones(prevFraction: Float, nextFraction: Float, middle: String) =
+        Native.setTapZones(handle, prevFraction, nextFraction, middle)
+
+    /**
+     * What a tap means, or null.
+     *
+     * [x] and [y] are **logical units** — view pixels divided by the
+     * display density, the same space [setMetrics] is given — in panel
+     * coordinates. A rotated panel is undone on the engine's side.
+     */
+    fun tapAction(x: Float, y: Float): String? =
+        Native.tapAction(handle, x, y).ifEmpty { null }
+
+    /** What a key means, or null. Takes an `KeyEvent.KEYCODE_*` value. */
+    fun actionForKeyCode(keyCode: Int): String? =
+        Native.actionForKeyCode(handle, keyCode).ifEmpty { null }
+
+    /**
+     * Apply what a tap or a key meant. You do not have to know which
+     * action it was — hand back what you were given and read the outcome.
+     */
+    fun apply(action: String): ActionOutcome = when (Native.applyAction(handle, action)) {
+        0 -> ActionOutcome.Changed
+        1 -> ActionOutcome.Unchanged
+        else -> ActionOutcome.Unhandled
+    }
 
     override fun close() {
         if (handle != 0L) {

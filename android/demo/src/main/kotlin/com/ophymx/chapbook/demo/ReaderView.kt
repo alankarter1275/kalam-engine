@@ -27,6 +27,18 @@ class ReaderView(context: Context, private val session: Session) : View(context)
 
     private var downAt: Long = 0
 
+    /** The last thing the engine was asked to do, for the status line. */
+    var lastAction: String? = null
+        private set
+
+    init {
+        // Thirds, with the middle cycling the theme instead of opening a
+        // menu this demo does not have. Sepia is the only colour on screen
+        // whose red and blue channels differ, so it is the one thing that
+        // can tell premultiplied RGBA from BGRA — worth keeping a band for.
+        session.setTapZones(1f / 3f, 1f / 3f, "cycle-theme")
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         if (w <= 0 || h <= 0) return
         val density = resources.displayMetrics.density
@@ -57,10 +69,10 @@ class ReaderView(context: Context, private val session: Session) : View(context)
     }
 
     /**
-     * The tap-zone policy `docs/FFI.md` argues belongs in the engine:
-     * left third back, right third forward, middle band something else.
-     * Here the middle cycles the theme, because sepia is the only colour
-     * this demo can put on screen and it is what tests the channel order.
+     * Input goes through the engine, which is the whole point of the seam:
+     * this method decides that a press which did not become a long press is
+     * a tap, and nothing else. Which band the tap fell in, which edge the
+     * book reads from, and what either means are `chapbook_core::input`'s.
      *
      * A long press runs the conformance harness.
      */
@@ -77,23 +89,47 @@ class ReaderView(context: Context, private val session: Session) : View(context)
             onLongPress?.invoke()
             return true
         }
-        val third = width / 3f
-        val moved = when {
-            event.x < third -> session.prevPage()
-            event.x > third * 2 -> session.nextPage()
-            else -> {
-                session.cycleTheme()
-                invalidate()
-                onMoved?.invoke()
-                return true
-            }
-        }
-        // Use the return value. Do not compare page numbers across a turn.
-        if (moved) {
-            invalidate()
-            onMoved?.invoke()
-        }
+        // Logical units, not view pixels: the engine was given the page box
+        // in the same space, and handing it device pixels would put every
+        // tap in the last band on a 3x screen.
+        val density = resources.displayMetrics.density
+        val action = session.tapAction(event.x / density, event.y / density) ?: return true
+        applyAndRedraw(action)
         return true
+    }
+
+    /**
+     * Forwarded from the activity, which is where volume keys arrive.
+     *
+     * Returns whether the event was consumed, and that answer has to be the
+     * engine's: the default key map takes the volume keys for page turns,
+     * so a `false` here is Android putting its volume slider over the book.
+     * The last page of every book is exactly where a shell that returned
+     * "did anything move" would get this wrong.
+     */
+    fun handleKey(keyCode: Int): Boolean {
+        val action = session.actionForKeyCode(keyCode) ?: return false
+        return applyAndRedraw(action)
+    }
+
+    /**
+     * Whether this key is bound, without acting on it.
+     *
+     * `onKeyUp` needs this. Consuming the down and letting the up through
+     * still lets the system act on a volume press, so both halves have to
+     * be claimed — but acting on both would turn two pages per press.
+     */
+    fun bindsKey(keyCode: Int): Boolean = session.actionForKeyCode(keyCode) != null
+
+    /** Apply, repaint if it moved, and report whether the event was ours. */
+    private fun applyAndRedraw(action: String): Boolean {
+        lastAction = action
+        val outcome = session.apply(action)
+        if (outcome.needsRedraw) invalidate()
+        // The status line wants updating even when nothing moved, because
+        // "nothing moved" is what it is reporting.
+        onMoved?.invoke()
+        return outcome.consumed
     }
 
     fun renderStatus(): String = when (lastRender) {

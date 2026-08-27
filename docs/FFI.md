@@ -1179,6 +1179,51 @@ boundary section insists, that **it fires on the loader thread**.
    from cold at launch, not only from the picker, because that is the path
    that fails.
 
+### What the touchscreen settled
+
+The argument for putting the input model on Android before the C ABI was
+that a touchscreen is where tap zones can be judged and a desktop shell is
+not. That turned out to be true in a narrow, checkable way, and the check
+is worth recording because it is the one a spike exists to produce.
+
+`ReaderView` had `val third = width / 3f` and called `prevPage`/`nextPage`
+by hand. It now asks the engine, and three things came out of the swap.
+
+**The coordinates are not the ones the event carries.** `MotionEvent.x` is
+in view pixels; `setMetrics` was given the page box in logical units. A
+shell that forwards the raw event puts every tap in the last band on a 3x
+screen, and nothing errors — the tap simply always means "next page". The
+division by density is one line and is the sort of line a second shell
+would have got wrong independently, so it is in `SHELLS.md` and in the
+JNI doc comment rather than only here.
+
+**Actions cross the boundary as their names.** `Action` is
+`#[non_exhaustive]` and Kotlin has no way to notice it being reordered, so
+`tapAction` returns `"next-page"` and `applyAction` takes it back. The
+allocation is charged per keypress, at human rates. Kotlin never has to
+*interpret* an action — it hands back what it was given and reads the
+outcome — so the only enum mirrored across the boundary is
+`ActionOutcome`, which is three closed values. `Action::name`/`from_name`
+existed for exactly this and until now had no consumer.
+
+Android keycodes go the other way and are translated in Rust, which looks
+backwards until you ask which half is stable: Android can never renumber
+`KEYCODE_VOLUME_UP` without breaking every app on the platform, and an
+ordinal invented in this workspace can move in any commit. The mapping
+that is safe to hardcode is the one hardcoded.
+
+**And `ActionOutcome` earned itself on the device.** The volume keys are
+bound to page turns by `KeyMap::default`, and Android's `onKeyDown` must
+return `true` to keep an event. On a fresh install, at unit 0 page 0,
+volume-up dispatches `prev-page`, the position does not move, and the
+reader keeps window focus with no `com.android.systemui` window in the
+dump. That is `Unchanged` — nothing to repaint, event still consumed —
+and it is exactly the case where the `bool` this used to return would
+have said "false", the shell would have forwarded it, and Android would
+have drawn its volume slider over the book. It is also why `onKeyUp` has
+to claim the key without acting on it: consuming only the down still lets
+the system act, and acting on both turns two pages per press.
+
 ## Fonts, on every platform
 
 The font defect is reported three times above — Android's empty database, the
@@ -1750,10 +1795,10 @@ cleanup. That is right about the dependency and wrong about the order:
    `ReadingDirection`, `TapZones::action_at`, and a `KeyMap` that already
    knows about Kobo and PocketBook page-turn buttons — with
    `Session::apply(Action)` under it and `chapbook-viewer-gtk` converted to
-   both, which is what proves the seam on a real shell before Android has
-   to trust it. What is left is `ReaderView`'s hardcoded thirds replaced by
-   the policy, the winit viewer's hand-translation likewise, and the AAR as
-   a published artifact.*
+   both. Android drives all of it now: `ReaderView`'s hardcoded thirds are
+   gone, the volume keys turn pages, and it ran on an emulator — see* What
+   the touchscreen settled *below. What is left is the winit viewer's
+   hand-translation and the AAR as a published artifact.*
 5. **The browser demo.** Last, because Android has a user and a demo has an
    audience, and because by this point step 2 has already done all of its
    work for it.

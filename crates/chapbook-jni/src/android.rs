@@ -9,7 +9,10 @@
 
 use std::ffi::c_void;
 
-use chapbook_reader::chapbook_core::{EdgeSizes, FontSource, PageMetrics, Rotation, Size, Source};
+use chapbook_reader::chapbook_core::{
+    Action, ActionOutcome, EdgeSizes, FontSource, Key, KeyMap, PageMetrics, ReadingDirection,
+    Rotation, Size, Source, TapZones,
+};
 use chapbook_reader::{Session, SessionConfig};
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jfloat, jint, jlong, jstring};
@@ -17,16 +20,44 @@ use jni::JNIEnv;
 
 // ---- Handles ----
 
+/// What a `jlong` handle actually points at: the session, plus the input
+/// policy that belongs to this shell rather than to the engine.
+///
+/// The tap zones live here because they are configuration — how wide the
+/// bands are, what the middle one does — and because the one field a shell
+/// must *not* configure, the reading direction, comes off the book. Keeping
+/// them beside the session is what lets `tapAction` be a single call that
+/// cannot be given the wrong direction by accident.
+struct Shell {
+    session: Session,
+    zones: TapZones,
+    keys: KeyMap,
+}
+
 /// A session, as a `jlong` Java holds onto. Null is the failure value, so
 /// the Kotlin side never sees a Rust error type.
 fn into_handle(session: Session) -> jlong {
-    Box::into_raw(Box::new(session)) as jlong
+    // The direction is the book's; everything else is the default policy
+    // until Kotlin says otherwise.
+    let zones = TapZones::new(session.reading_direction());
+    let shell = Shell {
+        session,
+        zones,
+        keys: KeyMap::default(),
+    };
+    Box::into_raw(Box::new(shell)) as jlong
+}
+
+/// # Safety
+/// `handle` must have come from [`into_handle`] and not yet been closed.
+unsafe fn shell<'a>(handle: jlong) -> Option<&'a mut Shell> {
+    (handle as *mut Shell).as_mut()
 }
 
 /// # Safety
 /// `handle` must have come from [`into_handle`] and not yet been closed.
 unsafe fn session<'a>(handle: jlong) -> Option<&'a mut Session> {
-    (handle as *mut Session).as_mut()
+    shell(handle).map(|s| &mut s.session)
 }
 
 /// How this shell configures a session, in one place because the demo opens
@@ -167,7 +198,7 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_close(
     if handle != 0 {
         // SAFETY: the handle came from `into_handle` and Kotlin promises
         // one close per open.
-        drop(unsafe { Box::from_raw(handle as *mut Session) });
+        drop(unsafe { Box::from_raw(handle as *mut Shell) });
     }
 }
 
@@ -354,6 +385,182 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_title(
         None => String::new(),
     };
     string_out(&env, &title)
+}
+
+// ---- Input ----
+//
+// Actions cross this boundary as their `Action::name()` strings rather
+// than as ordinals. `Action` is `#[non_exhaustive]` and Kotlin has no way
+// to notice a reordering, so a token that describes itself is worth the
+// allocation — which is charged per keypress, at human rates. It also
+// means the demo's status line gets `"next-page"` for free, and that
+// `Action::name`/`from_name` — built for exactly this and until now
+// consumed by nothing — are actually exercised.
+//
+// Kotlin never has to *interpret* an action: it hands back whatever it was
+// given and reads the outcome. `Unhandled` is how it learns that one was
+// its own to deal with, which is why no enum has to be mirrored.
+
+/// Which edge this book reads from: `"ltr"` or `"rtl"`.
+///
+/// The book declares it and the tap zones already use it — this is here so
+/// a shell can *show* that it did, which is the only way a reader can tell
+/// a correctly-flipped RTL book from a bug.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_readingDirection(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let direction = match unsafe { session(handle) } {
+        Some(s) => s.reading_direction(),
+        None => ReadingDirection::Ltr,
+    };
+    string_out(
+        &env,
+        match direction {
+            ReadingDirection::Ltr => "ltr",
+            ReadingDirection::Rtl => "rtl",
+        },
+    )
+}
+
+/// Reconfigure the tap bands. `middle` is an action name, or `""` for a
+/// band that does nothing.
+///
+/// The reading direction is deliberately not a parameter. It is the book's
+/// and is re-read here, so a shell cannot flip a book by configuring it.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_setTapZones(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    prev_fraction: jfloat,
+    next_fraction: jfloat,
+    middle: JString,
+) {
+    let middle = string_in(&mut env, &middle).unwrap_or_default();
+    let Some(shell) = (unsafe { shell(handle) }) else {
+        return;
+    };
+    if !middle.is_empty() && Action::from_name(&middle).is_none() {
+        log::warn!("no action named {middle}; the middle band will do nothing");
+    }
+    shell.zones = TapZones {
+        prev_fraction,
+        next_fraction,
+        middle: Action::from_name(&middle),
+        direction: shell.session.reading_direction(),
+    };
+}
+
+/// What a tap at a point means, or `""` for nothing.
+///
+/// `x` and `y` are **logical units** — a view's pixels divided by its
+/// density, the same space `setMetrics` is given — and they are *panel*
+/// coordinates, so a rotated panel is undone on this side and a shell
+/// never applies the inverse itself.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_tapAction(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    x: jfloat,
+    y: jfloat,
+) -> jstring {
+    let name = unsafe { shell(handle) }
+        .and_then(|s| {
+            let metrics = s.session.metrics()?;
+            s.zones.action_at(x, y, &metrics)
+        })
+        .map_or("", Action::name);
+    string_out(&env, name)
+}
+
+/// What a key means, or `""` for one this reader does not bind.
+///
+/// `key_code` is an `android.view.KeyEvent.KEYCODE_*` value. Those are
+/// translated here rather than in Kotlin because they are the stable half:
+/// Android can never renumber them without breaking every app on the
+/// platform, whereas an ordinal invented in this workspace can move in any
+/// commit. So the mapping that is safe to hardcode is the one hardcoded.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_actionForKeyCode(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    key_code: jint,
+) -> jstring {
+    let name = key_of(key_code)
+        .and_then(|key| unsafe { shell(handle) }.and_then(|s| s.keys.action(key)))
+        .map_or("", Action::name);
+    string_out(&env, name)
+}
+
+/// `android.view.KeyEvent.KEYCODE_*` to the engine's vocabulary.
+///
+/// Volume up and down are the interesting pair. Android readers
+/// conventionally borrow them for page turns, and borrowing them is what
+/// makes `applyAction`'s outcome load-bearing: a shell that does not tell
+/// the platform it took the press gets the system volume slider drawn over
+/// the book.
+fn key_of(key_code: jint) -> Option<Key> {
+    // From android.view.KeyEvent. Frozen by the platform's own
+    // compatibility promise, which is why they are safe as literals.
+    const KEYCODE_DPAD_UP: jint = 19;
+    const KEYCODE_DPAD_DOWN: jint = 20;
+    const KEYCODE_DPAD_LEFT: jint = 21;
+    const KEYCODE_DPAD_RIGHT: jint = 22;
+    const KEYCODE_VOLUME_UP: jint = 24;
+    const KEYCODE_VOLUME_DOWN: jint = 25;
+    const KEYCODE_SPACE: jint = 62;
+    const KEYCODE_DEL: jint = 67;
+    const KEYCODE_PAGE_UP: jint = 92;
+    const KEYCODE_PAGE_DOWN: jint = 93;
+
+    match key_code {
+        KEYCODE_DPAD_UP => Some(Key::ArrowUp),
+        KEYCODE_DPAD_DOWN => Some(Key::ArrowDown),
+        KEYCODE_DPAD_LEFT => Some(Key::ArrowLeft),
+        KEYCODE_DPAD_RIGHT => Some(Key::ArrowRight),
+        KEYCODE_VOLUME_UP => Some(Key::VolumeUp),
+        KEYCODE_VOLUME_DOWN => Some(Key::VolumeDown),
+        KEYCODE_SPACE => Some(Key::Space),
+        KEYCODE_DEL => Some(Key::Backspace),
+        KEYCODE_PAGE_UP => Some(Key::PageUp),
+        KEYCODE_PAGE_DOWN => Some(Key::PageDown),
+        _ => None,
+    }
+}
+
+/// Apply an action by name. Returns the outcome: `0` changed, `1`
+/// unchanged, `2` not the engine's — and `-1` for a dead handle or a name
+/// this build does not know.
+///
+/// Two answers, because a shell needs both. `0` says repaint. `0` or `1`
+/// says tell Android you consumed the event; `2` says let it through, and
+/// `2` is what an empty back stack returns so the system Back can leave
+/// the reader without this side tracking history to know when to stop.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_applyAction(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    action: JString,
+) -> jint {
+    let Some(name) = string_in(&mut env, &action) else {
+        return -1;
+    };
+    let Some(action) = Action::from_name(&name) else {
+        log::warn!("no action named {name}");
+        return -1;
+    };
+    match unsafe { session(handle) }.map(|s| s.apply(action)) {
+        Some(ActionOutcome::Changed) => 0,
+        Some(ActionOutcome::Unchanged) => 1,
+        Some(ActionOutcome::Unhandled) => 2,
+        None => -1,
+    }
 }
 
 // ---- Pixels ----

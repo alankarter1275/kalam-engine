@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.ViewGroup
 import android.view.Window
 import android.widget.Button
@@ -106,8 +107,35 @@ class MainActivity : Activity() {
             append("   ·   ${s.fontReport}")
             append("   ·   render: ${reader?.renderStatus() ?: "-"}")
             append("\ncache ${s.cacheBytes / 1024}k of ${s.cacheBudget / 1024}k")
-            append("   ·   tap right to turn, left to go back; long-press for conformance")
+            // The direction is on screen because a correctly flipped RTL
+            // book and a broken LTR one look identical from the outside,
+            // and the last action because the engine decided it, not this.
+            append("   ·   ${s.readingDirection}")
+            reader?.lastAction?.let { append("   ·   $it") }
+            append("\ntap the edges or use the volume keys; long-press for conformance")
         }
+    }
+
+    /**
+     * Volume keys arrive here, not at the view, and the reader takes them
+     * for page turns — which is the convention on this platform and the
+     * reason the engine's outcome has to carry more than "did it move".
+     * Returning false on the last page is Android drawing its volume
+     * slider over the book.
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val view = reader ?: return super.onKeyDown(keyCode, event)
+        return view.handleKey(keyCode) || super.onKeyDown(keyCode, event)
+    }
+
+    /**
+     * Claimed without acting on. Consuming the down and letting the up
+     * through still lets the system handle a volume press, and acting on
+     * both would turn two pages per press.
+     */
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        val view = reader ?: return super.onKeyUp(keyCode, event)
+        return view.bindsKey(keyCode) || super.onKeyUp(keyCode, event)
     }
 
     /**

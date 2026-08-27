@@ -43,4 +43,24 @@ internal object Native {
     external fun renderSize(handle: Long): Long
     external fun renderInto(handle: Long, bitmap: android.graphics.Bitmap): Int
     external fun conformance(path: String, libraryDir: String): String
+
+    // Input. Actions cross as their engine names — "next-page" and so on —
+    // rather than as ordinals, because `Action` is non-exhaustive on the
+    // Rust side and nothing here would notice it being reordered. The empty
+    // string is "no action". See `chapbook_core::input`.
+
+    /** `"ltr"` or `"rtl"`, off the book. */
+    external fun readingDirection(handle: Long): String
+
+    /** `middle` is an action name, or `""` for a band that does nothing. */
+    external fun setTapZones(handle: Long, prevFraction: Float, nextFraction: Float, middle: String)
+
+    /** Logical units — view pixels over density — in panel space. */
+    external fun tapAction(handle: Long, x: Float, y: Float): String
+
+    /** Takes an `android.view.KeyEvent.KEYCODE_*` value. */
+    external fun actionForKeyCode(handle: Long, keyCode: Int): String
+
+    /** 0 changed, 1 unchanged, 2 not the engine's, -1 unusable. */
+    external fun applyAction(handle: Long, action: String): Int
 }

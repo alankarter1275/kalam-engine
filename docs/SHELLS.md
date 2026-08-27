@@ -173,6 +173,12 @@ All three take **panel** coordinates and undo the rotation internally.
 That is uniform on purpose: no hit test in the reader wants page
 coordinates from you.
 
+They also all take **logical units** — the same space you gave
+`set_metrics`, not your platform's raw event coordinates. On Android that
+means `MotionEvent.x / density`; forward the raw value and every tap
+lands in the last band on a 3x screen, silently, because a tap that
+always means "next page" is not an error anything can report.
+
 `chapbook-viewer-gtk` runs 1 and 3 and skips 2 — it has a key for adding
 a highlight and no gesture for touching one — so treat the ordering above
 as the contract rather than as a transcription of that file.
