@@ -269,8 +269,11 @@ types use. MSRV 1.92 (hayro's floor; stylo 0.20 needs 1.89), stable toolchain â€
 ## Explicitly out of scope
 
 Fixed-layout EPUB (detected, rejected with a clear error), JavaScript
-(spec-permitted omission for reading systems), MathML, vertical writing
-modes, shrink-to-fit floated blocks (floated images and floated blocks
+(spec-permitted omission for reading systems), MathML layout (the
+spec-provided fallback for non-MathML reading systems applies instead:
+`<math altimg>` renders the publisher's equation image, `<math alttext>`
+renders as text â€” `chapbook-layout`'s `dom::math_fallback`), vertical
+writing modes, shrink-to-fit floated blocks (floated images and floated blocks
 with an explicit width lay out for real; the rest stay in flow), CSS
 counters in generated content, absolute positioning (treated as static),
 media overlays, DRM.

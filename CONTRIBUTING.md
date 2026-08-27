@@ -116,7 +116,8 @@ These are not style preferences. Each one has cost somebody a day.
 
 ## Out of scope
 
-Fixed-layout EPUB, JavaScript, MathML, vertical writing modes, absolute
+Fixed-layout EPUB, JavaScript, MathML layout (`<math>` renders via the
+EPUB altimg/alttext fallback), vertical writing modes, absolute
 positioning, media overlays, DRM.
 
 ## Gotchas

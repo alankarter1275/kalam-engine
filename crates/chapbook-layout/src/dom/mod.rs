@@ -16,6 +16,7 @@
 //! xml5ever over the same tree builder.
 
 mod cfi;
+mod math_fallback;
 mod offsets;
 mod parse;
 mod stylo_data;

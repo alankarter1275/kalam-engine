@@ -6,7 +6,7 @@
 //! carries the layered [`LayeredLocator`] record and is resolved through a
 //! fallback chain that degrades to "right page-ish", never "gone".
 //!
-//! # Normative: the locator text and `char_offset` (version 1)
+//! # Normative: the locator text and `char_offset` (version 2)
 //!
 //! `char_offset` indexes into the **locator text** of a spine item, produced
 //! by `chapbook_layout::dom::locator_text`:
@@ -14,7 +14,12 @@
 //! - **Unit:** Unicode scalar values (Rust `char` count), not bytes, not
 //!   UTF-16 code units.
 //! - **What counts:** the content of text nodes of the post-parse tree, in
-//!   document order, concatenated with nothing added between them.
+//!   document order, concatenated with nothing added between them. The
+//!   post-parse tree includes the MathML fallback rewrite (version 2):
+//!   `<math altimg>` becomes an `<img>` (contributing no text),
+//!   `<math alttext>` contributes exactly the alttext, and a `<math>` with
+//!   neither contributes its token text minus `annotation`/`annotation-xml`
+//!   subtrees.
 //! - **Excluded:** entire subtrees of `head`, `script`, `style`, and
 //!   `template` elements. Generated (`::before`/`::after`) content, `alt`
 //!   text, and markup never count.
@@ -55,7 +60,10 @@
 /// Version of the locator-text extraction function. Stored alongside every
 /// persisted position/annotation endpoint; see the module docs for what
 /// constitutes a version bump.
-pub const LOCATOR_VERSION: u32 = 1;
+///
+/// History: 1 → 2 added the MathML altimg/alttext fallback rewrite to the
+/// post-parse tree.
+pub const LOCATOR_VERSION: u32 = 2;
 
 /// Number of context characters captured on each side of a position for the
 /// [`Quote`] layer.

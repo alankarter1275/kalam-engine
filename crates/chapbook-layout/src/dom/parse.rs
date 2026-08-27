@@ -29,6 +29,9 @@ pub fn parse_xhtml(bytes: &[u8], base_path: &str) -> Result<Document> {
     let mut document = parse_document(sink, ParseOpts::default())
         .from_utf8()
         .one(bytes);
+    // MathML gets no layout; rewrite <math> subtrees into their EPUB
+    // altimg/alttext fallback before anything walks the tree.
+    super::math_fallback::apply_mathml_fallback(&mut document);
     // Fill node back-pointers/self-ids now that the tree is complete; &Node
     // becomes a self-sufficient handle for the stylo traits.
     document.seal();

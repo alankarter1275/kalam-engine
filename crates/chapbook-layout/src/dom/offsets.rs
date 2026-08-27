@@ -17,10 +17,12 @@ use super::tree::{Document, NodeData, NodeId};
 
 /// Extract the locator text of a document (see module docs).
 ///
-/// Version 1 semantics: content of text nodes in document order, excluding
+/// Version 2 semantics: content of text nodes in document order, excluding
 /// entire `head`, `script`, `style`, and `template` subtrees; nothing added
-/// between nodes; no whitespace collapsing. (Excluding `display:none`
-/// subtrees requires the cascade and will be a `LOCATOR_VERSION` bump.)
+/// between nodes; no whitespace collapsing. The tree walked is post
+/// MathML-fallback rewrite (`super::math_fallback`, the version 1 → 2
+/// change). (Excluding `display:none` subtrees requires the cascade and
+/// will be another `LOCATOR_VERSION` bump.)
 pub fn locator_text(doc: &Document) -> String {
     let mut out = String::new();
     if let Some(html) = doc.document_element() {

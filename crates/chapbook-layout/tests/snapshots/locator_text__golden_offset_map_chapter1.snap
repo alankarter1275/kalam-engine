@@ -2,7 +2,7 @@
 source: crates/chapbook-layout/tests/locator_text.rs
 expression: "lines.join(\"\\n\")"
 ---
-locator_version: 1
+locator_version: 2
 total_chars: 631
     9  Chapter One: A Beginning
    38  It was a truth universally
