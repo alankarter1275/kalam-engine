@@ -155,6 +155,28 @@ The verbs below are the direct route and stay supported. Above them sits
   know better, so a shell that picks for itself picks `Ltr` everywhere
   and pages manga backwards.
 
+**Which hit test wins.** A press can land on three things and they are
+not mutually exclusive, so the order is part of the contract:
+
+1. `session.link_at(x, y)` — a footnote or a cross-reference.
+2. `session.highlight_at(x, y)` — an existing annotation to recolor or
+   delete.
+3. `zones.action_at(x, y, &metrics)` — the page turn.
+
+Links and highlights are exact: both are `None` unless the press is
+inside the marked text, so a miss falls through to the tap zone
+naturally. Ask in the other order and the turn band swallows every link
+in the outer thirds of the page, which reads as "links don't work in this
+app" rather than as a precedence bug.
+
+All three take **panel** coordinates and undo the rotation internally.
+That is uniform on purpose: no hit test in the reader wants page
+coordinates from you.
+
+`chapbook-viewer-gtk` runs 1 and 3 and skips 2 — it has a key for adding
+a highlight and no gesture for touching one — so treat the ordering above
+as the contract rather than as a transcription of that file.
+
 `apply` answers two questions, not one, and you need both:
 `ActionOutcome::needs_redraw()` says whether to repaint, and
 `consumed()` says whether to tell your platform you took the event. They
