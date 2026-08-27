@@ -1,0 +1,6 @@
+// The checked-in header, by reference. Copying it here would fork the
+// golden; this module map is how Swift consumes the real artifact.
+module CChapbook {
+    header "../../../crates/chapbook-ffi/include/chapbook.h"
+    export *
+}

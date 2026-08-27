@@ -1041,6 +1041,72 @@ Moby-Dick, with no faces loaded at all. So conformance does not assert on text
 layout, and iOS conforming will not distinguish a working font path from an
 absent one. Rung 4 green means less there than it looks like it means.
 
+### What rung 2 found: it binds, and the header speaks Swift with an accent
+
+Rung 2 is done, on an iPhone 15 Pro simulator against the iOS 26.5
+runtime: every entry point the reader loop needs — open, error strings,
+metrics, title, the whole input model, `render_into`, suspend — called
+from Swift through the checked-in header and answering correctly, with
+the device slice link-checked beside it. What lives in `ios/spike` is a
+module map pointing at the real `chapbook.h`, one `main.swift`, and
+`run.sh`; no copy of the header, no cbindgen, no generated binding. The
+ladder's own description turned out stale in a good way: it asks for a
+throwaway crate of `extern "C"` functions, and none was needed, because
+the real ABI landed before this rung and already carries the
+`catch_unwind` discipline. The throwaway part is the Swift.
+
+**The one real defect: cbindgen's `cpp_compat` header imports every enum
+twice.** The C branch declares a plain `enum` for the constants and a
+fixed-width typedef for the signatures, and Swift's ClangImporter sees
+two *different types with the same name* — the diagnostic is the
+memorable `cannot convert value of type 'cb_log_level' to expected
+argument type 'cb_log_level' (aka 'Swift.Int32')`. Every constant
+reaches signature-land through `.rawValue` plus an integer-width
+conversion, which the spike does once at the top of the file. Livable
+for a spike; the real Swift package will want a one-time constants shim,
+or the header can emit C23 fixed-underlying-type enums and let the
+typedef name the enum — a cbindgen question to settle before the Swift
+package exists, not before.
+
+**`Send`-not-`Sync` is now compiler-checked rather than argued.** The
+`Session` wrapper is a `final class` that is deliberately not
+`Sendable` — marking it `@unchecked Sendable` would be claiming the
+`Sync` the Rust side does not have. Compiled under `-swift-version 6`,
+the thread-move test only builds because `Task.detached` takes a
+`sending` closure and region isolation can prove the handle leaves its
+region for good; adding a use of the session after the send is a compile
+error. The boundary section predicted the isolation model would take
+this shape "without persuasion", and it did — but only for a *local*
+handle. A top-level `let` is a global in Swift's eyes, and a global can
+never be proven sent, which is a real constraint on how a shell scopes
+its session and worth knowing before one is designed around a singleton.
+
+**Two toolchain traps, both cheap once written down.** `swiftc -sdk`
+compiles Swift against the right SDK but leaves clang's *linker* on the
+macOS sysroot — a warning, and the produced binary is correct (verified
+`platform 7` in its load commands), but the fix is spelling it
+`xcrun -sdk iphonesimulator swiftc`. And a Mac that has never completed
+Xcode's first launch is a trap with no error message: `simctl` *hangs*
+rather than failing, and a headless `xcodebuild -runFirstLaunch` blocks
+forever inside `AuthorizationCopyRights` waiting for a password dialog
+that cannot appear — it needs an admin at a GUI, once. The same species
+of unguessable prerequisite as the NDK and the missing toolchain
+targets, and this machine hit it live: the sudden cure for a wedged
+`simctl` was completing first launch, not restarting CoreSimulator.
+
+**What the simulator run answered beyond binding.** The log seam works
+from inside the runtime, and the first record it delivered was the
+right one: the deliberate no-library open produced `reading without a
+library: no default library location on this platform` — the exact
+behavior the library-directory fix was built for, arriving through a C
+callback on an Apple runtime. Bundled SQLite opened, wrote and
+suspended a real library in a container directory under the simulator.
+The input model — LTR direction off the book, thirds resolving, the
+page-zero `prev` returning *unchanged-but-consumed* — replayed from
+Swift exactly as it ran on the Android device. And `render_into` filled
+a 1200x1600 buffer at `dpi_scale` 2; what the pixels look like, and the
+channel-order check, stay rung 3's questions.
+
 ### What Swift asks for that JNI did not
 
 The boundary above was designed with Android in hand. Most of it transfers,
@@ -1145,7 +1211,9 @@ boundary section insists, that **it fires on the loader thread**.
 
 - Whether bundled SQLite *runs* under the iOS sandbox. It compiles, as does
   `ring` — see rung 1 above — but a database opening in a container is a
-  different question from a database linking.
+  different question from a database linking. *Half-answered at rung 2: it
+  opened, wrote and suspended inside the simulator runtime. `simctl spawn`
+  is not App Sandbox confinement, so the device half stands.*
 - The pixel path's *channel order*, which is still a device question even
   though its shape is settled above. A `CGBitmapContext` with
   `kCGImageAlphaPremultipliedLast` and `kCGBitmapByteOrder32Big` should be
@@ -1153,7 +1221,9 @@ boundary section insists, that **it fires on the loader thread**.
   `AndroidBitmap_lockPixels` turned out to be — but run the same test that
   settled it there, which is the sepia theme and not black text, because
   black on white cannot tell RGBA from BGRA.
-- Whether `/System/Library/Fonts` is readable from a sandboxed app.
+- Whether `/System/Library/Fonts` is readable from a sandboxed app. *The
+  simulator runtime has the directory, populated and listable — see rung 2
+  — but with the same caveat: a spawned process is not a sandboxed app.*
 - Simulator versus device. Android's rungs ran on an x86_64 emulator and
   therefore proved nothing about arm64 silicon; a Mac can close that gap for
   Apple and, with a physical Android device, for Android too.
@@ -1165,7 +1235,10 @@ boundary section insists, that **it fires on the loader thread**.
 2. It binds: a spike crate of `extern "C"` functions, hand-declared in Swift,
    each wrapping its body in `catch_unwind`. An isolation decision for the
    handle wrapper belongs here too, and it is `Send`-not-`Sync` spelled in
-   Swift.
+   Swift. **Done, on a simulator** — and no spike crate was needed, because
+   the real ABI landed first and already carries the `catch_unwind`
+   discipline; what was hand-written is Swift over the checked-in header.
+   See *What rung 2 found* above.
 3. It draws: `render_into`, tap zones, sepia for the channel check. Do it
    both ways and record the difference — `CGBitmapContext` then
    `CGBitmapContextCreateImage`, against a `CGImage` built over the engine's

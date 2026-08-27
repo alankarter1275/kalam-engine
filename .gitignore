@@ -14,3 +14,6 @@
 /android/*/build/
 /android/chapbook/src/main/jniLibs/
 /android/demo/src/main/assets/
+
+# iOS spike: compiled Swift binaries for slices this repo never ships.
+/ios/spike/build/
