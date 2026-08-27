@@ -33,7 +33,7 @@ pub use font::{
     ScriptTag,
 };
 pub use geometry::{EdgeSizes, Point, Rect, Rgba, Size};
-pub use input::{Action, Key, KeyMap, ReadingDirection, TapZones};
+pub use input::{Action, ActionOutcome, Key, KeyMap, ReadingDirection, TapZones};
 pub use locator::{
     book_progression, find_quote_nearest, resolve_in_text, LayeredLocator, Locator, Quote,
     ResolvedOffset, LOCATOR_VERSION, QUOTE_CONTEXT_CHARS,

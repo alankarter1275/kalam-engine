@@ -31,7 +31,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use chapbook_core::{EdgeSizes, Key, KeyMap, PageMetrics, Rotation, Size, TapZones};
+use chapbook_core::{ActionOutcome, EdgeSizes, Key, KeyMap, PageMetrics, Rotation, Size, TapZones};
 use chapbook_reader::Session;
 
 pub fn run() -> glib::ExitCode {
@@ -145,17 +145,17 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             // are not reading actions: the clipboard, the annotation
             // store and the window belong to the app. Everything the
             // engine can do for itself falls through to the key map.
-            let moved = match name.as_deref() {
+            let outcome = match name.as_deref() {
                 Some("h") => {
                     // The stored highlight replaces the selection that
                     // made it.
                     s.add_highlight();
                     s.selection_clear();
-                    true
+                    ActionOutcome::Changed
                 }
                 Some("Escape") if s.selected_range().is_some() => {
                     s.selection_clear();
-                    true
+                    ActionOutcome::Changed
                 }
                 Some("c") => {
                     // gdk owns the clipboard for us; nothing to redraw.
@@ -178,15 +178,23 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                 },
             };
             drop(s);
-            // Repaint only if something changed. That is what `apply`'s
-            // return value is for, and it is why the end of the book no
+            // Repaint only if something changed. That is half of what
+            // the outcome carries, and it is why the end of the book no
             // longer redraws the same page on every press.
-            if moved {
+            if outcome.needs_redraw() {
                 if let Some(area) = area.upgrade() {
                     area.queue_draw();
                 }
             }
-            glib::Propagation::Stop
+            // The other half. GTK's propagation flag is the same bit
+            // Android's `onKeyDown` returns, so this is where a bound key
+            // the engine declined — Back at the bottom of its stack —
+            // reaches whatever is behind this handler.
+            if outcome.consumed() {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
         });
         window.add_controller(key);
     }
@@ -276,9 +284,9 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                 let Some(action) = zones.action_at(x as f32, y as f32, &metrics) else {
                     return;
                 };
-                let moved = s.apply(action);
+                let outcome = s.apply(action);
                 drop(s);
-                if moved {
+                if outcome.needs_redraw() {
                     if let Some(area) = area_weak.upgrade() {
                         area.queue_draw();
                     }

@@ -30,7 +30,10 @@ session.set_metrics(metrics);                      // 2. say how big a page is
 loop {
     // 3. turn input into Session calls
     if let Some(action) = keys.action(engine_key(event)?) {
-        session.apply(action);
+        let outcome = session.apply(action);  // Changed / Unchanged / Unhandled
+        if !outcome.consumed() {
+            pass_to_platform(event);
+        }
     }
     // 4. ask what to draw, and draw it
     if let Some(pixmap) = session.render() {
@@ -133,8 +136,7 @@ The verbs below are the direct route and stay supported. Above them sits
 
 - **`Action`** is the vocabulary — `NextPage`, `PrevPage`, `NextUnit`,
   `PrevUnit`, `Back`, `FontUp`, `FontDown`, `CycleTheme`, `ToggleMenu` —
-  and **`Session::apply(action)`** applies one, returning the same
-  did-anything-move `bool` the verbs below do. Translate your platform's
+  and **`Session::apply(action)`** applies one. Translate your platform's
   events into an `Action` and a binding is written once rather than once
   per shell. `Action` is `#[non_exhaustive]`: bookmarks and a jump to the
   table of contents are plainly coming, so match with a fallback arm.
@@ -148,9 +150,25 @@ The verbs below are the direct route and stay supported. Above them sits
   undoing the rotation for you, so this is the one hit test you do not
   have to put through `panel_to_page` yourself.
 
-`ToggleMenu` is the one action `apply` always refuses, because a reader's
-chrome is yours and the engine has none. Match for it before calling, and
-do not read the `false` as "nothing happened".
+`apply` answers two questions, not one, and you need both:
+`ActionOutcome::needs_redraw()` says whether to repaint, and
+`consumed()` says whether to tell your platform you took the event. They
+are not the same bit and neither implies the other. The last page of a
+book is `Unchanged` — nothing to repaint, but the reader still owns that
+keypress, and since `KeyMap` binds the volume keys by default, an
+Android shell that returns "nothing changed" to `onKeyDown` gets the
+system volume slider drawn over the book. iOS's responder chain has the
+same shape with quieter symptoms.
+
+`Unhandled` is the third state and means *let the platform have this*.
+Two things produce it. `ToggleMenu`, because a reader's chrome is yours
+and the engine has none. And `Back` with an empty trail — which is
+deliberate, and the reason the distinction is the engine's to draw rather
+than yours: whether there is anywhere to return to is a fact about the
+back stack, and the bottom of it is exactly where Android's and iOS's own
+Back should take over and leave the reader. Forward the gesture
+unconditionally; you do not have to shadow the history to know when not
+to.
 
 What is deliberately *not* here is a gesture recognizer. Your platform
 ships a better one than this repo would, and its conventions — fling

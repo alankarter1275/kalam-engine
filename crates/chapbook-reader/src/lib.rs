@@ -35,9 +35,9 @@ mod loader;
 use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
-    Action, BookKind, CredentialStore, FontReport, FontSource, Format, Locator, NoCredentials,
-    PageMetrics, PixelFormat, Point, Publication, ReadingSettings, Rect, Result, Rotation, Source,
-    TocEntry,
+    Action, ActionOutcome, BookKind, CredentialStore, FontReport, FontSource, Format, Locator,
+    NoCredentials, PageMetrics, PixelFormat, Point, Publication, ReadingSettings, Rect, Result,
+    Rotation, Source, TocEntry,
 };
 // Annotations are the only thing that captures a locator, resolves one
 // against unit text, or paints a stored colour.
@@ -1287,28 +1287,42 @@ impl Session {
 
     // ---- Input ----
 
-    /// Apply a reader intent from [`chapbook_core::input`]. Returns
-    /// whether anything changed and the shell should redraw — the same
-    /// answer, and for the same reason, that [`Session::next_page`] gives.
+    /// Apply a reader intent from [`chapbook_core::input`].
     ///
     /// This is the second half of the input seam: shells translate native
     /// events into an [`Action`] and the engine applies it, so a tap zone
     /// or a key binding is written once instead of once per platform.
     ///
-    /// [`Action::ToggleMenu`] is the exception and always returns `false`.
-    /// A reader's chrome belongs to the shell, so there is nothing here to
-    /// toggle; a shell that binds it should match for it before calling
-    /// this, not read the `false` as "nothing happened".
-    pub fn apply(&mut self, action: Action) -> bool {
+    /// The [`ActionOutcome`] answers two questions rather than one,
+    /// because a shell needs both and can derive neither from the other.
+    /// See its own documentation for what guessing costs.
+    pub fn apply(&mut self, action: Action) -> ActionOutcome {
+        let moved = |did: bool| {
+            if did {
+                ActionOutcome::Changed
+            } else {
+                ActionOutcome::Unchanged
+            }
+        };
         match action {
-            Action::NextPage => self.next_page(),
-            Action::PrevPage => self.prev_page(),
-            Action::NextUnit => self.next_unit(),
-            Action::PrevUnit => self.prev_unit(),
-            Action::Back => self.back(),
+            Action::NextPage => moved(self.next_page()),
+            Action::PrevPage => moved(self.prev_page()),
+            Action::NextUnit => moved(self.next_unit()),
+            Action::PrevUnit => moved(self.prev_unit()),
+            // The bottom of the back stack is where the platform's own
+            // Back takes over, on both mobile targets. Declining it here
+            // is what lets a shell forward the gesture unconditionally
+            // instead of shadowing the history to know when not to.
+            Action::Back => {
+                if self.back() {
+                    ActionOutcome::Changed
+                } else {
+                    ActionOutcome::Unhandled
+                }
+            }
             // `adjust_font` clamps, so at either stop this correctly says
             // nothing moved rather than asking for a redraw of the same
-            // page at the same size.
+            // page at the same size. The key is consumed either way.
             Action::FontUp | Action::FontDown => {
                 let before = self.settings.base_font_px;
                 let step = if action == Action::FontUp {
@@ -1317,16 +1331,19 @@ impl Session {
                     -FONT_STEP_PX
                 };
                 self.adjust_font(step);
-                self.settings.base_font_px != before
+                moved(self.settings.base_font_px != before)
             }
             Action::CycleTheme => {
                 self.cycle_theme();
-                true
+                ActionOutcome::Changed
             }
-            Action::ToggleMenu => false,
+            // A reader's chrome belongs to the shell: there is nothing
+            // here to toggle, and the shell that bound this wants the
+            // event back.
+            Action::ToggleMenu => ActionOutcome::Unhandled,
             // `Action` is `#[non_exhaustive]`. An intent this engine has
             // no verb for is one the shell may still want to act on.
-            _ => false,
+            _ => ActionOutcome::Unhandled,
         }
     }
 

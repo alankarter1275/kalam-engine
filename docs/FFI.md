@@ -360,16 +360,36 @@ last column of the page, because the far edge of a band is inclusive and
 one-pixel-wide.
 
 **The other half — `Session::apply(Action)` — is done too, and the return
-value is where the design work was.** `apply` gives the same
-did-anything-move `bool` the navigation verbs give, which meant the font
-actions could not simply return `true`: `adjust_font` clamps to 10–40, so
-at either stop a shell would have been told to repaint an identical page
-forever. It compares the size across the call instead. `ToggleMenu` is the
-one action that always returns `false`, and the doc comment says in as many
-words that a shell must not read that as "nothing happened" — the engine has
-no chrome, so the shell is expected to have matched for it first. The step
-size is the engine's rather than each shell's, as `FONT_STEP_PX`, so a
-reader who changes device finds the same ladder.
+value is where the design work was.** It began as the same
+did-anything-move `bool` the navigation verbs give, which already forced
+one decision: `adjust_font` clamps to 10–40, so the font actions could not
+simply return `true` or a shell would repaint an identical page forever.
+It compares the size across the call instead. The step size is the
+engine's rather than each shell's, as `FONT_STEP_PX`, so a reader who
+changes device finds the same ladder.
+
+**But a bool was the wrong return type, and Android is what proves it.**
+A shell needs two answers and can derive neither from the other: *should I
+repaint*, and *did I consume this event*. `apply` returns
+`ActionOutcome::{Changed, Unchanged, Unhandled}` instead. The forcing case
+is concrete rather than theoretical — `KeyMap` binds the volume keys by
+default, Android's `onKeyDown` must return `true` to keep an event, and a
+shell that forwards a did-anything-move bool draws the system volume
+slider over the book on the last page of every one. iOS's responder chain
+is the same shape with quieter symptoms.
+
+`Unhandled` is the state a bool could not express, and `Back` is why it
+had to be the engine's call rather than each shell's. `ToggleMenu` is
+`Unhandled` for the obvious reason — the engine has no chrome — which
+deletes the footgun the first version had to document instead. `Back` with
+an empty trail is `Unhandled` too, deliberately: whether there is anywhere
+to return to is a fact about the back stack, and the bottom of it is
+exactly where Android's and iOS's own Back should take over and leave the
+reader. That lets a shell forward the gesture unconditionally instead of
+shadowing the history to know when not to. `ActionOutcome` is
+*exhaustive*, unlike the two enums above — consumed and repainting are two
+bits and the fourth corner, declining an event while demanding a repaint,
+describes nothing.
 
 **`chapbook-viewer-gtk` is the first shell over it**, and converting it is
 what showed the seam pays. Its keyboard handling went from a fourteen-arm
@@ -388,6 +408,11 @@ Converting it also found a small standing bug. The old handler called
 something moved, so the end of the book stops repainting the same page.
 That is the return value the reader has documented since the fbdev shell
 got it wrong, finally being used by the shell that was ignoring it.
+
+And the second half of the outcome turned out to have a desktop use as
+well, which was not the reason for it: GTK's `Propagation::Stop`/`Proceed`
+is the same bit Android's `onKeyDown` returns, so the handler now proceeds
+on `Unhandled` instead of swallowing every bound key unconditionally.
 
 What is left is Android: `ReaderView.kt` still divides its width by three
 by hand, and the winit viewer still hand-translates too. Both are step 4

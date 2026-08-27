@@ -90,6 +90,54 @@ impl Action {
     }
 }
 
+/// What the engine did with an [`Action`], and what the shell owes the
+/// platform in return.
+///
+/// Two questions, not one. "Should I repaint" and "did I consume this
+/// event" are different, and a shell that has only the first gets the
+/// second wrong in a way that is hard to attribute later: Android's
+/// `onKeyDown` must return `true` to keep an event, and [`KeyMap`] binds
+/// the volume keys by default, so a reader that answers "nothing
+/// changed" on the last page hands the keypress back and the system
+/// draws its volume slider over the book. iOS's responder chain has the
+/// same shape with quieter symptoms.
+///
+/// The distinction is the engine's to make because the engine is what
+/// knows. Whether there is anywhere to go [`Back`](Action::Back) to is a
+/// fact about the back stack, and the answer at the bottom of it —
+/// *let the platform's own Back have this* — is the convention on both
+/// mobile targets.
+///
+/// Unlike [`Action`] and [`Key`] this is a closed set: consumed and
+/// repainting are two bits, and the fourth corner (declining an event
+/// but demanding a repaint) describes nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActionOutcome {
+    /// Applied, and the position, size or theme moved. Consume the event
+    /// and repaint.
+    Changed,
+    /// Applied, and nothing moved — the last page, or the font already at
+    /// its stop. Consume the event anyway: the reader *does* take this
+    /// key, it just had nothing to do this time.
+    Unchanged,
+    /// Not the engine's. [`Action::ToggleMenu`] always, because a
+    /// reader's chrome belongs to the shell, and [`Action::Back`] with an
+    /// empty history. Let the event through to the platform.
+    Unhandled,
+}
+
+impl ActionOutcome {
+    /// Whether the shell should repaint. Only [`Changed`](Self::Changed).
+    pub fn needs_redraw(self) -> bool {
+        self == ActionOutcome::Changed
+    }
+
+    /// Whether the shell should tell the platform it took the event —
+    /// `true` for anything the engine applied, moved or not.
+    pub fn consumed(self) -> bool {
+        self != ActionOutcome::Unhandled
+    }
+}
 /// Which physical edge reading starts from.
 ///
 /// Tap zones are the only thing here that needs it: "the left third goes

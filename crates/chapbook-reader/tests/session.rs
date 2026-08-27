@@ -1641,36 +1641,75 @@ fn a_restore_does_not_follow_the_reader_into_another_unit() {
 
 #[test]
 fn actions_route_to_the_verbs_a_shell_would_have_called_by_hand() {
-    use chapbook_core::Action;
+    use chapbook_core::{Action, ActionOutcome};
 
     let mut s = open_isolated("epub-apply-nav", &fixture("epub/minimal.epub"));
     s.set_metrics(metrics());
     render_loaded(&mut s);
 
     let start = s.locator();
-    assert!(s.apply(Action::NextPage), "the book has somewhere to go");
+    assert_eq!(s.apply(Action::NextPage), ActionOutcome::Changed);
     let after = s.locator();
     assert_ne!(after, start, "and it went there");
 
-    assert!(s.apply(Action::PrevPage));
+    assert_eq!(s.apply(Action::PrevPage), ActionOutcome::Changed);
     assert_eq!(s.locator(), start, "back where it started");
 
-    // The honest `false` a shell's redraw check depends on: nothing before
-    // the first page, so nothing moved and nothing needs repainting.
-    assert!(!s.apply(Action::PrevPage), "no page before the first");
+    // Nothing before the first page, so nothing to repaint — but the key
+    // is still the reader's. A shell that propagated this one would be
+    // handing the platform a press it had already claimed, which on
+    // Android is how the volume slider ends up over the book.
+    let stuck = s.apply(Action::PrevPage);
+    assert_eq!(stuck, ActionOutcome::Unchanged, "no page before the first");
+    assert!(!stuck.needs_redraw());
+    assert!(stuck.consumed(), "and the reader still took the key");
     assert_eq!(s.locator(), start);
 
     if s.spine_len() > 1 {
-        assert!(s.apply(Action::NextUnit));
+        assert_eq!(s.apply(Action::NextUnit), ActionOutcome::Changed);
         assert_eq!(s.page(), 0, "a unit skip lands on its first page");
-        assert!(s.apply(Action::PrevUnit));
+        assert_eq!(s.apply(Action::PrevUnit), ActionOutcome::Changed);
     }
-    assert!(!s.apply(Action::PrevUnit), "no unit before the first");
+    assert_eq!(
+        s.apply(Action::PrevUnit),
+        ActionOutcome::Unchanged,
+        "no unit before the first"
+    );
+}
+
+#[test]
+fn back_declines_at_the_bottom_of_the_stack_so_the_platform_can_have_it() {
+    use chapbook_core::{Action, ActionOutcome, Locator};
+
+    let mut s = open_isolated("epub-apply-back", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    render_loaded(&mut s);
+    assert!(s.spine_len() > 1, "the fixture needs somewhere to jump");
+
+    // The case a bool could not express. The engine understands `Back`
+    // perfectly well and is declining it anyway, because an empty trail
+    // is exactly where both mobile platforms expect their own Back to
+    // take over and leave the reader. A shell can forward the gesture
+    // unconditionally instead of shadowing the history to know when not
+    // to.
+    assert!(!s.can_go_back());
+    let empty = s.apply(Action::Back);
+    assert_eq!(empty, ActionOutcome::Unhandled);
+    assert!(!empty.consumed(), "the system Back gets the gesture");
+
+    // With a trail it is an ordinary reading action again.
+    let start = s.locator();
+    assert!(s.goto(Locator::chapter_start(1)), "jumped to chapter two");
+    assert!(s.can_go_back());
+    let went = s.apply(Action::Back);
+    assert_eq!(went, ActionOutcome::Changed);
+    assert!(went.consumed(), "and this one the reader keeps");
+    assert_eq!(s.locator(), start, "back where it started");
 }
 
 #[test]
 fn font_actions_step_by_the_engines_amount_and_stop_at_the_clamp() {
-    use chapbook_core::Action;
+    use chapbook_core::{Action, ActionOutcome};
     use chapbook_reader::FONT_STEP_PX;
 
     let mut s = open_isolated("epub-apply-font", &fixture("epub/minimal.epub"));
@@ -1678,46 +1717,60 @@ fn font_actions_step_by_the_engines_amount_and_stop_at_the_clamp() {
     render_loaded(&mut s);
 
     let start = s.settings().base_font_px;
-    assert!(s.apply(Action::FontUp));
+    assert_eq!(s.apply(Action::FontUp), ActionOutcome::Changed);
     assert_eq!(s.settings().base_font_px, start + FONT_STEP_PX);
-    assert!(s.apply(Action::FontDown));
+    assert_eq!(s.apply(Action::FontDown), ActionOutcome::Changed);
     assert_eq!(s.settings().base_font_px, start, "and back down again");
 
-    // `adjust_font` clamps, so at the stop `apply` has to say nothing
+    // `adjust_font` clamps, so at the stop the outcome has to say nothing
     // moved rather than ask for a redraw of an identical page. Bounded
     // well above the number of steps the 10–40 range can hold.
     let mut steps = 0;
-    while s.apply(Action::FontDown) {
+    while s.apply(Action::FontDown).needs_redraw() {
         steps += 1;
         assert!(steps < 100, "the clamp never arrived");
     }
     let floor = s.settings().base_font_px;
-    assert!(!s.apply(Action::FontDown), "still refused at the floor");
+    let stuck = s.apply(Action::FontDown);
+    assert_eq!(
+        stuck,
+        ActionOutcome::Unchanged,
+        "still refused at the floor"
+    );
+    assert!(stuck.consumed(), "a clamped font key is not the platform's");
     assert_eq!(s.settings().base_font_px, floor, "and did not drift");
-    assert!(s.apply(Action::FontUp), "the other direction still moves");
+    assert_eq!(
+        s.apply(Action::FontUp),
+        ActionOutcome::Changed,
+        "the other direction still moves"
+    );
 }
 
 #[test]
 fn cycling_the_theme_is_an_action_and_the_menu_is_not_the_engines() {
-    use chapbook_core::{Action, Theme};
+    use chapbook_core::{Action, ActionOutcome, Theme};
 
     let mut s = open_isolated("epub-apply-misc", &fixture("epub/minimal.epub"));
     s.set_metrics(metrics());
     render_loaded(&mut s);
 
     let start = s.settings().theme;
-    assert!(s.apply(Action::CycleTheme));
+    assert_eq!(s.apply(Action::CycleTheme), ActionOutcome::Changed);
     assert_eq!(s.settings().theme, start.cycle());
 
     // Three variants, so the cycle comes home and every step redraws.
-    assert!(s.apply(Action::CycleTheme));
-    assert!(s.apply(Action::CycleTheme));
+    assert_eq!(s.apply(Action::CycleTheme), ActionOutcome::Changed);
+    assert_eq!(s.apply(Action::CycleTheme), ActionOutcome::Changed);
     assert_eq!(s.settings().theme, start);
     assert_eq!(Theme::default().cycle().cycle().cycle(), Theme::default());
 
-    // The engine has no chrome to toggle. `false` here means "not mine",
-    // and the shell is expected to have matched for it first.
+    // `Unhandled`, not `Unchanged`: the engine has no chrome to toggle,
+    // so the shell that bound this key has to get the event back rather
+    // than read a quiet "nothing moved" and swallow it.
     let before = s.locator();
-    assert!(!s.apply(Action::ToggleMenu));
+    let menu = s.apply(Action::ToggleMenu);
+    assert_eq!(menu, ActionOutcome::Unhandled);
+    assert!(!menu.consumed(), "the shell gets its own key back");
+    assert!(!menu.needs_redraw());
     assert_eq!(s.locator(), before, "and it touched nothing on the way");
 }
