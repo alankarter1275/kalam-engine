@@ -148,7 +148,12 @@ The verbs below are the direct route and stay supported. Above them sits
 - **`TapZones::action_at(x, y, &metrics)`** is the tap policy: three
   vertical bands in the reading direction, taking *panel* coordinates and
   undoing the rotation for you, so this is the one hit test you do not
-  have to put through `panel_to_page` yourself.
+  have to put through `panel_to_page` yourself. Build it with
+  **`TapZones::new(session.reading_direction())`**, not `default()`. The
+  book declares which edge it reads from — EPUB's
+  `page-progression-direction` — and `default()` is `Ltr` with no way to
+  know better, so a shell that picks for itself picks `Ltr` everywhere
+  and pages manga backwards.
 
 `apply` answers two questions, not one, and you need both:
 `ActionOutcome::needs_redraw()` says whether to repaint, and

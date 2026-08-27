@@ -1774,3 +1774,41 @@ fn cycling_the_theme_is_an_action_and_the_menu_is_not_the_engines() {
     assert!(!menu.needs_redraw());
     assert_eq!(s.locator(), before, "and it touched nothing on the way");
 }
+
+#[test]
+fn an_rtl_book_flips_the_tap_zones_without_the_shell_deciding_anything() {
+    use chapbook_core::{Action, ReadingDirection, TapZones};
+
+    let mut ltr = open_isolated("epub-dir-ltr", &fixture("epub/minimal.epub"));
+    ltr.set_metrics(metrics());
+    render_loaded(&mut ltr);
+    assert_eq!(ltr.reading_direction(), ReadingDirection::Ltr);
+
+    let mut rtl = open_isolated("epub-dir-rtl", &fixture("epub/rtl.epub"));
+    rtl.set_metrics(metrics());
+    render_loaded(&mut rtl);
+    assert_eq!(rtl.reading_direction(), ReadingDirection::Rtl);
+
+    let m = ltr.metrics().expect("metrics were set");
+    let (near, far, mid) = (m.size.w * 0.1, m.size.w * 0.9, m.size.h / 2.0);
+
+    // One line of shell code, written once, correct on both books —
+    // which is the whole reason the direction is the engine's to report.
+    let ltr_zones = TapZones::new(ltr.reading_direction());
+    let rtl_zones = TapZones::new(rtl.reading_direction());
+
+    assert_eq!(ltr_zones.action_at(near, mid, &m), Some(Action::PrevPage));
+    assert_eq!(ltr_zones.action_at(far, mid, &m), Some(Action::NextPage));
+    // The same tap on the same page box, meaning the opposite thing,
+    // because the package said so and nothing else had to.
+    assert_eq!(rtl_zones.action_at(near, mid, &m), Some(Action::NextPage));
+    assert_eq!(rtl_zones.action_at(far, mid, &m), Some(Action::PrevPage));
+
+    // And the bug this prevents: a shell reaching for `TapZones::default`
+    // gets the left-to-right answer on the right-to-left book, silently,
+    // and the reader pages backwards.
+    assert_eq!(
+        TapZones::default().action_at(near, mid, &m),
+        Some(Action::PrevPage)
+    );
+}

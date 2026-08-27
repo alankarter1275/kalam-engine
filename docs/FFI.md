@@ -306,19 +306,38 @@ What *is* shared, and is genuinely engine knowledge:
   between porting and reverse-engineering.
 
 Home: `chapbook_core::input`, Contract tier, no event loop, no I/O.
-**Built** — all three, as sketched, with ten tests and four decisions the
-sketch did not make.
+**Built** — all three, as sketched, with the decisions the sketch did not
+make recorded below.
 
 **Reading direction had to become a type before anything could consult it.**
 The tap-zone bullet says the policy "depends on reading direction, which is
 engine knowledge", and nothing in the workspace had a way to say which one a
-book was: `page-progression-direction` is not parsed, and `Ltr`/`Rtl` appear
-nowhere in core, epub or reader. So `ReadingDirection` is declared here,
-where the only consumer is, with a note that the spine should produce it
-when it learns the attribute — rather than in `book.rs` next to a
-`Publication` that cannot currently fill it in. RTL is one mirrored
-coordinate, not a second set of comparisons, and the test asserts the two
-directions are reflections of each other rather than checking each by hand.
+book was: `page-progression-direction` was unparsed and `Ltr`/`Rtl` appeared
+nowhere in core, epub or reader. So `ReadingDirection` was declared in
+`input.rs`, where the only consumer was. RTL is one mirrored coordinate, not
+a second set of comparisons, and the test asserts the two directions are
+reflections of each other rather than checking each by hand.
+
+**And then it needed an owner, which is a separate problem.** A type with no
+producer left the fact with the shell — `TapZones::default()` is `Ltr`, so
+every shell would have picked `Ltr`, on every platform, because nothing told
+it otherwise. Two mobile shells were about to make that choice
+independently and ship it, and the repair afterwards is a reading-direction
+toggle in each app's settings: a user-visible API inherited by accident.
+
+So the book owns it now. `Publication::reading_direction` defaults to `Ltr`;
+`chapbook-epub` overrides it from rbook's `spine().page_direction()`, where
+"no preference" and "ltr" are both `Ltr` because that is what the spec says;
+and `Session::reading_direction` hands it to whoever builds the
+`TapZones`. Formats with nowhere to declare it inherit the default, which
+means manga in a CBZ still reads `Ltr` — there is nothing in the container
+to consult and guessing from the images is not that layer's job.
+
+The end-to-end test is the one worth having: the same tap, on the same page
+box, resolves to `PrevPage` on `minimal.epub` and `NextPage` on a new
+`rtl.epub` fixture, and the third assertion is that `TapZones::default()`
+gets it wrong on the RTL book — the bug in the form it would actually have
+shipped in.
 
 **`action_at` takes panel coordinates, not page coordinates.** The sketch's
 signature is unchanged, but the meaning of `x, y` is the numbers a touch

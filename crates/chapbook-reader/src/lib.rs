@@ -36,8 +36,8 @@ use loader::{DecodedUnit, LoadSource, Loader};
 
 use chapbook_core::{
     Action, ActionOutcome, BookKind, CredentialStore, FontReport, FontSource, Format, Locator,
-    NoCredentials, PageMetrics, PixelFormat, Point, Publication, ReadingSettings, Rect, Result,
-    Rotation, Source, TocEntry,
+    NoCredentials, PageMetrics, PixelFormat, Point, Publication, ReadingDirection, ReadingSettings,
+    Rect, Result, Rotation, Source, TocEntry,
 };
 // Annotations are the only thing that captures a locator, resolves one
 // against unit text, or paints a stored colour.
@@ -1286,6 +1286,28 @@ impl Session {
     }
 
     // ---- Input ----
+
+    /// Which edge this book reads from, for [`TapZones`].
+    ///
+    /// Ask the session rather than reaching for [`TapZones::default`],
+    /// which is `Ltr` and has no way to know better. The book declares
+    /// this — EPUB's `page-progression-direction` — so a shell that
+    /// picks for itself picks `Ltr` on every platform it ships to, and
+    /// an RTL book paged the wrong way is unreadable rather than merely
+    /// unfamiliar.
+    ///
+    /// ```no_run
+    /// # use chapbook_core::TapZones;
+    /// # fn f(session: &chapbook_reader::Session) {
+    /// let zones = TapZones::new(session.reading_direction());
+    /// # }
+    /// ```
+    ///
+    /// [`TapZones`]: chapbook_core::TapZones
+    /// [`TapZones::default`]: chapbook_core::TapZones::default
+    pub fn reading_direction(&self) -> ReadingDirection {
+        self.book.publication().reading_direction()
+    }
 
     /// Apply a reader intent from [`chapbook_core::input`].
     ///

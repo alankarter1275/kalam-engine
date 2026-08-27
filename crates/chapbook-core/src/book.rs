@@ -7,6 +7,7 @@
 //! model: each archive image is one spine item whose content is the page.
 
 use crate::error::ChapbookError;
+use crate::input::ReadingDirection;
 use crate::Result;
 
 /// The publication format behind a [`Publication`].
@@ -107,6 +108,22 @@ pub trait Publication {
     /// must not collapse corruption into absence.
     fn cover(&self) -> Result<Option<Resource>> {
         Ok(None)
+    }
+
+    /// Which edge reading starts from: EPUB's
+    /// `page-progression-direction`, where a package declares one.
+    ///
+    /// The book owns this fact, not the shell. A reader that lets each
+    /// platform pick gets `Ltr` on all of them, because that is the
+    /// default and nothing else tells them otherwise — and an RTL book
+    /// paged left-to-right is unreadable rather than merely unfamiliar.
+    ///
+    /// Formats with nowhere to write it down inherit the default. A CBZ
+    /// has no manifest at all, so manga in an archive reads `Ltr` here;
+    /// there is nothing in the container to consult, and guessing from
+    /// the images is not this layer's job.
+    fn reading_direction(&self) -> ReadingDirection {
+        ReadingDirection::Ltr
     }
 
     /// Convenience: the spine item or a range error.

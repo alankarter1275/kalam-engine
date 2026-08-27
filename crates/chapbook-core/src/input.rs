@@ -145,10 +145,12 @@ impl ActionOutcome {
 /// one, and getting it wrong makes a book unreadable rather than merely
 /// unfamiliar.
 ///
-/// Nothing populates this from a book yet — EPUB's
-/// `page-progression-direction` is not parsed — so a shell chooses, and
-/// the default is [`ReadingDirection::Ltr`]. When the spine learns the
-/// attribute this is the type it should produce.
+/// The book owns this, not the shell. `Publication::reading_direction`
+/// produces it — from EPUB's `page-progression-direction`, where a
+/// package declares one — and `Session::reading_direction` hands it to
+/// whoever is building [`TapZones`]. A shell that decides for itself
+/// decides `Ltr` on every platform it ships to, because that is the
+/// default and nothing else would tell it otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ReadingDirection {
     /// Left to right: the previous page is off the left edge.
@@ -183,7 +185,11 @@ pub struct TapZones {
 }
 
 impl Default for TapZones {
-    /// Thirds, with the middle opening the menu.
+    /// Thirds, with the middle opening the menu, reading left to right.
+    ///
+    /// The direction is the one field this cannot get right on its own.
+    /// Prefer [`TapZones::new`] with `Session::reading_direction`, and
+    /// reach for `default` only where there is no book open to ask.
     fn default() -> Self {
         TapZones {
             prev_fraction: 1.0 / 3.0,
@@ -195,7 +201,10 @@ impl Default for TapZones {
 }
 
 impl TapZones {
-    /// The default policy in a chosen reading direction.
+    /// The default policy in a book's reading direction.
+    ///
+    /// The direction to pass is `Session::reading_direction`; see
+    /// [`ReadingDirection`] for why it is not the shell's to choose.
     pub fn new(direction: ReadingDirection) -> Self {
         TapZones {
             direction,

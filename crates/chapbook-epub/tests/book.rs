@@ -111,3 +111,20 @@ fn obfuscated_font_deobfuscates_transparently() {
     .unwrap();
     assert_eq!(font.data, original);
 }
+
+#[test]
+fn page_progression_direction_comes_off_the_spine() {
+    use chapbook_core::ReadingDirection;
+
+    // A package that declares nothing means left-to-right, which is what
+    // the spec says and not merely what the default happens to be.
+    assert_eq!(minimal().reading_direction(), ReadingDirection::Ltr);
+
+    let rtl = Book::open(&fixture("rtl.epub")).expect("fixture EPUB should open");
+    assert_eq!(rtl.reading_direction(), ReadingDirection::Rtl);
+    assert_eq!(
+        rtl.spine().len(),
+        minimal().spine().len(),
+        "the same book, read from the other edge"
+    );
+}

@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use chapbook_core::{
-    BookKind, BookMetadata, ChapbookError, Publication, Resource, Result, SpineItem, TocEntry,
+    BookKind, BookMetadata, ChapbookError, Publication, ReadingDirection, Resource, Result,
+    SpineItem, TocEntry,
 };
 use rbook::epub::manifest::EpubManifestEntry;
 use rbook::epub::toc::EpubTocEntry;
@@ -22,6 +23,7 @@ pub struct Book {
     spine: Vec<SpineItem>,
     toc: Vec<TocEntry>,
     fixed_layout: bool,
+    direction: ReadingDirection,
     /// Container paths whose leading bytes are obfuscated (fonts), from
     /// META-INF/encryption.xml. Reads de-obfuscate transparently.
     obfuscated: std::collections::HashMap<String, Obfuscation>,
@@ -85,7 +87,7 @@ impl Book {
     fn from_epub(epub: rbook::Epub) -> Result<Self> {
         // Everything below borrows from `epub`; scope the borrows so the
         // handle can move into the returned Book.
-        let (metadata, fixed_layout, spine, toc) = Self::extract(&epub);
+        let (metadata, fixed_layout, spine, toc, direction) = Self::extract(&epub);
         let obfuscated = epub
             .read_resource_bytes("/META-INF/encryption.xml")
             .map(|xml| obfuscation::parse_encryption_xml(&xml))
@@ -96,12 +98,21 @@ impl Book {
             spine,
             toc,
             fixed_layout,
+            direction,
             obfuscated,
         })
     }
 
     #[allow(clippy::type_complexity)]
-    fn extract(epub: &rbook::Epub) -> (BookMetadata, bool, Vec<SpineItem>, Vec<TocEntry>) {
+    fn extract(
+        epub: &rbook::Epub,
+    ) -> (
+        BookMetadata,
+        bool,
+        Vec<SpineItem>,
+        Vec<TocEntry>,
+        ReadingDirection,
+    ) {
         let md = epub.metadata();
         let metadata = BookMetadata {
             title: md.title().map(|t| t.value().to_string()),
@@ -143,7 +154,15 @@ impl Book {
             None => Vec::new(),
         };
 
-        (metadata, fixed_layout, spine, toc)
+        // `Default` is the package declaring no preference, which the
+        // spec says to read as left-to-right. Only an explicit `rtl`
+        // flips the reader.
+        let direction = match epub.spine().page_direction() {
+            rbook::ebook::spine::PageDirection::RightToLeft => ReadingDirection::Rtl,
+            _ => ReadingDirection::Ltr,
+        };
+
+        (metadata, fixed_layout, spine, toc, direction)
     }
 
     pub fn is_fixed_layout(&self) -> bool {
@@ -214,6 +233,10 @@ impl Publication for Book {
 
     fn spine(&self) -> &[SpineItem] {
         &self.spine
+    }
+
+    fn reading_direction(&self) -> ReadingDirection {
+        self.direction
     }
 
     fn toc(&self) -> &[TocEntry] {

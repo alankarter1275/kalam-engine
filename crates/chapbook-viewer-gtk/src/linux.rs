@@ -210,10 +210,12 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
         let tap = Rc::new(Cell::new(false));
         // Thirds, with an inert middle: this shell has no menu, so the
         // band that would open one is bound to nothing rather than to an
-        // action `apply` would refuse.
+        // action `apply` would refuse. The direction comes from the book
+        // via the session, not from `TapZones::default`, which is `Ltr`
+        // and cannot know better.
         let zones = TapZones {
             middle: None,
-            ..TapZones::default()
+            ..TapZones::new(session.borrow().reading_direction())
         };
         {
             let session = session.clone();
