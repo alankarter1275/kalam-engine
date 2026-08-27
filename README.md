@@ -39,14 +39,15 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 | `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) | Not a library |
 | `chapbook-viewer-gtk` | GTK4 reference viewer (Linux only) | Not a library |
 | `tools/chapbook-cli` | Dev/test CLI exercising each pipeline stage | Not a library |
-| `chapbook-ffi` | The C ABI every non-Rust host consumes; `include/chapbook.h` | Contract |
-| `chapbook-jni` | Android JNI binding — a spike, paired with `android/` | Spike |
+| `chapbook-ffi` | The C ABI for hosts that speak C — iOS, embedders; `include/chapbook.h` | Contract |
+| `chapbook-jni` | Android JNI binding, paired with `android/` | Not a library |
 
 ## Embedding from another language
 
 `crates/chapbook-ffi` is a hand-written C ABI over `chapbook-reader`, with a
-checked-in header. Kotlin reaches it through JNI or Panama, Swift through C
-interop, a browser through `wasm-bindgen` over the same core.
+checked-in header. Swift reaches it through C interop, a browser through
+`wasm-bindgen` over the same core, and anything embedding the `.so` links it
+directly.
 
 ```c
 #include "chapbook.h"
@@ -73,10 +74,16 @@ cb_session_close(session);
 ```
 
 Codes are the contract and strings are not; nothing crosses owned, so there
-is no `cb_free_string`; no call unwinds into the caller. The full rules are
-in the header and in [docs/STABILITY.md](docs/STABILITY.md). Link
-`libchapbook_ffi.a` (iOS, via an XCFramework) or `libchapbook_ffi.so`
-(Android, C).
+is no `cb_free_string`; no call unwinds into the caller. Install
+`cb_set_log_callback` first — the engine is silent until a host gives it
+somewhere to speak. The full rules are in the header and in
+[docs/STABILITY.md](docs/STABILITY.md). Link `libchapbook_ffi.a` (iOS, via
+an XCFramework) or `libchapbook_ffi.so`.
+
+Android does **not** go through this header: Kotlin reaches Rust over JNI,
+which is already a C ABI, so `chapbook-jni` binds `chapbook-reader`
+directly rather than stacking a second boundary on the first. See
+[docs/FFI.md](docs/FFI.md).
 
 ## Android
 

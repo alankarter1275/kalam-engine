@@ -93,6 +93,7 @@
 mod abi;
 mod config;
 mod error;
+mod logging;
 mod session;
 
 pub use config::{
@@ -102,6 +103,7 @@ pub use config::{
     cb_font_source_host, cb_font_source_set_generics,
 };
 pub use error::cb_status;
+pub use logging::{cb_log, cb_log_enabled, cb_log_fn, cb_log_level, cb_set_log_callback};
 pub use session::*;
 
 /// The version of this ABI, as `major * 10000 + minor * 100 + patch`.

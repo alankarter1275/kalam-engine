@@ -94,6 +94,35 @@ typedef int32_t cb_status;
 #endif // __cplusplus
 
 /**
+ * Severity, matching `log`'s own ordering so the numbers are not a second
+ * thing to remember.
+ *
+ * As chapbook uses them: `ERROR` is something the reader asked for that
+ * did not happen, or state that was lost. `WARN` is degraded but nothing
+ * lost. `INFO` is worth knowing and not a problem. Nothing is logged per
+ * frame or per page turn — a session at rest is silent.
+ */
+enum cb_log_level
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : int32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    CB_LOG_OFF = 0,
+    CB_LOG_ERROR = 1,
+    CB_LOG_WARN = 2,
+    CB_LOG_INFO = 3,
+    CB_LOG_DEBUG = 4,
+    CB_LOG_TRACE = 5,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum cb_log_level cb_log_level;
+#else
+typedef int32_t cb_log_level;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * Which reader opens the bytes. `CB_FORMAT_GUESS` decides from the bytes
  * themselves, and is the right answer even when a name is available — the
  * EPUB `mimetype` entry and the `%PDF` header do not lie and an extension
@@ -266,6 +295,21 @@ typedef struct cb_font_source cb_font_source;
 typedef struct cb_session cb_session;
 
 /**
+ * Receives one diagnostic.
+ *
+ * `target` is the crate that emitted it — `chapbook_reader`,
+ * `chapbook_library` — so a host can route or filter by subsystem. Both
+ * strings are NUL-terminated, valid only for the duration of the call, and
+ * must be copied if kept.
+ *
+ * **It may fire on any thread**, including the loader thread the host has
+ * never seen. It must not call back into this ABI, and on a platform where
+ * logging touches UI it must hand the message to whatever the main loop
+ * watches rather than doing the work inline.
+ */
+typedef void (*cb_log_fn)(cb_log_level level, const char *target, const char *message, void *user);
+
+/**
  * The page box, in logical units, plus the scale that turns it into
  * device pixels. Laying out at logical size and rasterizing at device
  * size is what keeps text a readable size on a dense panel.
@@ -425,6 +469,39 @@ cb_status cb_config_set_cache_budget(struct cb_config *config, size_t bytes);
  * Passing null is a no-op.
  */
 void cb_config_free(struct cb_config *config);
+
+/**
+ * Send the engine's diagnostics to `callback` at `max_level` and above.
+ *
+ * Pass a null `callback` to stop delivery; the ABI keeps working and goes
+ * quiet. `user` is stored and handed back untouched, and must stay valid
+ * until the callback is replaced or cleared.
+ *
+ * Call it before opening anything — the failures most worth seeing are the
+ * ones during `cb_session_open_*`.
+ *
+ * Only one sink exists per process, because `log` allows one logger per
+ * process. Calling this again replaces it rather than adding a second.
+ * Nothing is logged per frame or per page turn, so this is not on a hot
+ * path.
+ */
+cb_status cb_set_log_callback(cb_log_fn callback, void *user, cb_log_level max_level);
+
+/**
+ * Emit a diagnostic through whatever sink is installed.
+ *
+ * Here so a host can put its own messages in the same stream as the
+ * engine's, in the same order, without maintaining a second path — which
+ * is the whole reason interleaved logs are worth having. `target` may be
+ * null, and defaults to `host`.
+ */
+cb_status cb_log(cb_log_level level, const char *target, const char *message);
+
+/**
+ * Whether a sink is installed. Cheap; for a host deciding whether to
+ * bother formatting something expensive.
+ */
+bool cb_log_enabled(void);
 
 /**
  * Open a book from a filesystem path. **Consumes `config`** either way.

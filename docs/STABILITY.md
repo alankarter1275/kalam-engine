@@ -20,8 +20,7 @@ meaning something, and where it will not be treated as a cost at all.
 | **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf`, `chapbook-opds` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
 | **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello`, `chapbook-panel-fbdev` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
 | **Internal** | `chapbook-layout` | No stability of any kind. It exists to make the engine work, its DOM binding and cascade driver follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
-| **Not a library** | `chapbook-viewer`, `chapbook-viewer-gtk`, `tools/chapbook-cli` | Binaries. Their surface is their command line, not their Rust API; the reference shells exist to be read and copied, not linked. |
-| **Spike** | `chapbook-jni` | Expected to be deleted or rewritten. It exists to find out what the C ABI must carry, not to be depended on; see `docs/FFI.md`. |
+| **Not a library** | `chapbook-viewer`, `chapbook-viewer-gtk`, `tools/chapbook-cli`, `chapbook-jni` | Their surface is not their Rust API. For the three binaries it is a command line; for `chapbook-jni` it is the AAR's Kotlin API, which is why it is here rather than in a tier of its own. The reference shells exist to be read and copied, not linked. |
 
 ## Why the lines fall there
 
@@ -125,11 +124,29 @@ that consuming the ABI needs no cbindgen, no build script and no Rust
 toolchain — and it is a golden, so the Rust and the header cannot drift
 apart without the gate saying so.
 
-**Spike** is a tier with a shelf life, and naming it is how a throwaway
-stays throwaway. `chapbook-jni` is in the workspace so that it keeps
-compiling and stays under the same gate as everything else, not because
-anything may build on it. Once the C ABI crate exists, this one becomes a
-thin JNI layer over it or it goes away; either way its current surface is
-not a promise to anyone. (Naming that crate here in backticks would be a
-lie this document's own rot test catches, which is the second reason the
-tier is worth writing down.)
+**The Spike tier is retired, and the prediction that justified it was
+wrong.** It said `chapbook-jni` would, once the C ABI existed, "become a
+thin JNI layer over it or go away." It did neither, and the reasoning is
+worth keeping because it is the same reasoning any future host binding
+should apply.
+
+JNI *is* a C ABI: the JVM finds native methods by exported symbol name with
+C linkage, and Rust emits those directly. So a Rust JNI layer over
+`chapbook-ffi` would put two C-shaped boundaries back to back with Rust in
+the middle converting in both directions — a `CString` allocated per call
+purely to satisfy a boundary both sides are on the far side of, and a
+length-probe-then-fill dance whose entire purpose is that a *C* caller never
+frees Rust memory. Writing the glue in C instead removes the round trip, but
+buys only what a four-line `clang -fsyntax-only` already buys, at the price
+of a second build system and a third hand-written layer to keep in sync.
+
+So `chapbook-jni` stays what it was: a direct Rust binding over
+`chapbook-reader`, exporting JNI symbols. It is no longer throwaway — it is
+the native half of the Android artifact — and it is *not* a Contract-tier
+consumer of `chapbook-ffi`. `docs/FFI.md`'s *Building the C ABI* section has
+the full argument.
+
+That leaves `chapbook-ffi` with one guaranteed consumer rather than two, and
+that is fine: iOS is the one that cannot route around it, because Swift
+speaks C and nothing else. A boundary is kept honest by the host with no
+alternative, not by the host that was talked into it.

@@ -47,5 +47,46 @@ for so in "$out"/*/libchapbook_jni.so; do
     done < <(grep -oP 'external fun \K[a-zA-Z0-9_]+' "$native")
 done
 
+# ---- The C ABI, checked against Android without Android consuming it ----
+#
+# `chapbook-jni` binds `chapbook-reader` directly and deliberately: Kotlin
+# reaches Rust through JNI, which is already a C ABI, so routing it through
+# `chapbook-ffi` as well would put two C-shaped boundaries back to back with
+# Rust in the middle converting both ways. See docs/FFI.md.
+#
+# That leaves `chapbook-ffi`'s header unexercised on this platform, and the
+# thing worth knowing is cheap to ask directly: does it compile under the
+# NDK's clang, for both ABIs, and does it compose with `jni.h` — which is
+# what an iOS-shaped host or a third party embedding the `.so` would do.
+header=crates/chapbook-ffi/include/chapbook.h
+if [ -f "$header" ]; then
+    clang="$(ls "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/clang | head -1)"
+    probe="$(mktemp -d)"
+    trap 'rm -rf "$probe"' EXIT
+    # Included twice, and beside jni.h, so the guard and the composition are
+    # both covered rather than assumed.
+    cat > "$probe/probe.c" <<'PROBE'
+#include "chapbook.h"
+#include "chapbook.h"
+#include <jni.h>
+JNIEXPORT jlong JNICALL Java_probe_Native_open(JNIEnv *e, jclass c, jstring p, jlong cfg) {
+    const char *path = (*e)->GetStringUTFChars(e, p, NULL);
+    cb_session *s = cb_session_open_path(path, (cb_config *)(intptr_t)cfg);
+    (*e)->ReleaseStringUTFChars(e, p, path);
+    (void)c;
+    return (jlong)(intptr_t)s;
+}
+PROBE
+    for target in aarch64-linux-android24 x86_64-linux-android24; do
+        if "$clang" --target="$target" -std=c11 -Wall -Wextra -Werror \
+             -fsyntax-only -I "$(dirname "$header")" "$probe/probe.c"; then
+            printf '%-10s chapbook.h compiles and composes with jni.h\n' "${target%%-*}"
+        else
+            echo "  !! chapbook.h does not compile for $target" >&2
+            status=1
+        fi
+    done
+fi
+
 [ $status -eq 0 ] && echo "jniLibs ok: linkage and symbols both check out"
 exit $status

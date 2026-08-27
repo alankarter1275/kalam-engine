@@ -340,10 +340,11 @@ day.
 
 ## The Android spike
 
-**Where the code is.** `crates/chapbook-jni` and `android/` live on the
-`ffi-spike` branch, not on main, until the spike is worth landing. What
-follows is the findings, which are the part worth keeping either way — and
-two of them (below) were bugs on main that the spike is how anyone noticed.
+**Where the code is.** `crates/chapbook-jni` and `android/` are on main.
+What follows is the findings, which are the part worth keeping either way —
+and two of them (below) were bugs on main that the spike is how anyone
+noticed. The spike is also no longer a spike: see *What became of
+`chapbook-jni`*.
 
 
 Purpose: **discover the API's defects against a real platform before the C
@@ -491,11 +492,14 @@ feature flags, and per-ABI bundle splits so no device downloads two.
 
 ### What rung 3 found
 
-**Everything the engine logs is invisible.** *(Closed — the `log` seam
-landed, and the rewrite verified it from the device: `android_logger` in the
-binding, and records arriving under the crate that emitted them, as in
-`I/chapbook chapbook_reader: resuming at unit 6 (Exact)`. A callback was not
-needed; `log` was already in the graph via cosmic-text.)* `chapbook-reader`
+**Everything the engine logs is invisible.** *(Closed twice — once for
+Rust hosts, when the `log` seam landed and the rewrite verified it from the
+device: `android_logger` in the binding, and records arriving under the
+crate that emitted them, as in `I/chapbook chapbook_reader: resuming at unit
+6 (Exact)`. And once for everyone else, when `cb_set_log_callback` was added
+to the C ABI — because a C or Swift host cannot install a Rust backend, so
+for them the callback this paragraph asked for is the only option after
+all.)* `chapbook-reader`
 makes eleven `eprintln!` calls and the workspace has no `log` or `tracing`
 facade at all — a deliberate scope choice that works fine for a desktop
 shell and stops working at the boundary. "library unavailable", "page N
@@ -644,6 +648,56 @@ restore. **The gate's blind spot is worth more than the bug** — "state
 carried across two runs of the same binary" is a whole class this suite
 cannot currently reach, and the cheapest fix is a test that runs the harness
 twice against one directory.
+
+### What became of `chapbook-jni`
+
+`docs/STABILITY.md` predicted that once the C ABI existed this crate would
+"become a thin JNI layer over it, or go away." It did neither, and the
+reason generalizes to any future host binding.
+
+**JNI is already a C ABI.** The JVM locates native methods by exported
+symbol name with C linkage, and Rust emits those directly with
+`#[no_mangle] extern "system"`. So a Rust JNI layer sitting on
+`chapbook-ffi` is not one boundary, it is two, back to back, with Rust in
+the middle converting in both directions:
+
+- a `jstring` becomes a `String`, then a `CString` — an allocation whose
+  only purpose is a NUL terminator for a boundary both sides are already
+  past — then a `&str` again inside the ABI;
+- a title comes back through the length-probe-then-fill idiom, which exists
+  so that a *C* caller never frees Rust memory, and buys nothing at all
+  between two Rust crates;
+- a `Result<_, ChapbookError>` collapses to a status code plus a
+  thread-local string and is then widened back out.
+
+**Writing the glue in C instead removes the round trip**, and was seriously
+considered: JNI's own API is C, `GetStringUTFChars` hands back exactly the
+`const char *` that `cb_session_open_path` wants, and the AAR would then
+consume the same header a third party does. What killed it is that the
+benefit is almost entirely a *proof* — "the header works on Android" — and
+the proof is four lines of `clang -fsyntax-only`, which `android/build-jni.sh`
+now runs for both ABIs, `jni.h` included, so the composition is checked
+rather than assumed. Buying that with a second build system, plus a third
+hand-written layer to keep in sync across three languages that reference
+each other at no point during compilation, is a bad trade — and this spike
+already found that a drifted `external fun` name fails only at first call
+on a device. It would also swap Rust's `catch_unwind`, real error types and
+the `jni` crate's reference handling for hand-written C, where a missed
+`ReleaseStringUTFChars` is the ordinary mistake.
+
+So `chapbook-jni` stays a direct Rust binding over `chapbook-reader`. It
+leaves the Spike tier, because it is not throwaway any more — it is the
+native half of the Android artifact — and it is deliberately *not* a
+consumer of `chapbook-ffi`.
+
+**Which leaves the C ABI with one guaranteed consumer instead of two, and
+that is the right number.** iOS cannot route around it: Swift speaks C and
+nothing else, so the binding there has no alternative and will find every
+gap by walking into it. Android had an alternative and a good one. A
+boundary is kept honest by the host that has no choice, not by the host that
+was talked into using it — and a consumer added for the sake of exercising
+an interface tends to exercise the interface it was given rather than the
+one it wanted.
 
 ### Shape on disk
 
@@ -1453,6 +1507,21 @@ least afford, because the caller cannot read the source to find out
 otherwise. Worth the twenty minutes, and worth repeating from Swift when
 iOS gets there.
 
+**The log sink was promised above and was missing.** *What rung 3 found*
+says in as many words that "the C ABI needs a log sink, and a callback is
+the cheap version of it," and the first cut of the ABI did not have one —
+which nothing noticed, because the only thing consuming it was a Rust test
+that could reach `log` for itself. `cb_set_log_callback(fn, user,
+max_level)` is that sink: records arrive tagged with the crate that emitted
+them, so `chapbook_reader` and `chapbook_library` can be routed apart, and
+**it fires on any thread**, the loader thread included, which the header
+says because it is the mistake a host is otherwise going to make.
+`cb_log` is beside it so a host's own messages land in the same stream in
+the same order, which is the entire reason interleaved logs are worth
+having. Verified the way the rest of it was: a C program with no Rust in it
+watching `chapbook_reader: library unavailable: Not a directory` arrive from
+inside the engine.
+
 **What is deliberately not in it.** The display list, for the reasons
 already given. Search, the table of contents, links and annotations, for a
 different one: Contract tier means what ships holds still, so the first
@@ -1496,7 +1565,12 @@ cleanup. That is right about the dependency and wrong about the order:
    with no Rust toolchain at all.
 4. **`chapbook-android`, and the input model.** The AAR, the demo app, and
    `chapbook_core::input` — which lands here because a touchscreen is where
-   tap zones can actually be judged.
+   tap zones can actually be judged. *Not started. `chapbook-jni` and the
+   two Gradle modules already exist and stay as they are — see* What became
+   of `chapbook-jni` *— so what is left is the AAR as a published artifact
+   and the input model itself: an `Action` enum, `TapZones::action_at`, and
+   a key map that already knows about Kobo and PocketBook page-turn
+   buttons, replacing `ReaderView`'s hardcoded thirds.*
 5. **The browser demo.** Last, because Android has a user and a demo has an
    audience, and because by this point step 2 has already done all of its
    work for it.
@@ -1511,15 +1585,13 @@ cleanup. That is right about the dependency and wrong about the order:
   instead, which is additive and can arrive whenever accessibility does.
   Shells that rasterize for themselves still take `frame()` in Rust; that
   path is unchanged and simply does not cross the C ABI.
-- **Whether a built artifact can report its own feature set.** Raised by the
-  spike building without a library and saying nothing (above). Every profile
-  this document argues for — browser without SQLite, e-ink without PDF, a
-  host without the bundled transport — is a build that silently cannot do
-  something a caller may assume. One accessor naming the compiled-in
-  capabilities costs nothing, and the C ABI needs it regardless, since a
-  header cannot tell you which `.so` you loaded. The open question is only
-  whether it is a bitmask, a string, or a struct that has to stay
-  ABI-stable.
+- ~~**Whether a built artifact can report its own feature set**~~ —
+  **decided: a bitmask.** `cb_capabilities()` returns one, and
+  `cb_capability` names the bits. A struct would have had to stay
+  ABI-stable for a list that grows every time a feature is added, and a
+  string would have made every host parse. Raised by the spike building
+  without a library and saying nothing; the ABI's own tests now use it to
+  skip rather than `cfg!`, because asking is what a host does.
 - **Whether an embedded font source ships in every shell binary** or only in
   tests and conformance. Four Crimson Text faces is not nothing. The
   recommendation is that it is always available to tests, and that shells are
