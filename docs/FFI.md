@@ -1107,6 +1107,51 @@ Swift exactly as it ran on the Android device. And `render_into` filled
 a 1200x1600 buffer at `dpi_scale` 2; what the pixels look like, and the
 channel-order check, stay rung 3's questions.
 
+### What rung 3 found: it draws, and the copy is real money
+
+Rung 3 is done on the same simulator, in `ios/spike/rung3.swift`: a
+sepia page at an iPhone's @3x — 1800x2400 device pixels — rendered by
+`cb_session_render_into` and turned into a `CGImage` both ways the
+boundary section names, with the numbers attached. The section's claim
+was that the naive path costs one copy more than the zero-copy form; the
+simulator puts figures on it. `render_into` itself is 11.5 ms for the
+full page. `CGBitmapContext` + `CGBitmapContextCreateImage` adds
+**5.5 ms per frame** warm and 28 ms on a cold boot — never less than
+half a render, sometimes more than one — where the `CGImage` built over
+the engine's buffer with a `CGDataProvider` costs **a microsecond** in
+every run, because creating it copies nothing. On the Mac the same
+split is 2.7 ms against 2 µs. The doc's advice stands with numbers on
+it: rung 3 did it both ways so a shell never has to, and the shell
+writes the provider form.
+
+**The channel order is settled the way Android's was.** The raw margin
+bytes off `render_into` are (246, 240, 226, 255) — the *same* warm
+sepia the Android device sampled, to the byte, which is tiny-skia
+answering identically on a second platform. Both CoreGraphics paths,
+labelled `kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big`,
+decode back to exactly those values pixel-for-pixel, and a `CALayer`
+with the provider-built image as its `contents` renders the same warm
+corner through QuartzCore. Had either label lied, the round trip would
+have come back cold blue — that is what the sepia check is for. RGBA,
+no swizzle, no conversion: the premultiplied-RGBA8888 contract holds on
+Apple's runtime as it did on Android's.
+
+**The lifetime contract is code now, not prose.** The provider owns the
+buffer: its release callback is where the `deallocate` lives, and the
+spike asserts the buffer is still alive while images over it exist.
+What a shell must know is the failure mode's shape — freeing the buffer
+on its own schedule draws garbage with *no error* — and that
+CoreGraphics may defer the release callback past the last visible
+reference, so only "not freed too early" is deterministic; "freed
+eventually" belongs to CG's schedule. One buffer per in-flight frame,
+retired by the callback, is the pattern that falls out.
+
+**And one page is on disk for a human.** The spike writes the rendered
+sepia page to a PNG through ImageIO — Crimson Text, the styled link,
+the annotated span, the block quote, all correct in the simulator's
+runtime — which is worth the ten lines: a warm number can still be the
+wrong picture, and this one is not.
+
 ### What Swift asks for that JNI did not
 
 The boundary above was designed with Android in hand. Most of it transfers,
@@ -1220,7 +1265,11 @@ boundary section insists, that **it fires on the loader thread**.
   premultiplied RGBA and therefore a straight copy, as
   `AndroidBitmap_lockPixels` turned out to be — but run the same test that
   settled it there, which is the sepia theme and not black text, because
-  black on white cannot tell RGBA from BGRA.
+  black on white cannot tell RGBA from BGRA. *Answered at rung 3, on the
+  simulator: the raw margin bytes are (246, 240, 226) — the Android
+  device's sepia paper to the byte — and both CoreGraphics paths
+  round-trip them warm. A device retest is cheap insurance, not an open
+  question.*
 - Whether `/System/Library/Fonts` is readable from a sandboxed app. *The
   simulator runtime has the directory, populated and listable — see rung 2
   — but with the same caveat: a spawned process is not a sandboxed app.*
@@ -1243,7 +1292,8 @@ boundary section insists, that **it fires on the loader thread**.
    both ways and record the difference — `CGBitmapContext` then
    `CGBitmapContextCreateImage`, against a `CGImage` built over the engine's
    buffer with a `CGDataProvider` and handed to `CALayer.contents`. The
-   second is the one that matches what Android got for free.
+   second is the one that matches what Android got for free. **Done, on a
+   simulator, both ways, measured** — see *What rung 3 found* above.
 4. It conforms: the harness, on a simulator and then on a device. Remember
    that Android conformed with an empty font database, so a green run here
    proves less than it looks like it proves.

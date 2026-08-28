@@ -21,13 +21,21 @@ xcrun -sdk iphonesimulator swiftc \
     -L "$ROOT/target/aarch64-apple-ios-sim/release" -lchapbook_ffi \
     -o build/spike-sim
 
-# The device slice links or it doesn't; there is nothing here to run it.
-xcrun -sdk iphoneos swiftc \
-    -target arm64-apple-ios15.0 -swift-version 6 \
-    -I CChapbook main.swift \
-    -L "$ROOT/target/aarch64-apple-ios/release" -lchapbook_ffi \
-    -o build/spike-dev
-echo "device slice links"
+xcrun -sdk iphonesimulator swiftc \
+    -target arm64-apple-ios15.0-simulator -swift-version 6 \
+    -I CChapbook rung3.swift \
+    -L "$ROOT/target/aarch64-apple-ios-sim/release" -lchapbook_ffi \
+    -o build/rung3-sim
+
+# The device slices link or they don't; there is nothing here to run them.
+for src in main rung3; do
+    xcrun -sdk iphoneos swiftc \
+        -target arm64-apple-ios15.0 -swift-version 6 \
+        -I CChapbook $src.swift \
+        -L "$ROOT/target/aarch64-apple-ios/release" -lchapbook_ffi \
+        -o build/$src-dev
+done
+echo "device slices link"
 
 # A booted simulator, or the first available iPhone booted headless —
 # no Simulator.app required.
@@ -44,3 +52,9 @@ xcrun simctl spawn "$UDID" "$PWD/build/spike-sim" \
     "$PWD/$ROOT/fixtures/epub/minimal.epub" \
     "$PWD/$ROOT/fixtures/fonts" \
     "$LIB"
+
+OUT=$(mktemp -d /tmp/chapbook-rung3.XXXXXX)
+xcrun simctl spawn "$UDID" "$PWD/build/rung3-sim" \
+    "$PWD/$ROOT/fixtures/epub/minimal.epub" \
+    "$PWD/$ROOT/fixtures/fonts" \
+    "$LIB" "$OUT"
