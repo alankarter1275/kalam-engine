@@ -862,7 +862,10 @@ fn platform_dir() -> Option<PathBuf> {
     None
 }
 
-#[cfg(any(unix, windows))]
+// Exactly the platforms whose `platform_dir` consults it: the XDG arm and
+// macOS. Wider and it compiles as dead code on iOS — where only a cross
+// build ever warns, because no gate runs clippy for that target.
+#[cfg(all(unix, not(target_os = "android"), not(target_os = "ios")))]
 fn home() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)

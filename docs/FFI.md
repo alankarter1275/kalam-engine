@@ -1039,7 +1039,10 @@ One note for rung 4, from Android's rung 4: the harness conformed on a device
 with an empty font database — ten passed, one skipped, none failed, against
 Moby-Dick, with no faces loaded at all. So conformance does not assert on text
 layout, and iOS conforming will not distinguish a working font path from an
-absent one. Rung 4 green means less there than it looks like it means.
+absent one. Rung 4 green means less there than it looks like it means. *It
+turned out to mean more — the font-source work landed between the two rungs,
+and an empty source is a refused open now, so the blind-green run Android got
+is no longer reachable. See What rung 4 found.*
 
 ### What rung 2 found: it binds, and the header speaks Swift with an accent
 
@@ -1151,6 +1154,49 @@ sepia page to a PNG through ImageIO — Crimson Text, the styled link,
 the annotated span, the block quote, all correct in the simulator's
 runtime — which is worth the ten lines: a warm number can still be the
 wrong picture, and this one is not.
+
+### What rung 4 found: it conforms, and green means more than it used to
+
+Rung 4 is done on the simulator: the same harness Android ran, against
+the same Moby-Dick, driven by `chapbook-reader`'s `conform` example
+cross-compiled for `aarch64-apple-ios-sim` and spawned with `simctl` —
+no Swift in it, deliberately, because the harness proves the engine's
+shell contract on the platform and rungs 2 and 3 already proved the C
+ABI over it. The report is identical to the Android device's and to a
+Linux box's: ten passed, the one honest skip (an EPUB with no arriving
+images never states a damage region), none failed. Unlike Android's
+emulator run, this is arm64 — the silicon half of what that rung left
+open is now closed for Apple.
+
+**The rung's own warning aged out, and the control run proves it.** The
+ladder says a green run here means less than it looks like it proves,
+because Android once conformed with no faces loaded. That world is
+gone: run the same binary with `FontSource::host()` — which on iOS is
+the empty database — and it does not conform blindly, it *refuses to
+open*, naming the platform and the consequence: `font source produced
+no faces (host fonts — fontdb has no Android, iOS or wasm branch)`. The
+font-source work landed between Android's rung 4 and this one, so the
+blind green is no longer reachable, and a passing run now attests the
+font path too.
+
+**`position survives a restart` is again the load-bearing check.** It
+means bundled SQLite created, wrote and re-read a library in the
+simulator container and a locator round-tripped through it — the same
+attestation it carried on Android, now on Apple's runtime. It also
+needed the `conform` example to grow up: the example hardcoded the
+host's fonts and the default library, which on iOS is an *error* by
+design, so its own doc-comment advice ("pass a scratch directory")
+was advice it offered no flag for. It takes `--fonts <dir> <family>`
+and `--library <dir>` now, which is what made it runnable — unchanged —
+on Linux, macOS and the simulator. A fixed font source is also what
+makes the report portable, which the harness's own docs already asked
+for and the example could not deliver.
+
+What this rung did not settle is the same list as Android's, minus
+silicon: a spawned binary is not App Sandbox confinement, so the
+device — a real app, a real container, the watchdog — still owns the
+final word on SQLite, and rung 5's security-scoped bookmark needs an
+app shell by definition.
 
 ### What Swift asks for that JNI did not
 
@@ -1296,7 +1342,10 @@ boundary section insists, that **it fires on the loader thread**.
    simulator, both ways, measured** — see *What rung 3 found* above.
 4. It conforms: the harness, on a simulator and then on a device. Remember
    that Android conformed with an empty font database, so a green run here
-   proves less than it looks like it proves.
+   proves less than it looks like it proves. **Done on the simulator — and
+   the warning aged out**: an empty font source refuses to open now, so
+   green means more than it did when this rung was written. See *What
+   rung 4 found* above.
 5. It takes a security-scoped bookmark — the iOS twin of Android's content
    URI, and the other half of the argument for typed sources. Resolve it
    from cold at launch, not only from the picker, because that is the path

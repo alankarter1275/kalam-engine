@@ -1,6 +1,7 @@
 //! Run the shell conformance harness against a book and print the report.
 //!
-//!     cargo run -p chapbook-reader --example conform -- <book> [w h]
+//!     cargo run -p chapbook-reader --example conform -- <book> [w h] \
+//!         [--fonts <dir> <family>] [--library <dir>]
 //!
 //! The harness itself is `chapbook_reader::conformance`, meant to run in
 //! a shell author's own test suite against their own `Session`. This is
@@ -11,19 +12,41 @@
 //!
 //! Note that this reads and writes the real library, because
 //! `PositionSurvivesARestart` has to: it moves the saved reading position
-//! for the book you point it at. Pass `SessionConfig::with_library_dir` a
-//! scratch directory if that matters.
+//! for the book you point it at. `--library <dir>` points it at a scratch
+//! one instead — which is also the only way it runs at all somewhere with
+//! no default library location, an iOS simulator included. `--fonts`
+//! swaps the host's faces for a fixed set, which is what makes a report
+//! mean the same thing on a platform where the host has none.
 
 use std::time::Duration;
 
-use chapbook_reader::chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
+use chapbook_reader::chapbook_core::{EdgeSizes, FontSource, PageMetrics, Rotation, Size};
 use chapbook_reader::conformance::Harness;
-use chapbook_reader::Session;
+use chapbook_reader::{Session, SessionConfig};
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+
+    // `--library <dir>`: a scratch library instead of the real one.
+    let library = args.iter().position(|a| a == "--library").map(|at| {
+        args.drain(at..at + 2)
+            .nth(1)
+            .expect("--library takes a dir")
+    });
+    // `--fonts <dir> <family>`: a fixed source instead of the host's.
+    let fonts = args.iter().position(|a| a == "--fonts").map(|at| {
+        let mut it = args.drain(at..at + 3).skip(1);
+        (
+            it.next().expect("--fonts takes a dir"),
+            it.next().expect("--fonts takes a family"),
+        )
+    });
+
     let Some(source) = args.first().cloned() else {
-        eprintln!("usage: conform <book.epub|comic.cbz|doc.pdf|opds-url> [width height]");
+        eprintln!(
+            "usage: conform <book.epub|comic.cbz|doc.pdf|opds-url> [width height] \
+             [--fonts <dir> <family>] [--library <dir>]"
+        );
         std::process::exit(2);
     };
     let size = match args.get(1).zip(args.get(2)) {
@@ -31,24 +54,31 @@ fn main() {
         None => Size::new(600.0, 800.0),
     };
 
-    let report =
-        Harness::new(
-            move || match Session::open(&source, chapbook_core::FontSource::host()) {
-                Ok(session) => session,
-                Err(e) => {
-                    eprintln!("conform: {e}");
-                    std::process::exit(1);
-                }
-            },
-        )
-        .metrics(PageMetrics {
-            size,
-            margins: EdgeSizes::uniform(32.0),
-            dpi_scale: 1.0,
-            rotation: Rotation::None,
-        })
-        .budget(Duration::from_secs(30))
-        .run();
+    let report = Harness::new(move || {
+        let source_fonts = match &fonts {
+            Some((dir, family)) => FontSource::embedded(dir, family),
+            None => FontSource::host(),
+        };
+        let mut config = SessionConfig::new(source_fonts);
+        if let Some(dir) = &library {
+            config = config.with_library_dir(dir);
+        }
+        match Session::open_with(source.as_str(), config) {
+            Ok(session) => session,
+            Err(e) => {
+                eprintln!("conform: {e}");
+                std::process::exit(1);
+            }
+        }
+    })
+    .metrics(PageMetrics {
+        size,
+        margins: EdgeSizes::uniform(32.0),
+        dpi_scale: 1.0,
+        rotation: Rotation::None,
+    })
+    .budget(Duration::from_secs(30))
+    .run();
 
     print!("{report}");
     let failed = report.failures().count();

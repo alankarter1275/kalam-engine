@@ -58,3 +58,16 @@ xcrun simctl spawn "$UDID" "$PWD/build/rung3-sim" \
     "$PWD/$ROOT/fixtures/epub/minimal.epub" \
     "$PWD/$ROOT/fixtures/fonts" \
     "$LIB" "$OUT"
+
+# Rung 4: the conformance harness, in the simulator, no Swift involved —
+# the harness proves the engine's shell contract on the platform, and the
+# rungs above already proved the C ABI. Moby-Dick when the corpus is
+# fetched, the minimal fixture otherwise.
+cargo build -p chapbook-reader --example conform --release \
+    --target aarch64-apple-ios-sim
+BOOK="$PWD/$ROOT/fixtures/corpus/moby-dick.epub"
+[ -f "$BOOK" ] || BOOK="$PWD/$ROOT/fixtures/epub/minimal.epub"
+xcrun simctl spawn "$UDID" \
+    "$PWD/$ROOT/target/aarch64-apple-ios-sim/release/examples/conform" \
+    "$BOOK" --fonts "$PWD/$ROOT/fixtures/fonts" "Crimson Text" \
+    --library "$(mktemp -d /tmp/chapbook-rung4.XXXXXX)"
