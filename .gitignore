@@ -1,5 +1,6 @@
 /target
 /fixtures/corpus/
+.DS_Store
 **/*.pending-snap
 
 # Local tooling config: kept on disk, not published.
@@ -17,3 +18,4 @@
 
 # iOS spike: compiled Swift binaries for slices this repo never ships.
 /ios/spike/build/
+/ios/spike/rung5/build/

@@ -1198,6 +1198,46 @@ device — a real app, a real container, the watchdog — still owns the
 final word on SQLite, and rung 5's security-scoped bookmark needs an
 app shell by definition.
 
+### What rung 5 found: the bookmark holds, and custody is the bill
+
+Rung 5 is done on the simulator, and it needed what no earlier rung did:
+a real app. `ios/spike/rung5` is a hand-rolled `.app` — one Swift file,
+an Info.plist, no Xcode project, installed with `simctl` — because a
+document picker does not exist outside one. It is also the one rung a
+script cannot climb alone: a human picks the book once, and
+`build.sh` says so instead of pretending otherwise. First launch:
+picker, bookmark made and stored, warm open. Every launch after: no
+picker, the bookmark resolved *before any session exists*, access
+started, a descriptor opened, and `cb_session_open_fd` handed its fd —
+Moby-Dick's title read back through the C ABI on both the warm and the
+cold path. The flow the section above predicted is the flow that ran,
+with the empty bookmark options iOS wants (`.withSecurityScope` is
+macOS), and `bookmarkData()` demanding *live* access at creation time.
+
+**The scope dance is unconditional, which is stronger than the docs
+assumed.** The picked book lived in the app's own Documents — a place
+the app can already read — and the picker still vended a URL for which
+`startAccessingSecurityScopedResource` returned `true`, at pick time
+and again at every cold resolve. So a shell must not special-case
+"foreign" files: every picker URL gets the start/stop pair, and a shell
+that skips it for files that look like its own works until the day the
+URL is somebody else's.
+
+**Custody is now a demonstrated cost, not a paragraph.** Descriptor
+sources do not reach the library — no path, no fingerprint, no
+position — so the rung 5 app opens Moby-Dick at the beginning every
+time, *by design*, and PLATFORM §7's custody question stops being
+abstract: the shell holds the bookmark, the library keys by an identity
+it never sees, and until something joins them a picked book cannot
+remember its place. That is the first real API gap the iOS ladder has
+produced — the Android spike never hit it because a `content://` fd has
+the same shape and the demo never persisted one.
+
+What the simulator cannot answer here: revocation (the file moved or
+deleted out from under a stored bookmark), an iCloud placeholder that
+is legal, named, and not yet downloaded, and everything App Sandbox —
+all device questions, all now the only rungs left.
+
 ### What Swift asks for that JNI did not
 
 The boundary above was designed with Android in hand. Most of it transfers,
@@ -1349,7 +1389,9 @@ boundary section insists, that **it fires on the loader thread**.
 5. It takes a security-scoped bookmark — the iOS twin of Android's content
    URI, and the other half of the argument for typed sources. Resolve it
    from cold at launch, not only from the picker, because that is the path
-   that fails.
+   that fails. **Done, on the simulator, cold path included** — see *What
+   rung 5 found* above. The ladder is climbed; what is left is the device
+   list below.
 
 ### What the touchscreen settled
 
