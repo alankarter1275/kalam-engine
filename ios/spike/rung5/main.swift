@@ -20,6 +20,8 @@ let FORMAT_GUESS = UInt32(CB_FORMAT_GUESS.rawValue)
 
 final class Flow: UIViewController, UIDocumentPickerDelegate {
     let label = UILabel()
+    let pageView = UIImageView()
+    var session: OpaquePointer?
     var report: [String] = []
 
     func say(_ line: String) {
@@ -31,6 +33,12 @@ final class Flow: UIViewController, UIDocumentPickerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
+        pageView.frame = view.bounds
+        pageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        pageView.contentMode = .scaleAspectFit
+        view.addSubview(pageView)
+        view.addGestureRecognizer(
+            UITapGestureRecognizer(target: self, action: #selector(tapped)))
         label.numberOfLines = 0
         label.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         label.frame = view.bounds.insetBy(dx: 16, dy: 60)
@@ -116,10 +124,12 @@ final class Flow: UIViewController, UIDocumentPickerDelegate {
             return
         }
 
+        let bounds = UIScreen.main.bounds
         let metrics = cb_metrics(
-            width: 390, height: 844,
+            width: Float(bounds.width), height: Float(bounds.height),
             margin_top: 60, margin_right: 24, margin_bottom: 40, margin_left: 24,
-            dpi_scale: 3, rotation: UInt32(CB_ROTATION_NONE.rawValue))
+            dpi_scale: Float(UIScreen.main.scale),
+            rotation: UInt32(CB_ROTATION_NONE.rawValue))
         _ = cb_session_set_metrics(session, metrics)
 
         var needed = 0
@@ -131,8 +141,54 @@ final class Flow: UIViewController, UIDocumentPickerDelegate {
         var pages = 0
         _ = cb_session_page_count(session, &pages)
         say("\(phase): open through the fd — \"\(title)\", \(pages) pages in unit 0")
-        cb_session_close(session)
         say(phase == "cold" ? "rung 5: it takes a bookmark" : "now terminate and relaunch cold")
+        self.session = session
+        renderPage()
+    }
+
+    // Past the rung itself: put the page on the glass. Tap right/left to turn.
+    func renderPage() {
+        guard let session else { return }
+        var w: UInt32 = 0
+        var h: UInt32 = 0
+        guard cb_session_render_size(session, &w, &h) == OK, w > 0, h > 0 else {
+            say("FAIL render_size")
+            return
+        }
+        let stride = Int(w) * 4
+        var buf = [UInt8](repeating: 0, count: stride * Int(h))
+        let status = buf.withUnsafeMutableBufferPointer {
+            cb_session_render_into(session, $0.baseAddress, $0.count, w, h, stride)
+        }
+        guard status == OK else {
+            say("FAIL render_into: status \(status)")
+            return
+        }
+        guard let provider = CGDataProvider(data: Data(buf) as CFData),
+              let cg = CGImage(
+                  width: Int(w), height: Int(h), bitsPerComponent: 8, bitsPerPixel: 32,
+                  bytesPerRow: stride, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  provider: provider, decode: nil, shouldInterpolate: false,
+                  intent: .defaultIntent)
+        else {
+            say("FAIL CGImage")
+            return
+        }
+        pageView.image = UIImage(cgImage: cg, scale: UIScreen.main.scale, orientation: .up)
+        label.isHidden = true
+        print("RUNG5 rendered \(w)x\(h)")
+    }
+
+    @objc func tapped(_ gesture: UITapGestureRecognizer) {
+        guard let session else { return }
+        var moved = false
+        if gesture.location(in: view).x > view.bounds.midX {
+            _ = cb_session_next_page(session, &moved)
+        } else {
+            _ = cb_session_prev_page(session, &moved)
+        }
+        if moved { renderPage() }
     }
 
     func documentPickerWasCancelled(_ picker: UIDocumentPickerViewController) {
