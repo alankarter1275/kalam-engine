@@ -16,6 +16,7 @@
 //! xml5ever over the same tree builder.
 
 mod cfi;
+mod foreign;
 mod math_fallback;
 mod offsets;
 mod parse;
@@ -25,6 +26,8 @@ mod text;
 mod tree;
 
 pub use cfi::{cfi_for_offset, offset_for_cfi};
+pub(crate) use foreign::is_svg_root;
+pub use foreign::MathSource;
 pub use offsets::{links, locator_offset_of, locator_offsets, locator_text, node_tag, Link};
 pub use parse::parse_xhtml;
 pub use stylo_impls::DomNode;

@@ -19,12 +19,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # Forwarded verbatim to `chapbook-reader`, and reported at runtime by
 # `cb_capabilities()`. The forwarding is the point: a host that links this
 # ABI can ask what it got, instead of discovering by absence.
-default = ["library", "cbz", "pdf", "opds", "ureq"]
+default = ["library", "cbz", "pdf", "opds", "ureq", "svg", "mathml"]
 library = ["chapbook-reader/library"]
 cbz = ["chapbook-reader/cbz"]
 pdf = ["chapbook-reader/pdf"]
 opds = ["chapbook-reader/opds"]
 ureq = ["chapbook-reader/ureq"]
+svg = ["chapbook-reader/svg"]
+mathml = ["chapbook-reader/mathml"]
 
 [dependencies]
 chapbook-reader = { workspace = true }

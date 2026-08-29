@@ -132,7 +132,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            chapbook_layout::collect_images(&doc, |h| book.resource(&href, h).ok().map(|r| r.data))
+            chapbook_layout::collect_images(&doc, Some(&fonts), |h| {
+                book.resource(&href, h).ok().map(|r| r.data)
+            })
         });
 
         let layout = paginate

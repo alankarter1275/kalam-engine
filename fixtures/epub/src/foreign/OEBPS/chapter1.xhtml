@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+  <title>On Formulae and Figures</title>
+  <link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+  <section id="ch1">
+    <h1>On Formulae and Figures</h1>
+    <p>The roots of a quadratic follow from completing the square, giving
+    the familiar closed form:</p>
+    <math xmlns="http://www.w3.org/1998/Math/MathML" display="block" id="quadratic"
+          alttext="x equals minus b plus or minus the square root of b squared minus 4 a c, all over 2 a">
+      <mi>x</mi><mo>=</mo>
+      <mfrac>
+        <mrow><mo>&#x2212;</mo><mi>b</mi><mo>&#xB1;</mo>
+          <msqrt><msup><mi>b</mi><mn>2</mn></msup><mo>&#x2212;</mo><mn>4</mn><mi>a</mi><mi>c</mi></msqrt>
+        </mrow>
+        <mrow><mn>2</mn><mi>a</mi></mrow>
+      </mfrac>
+    </math>
+    <p>Inline expressions such as
+    <math xmlns="http://www.w3.org/1998/Math/MathML" alttext="a x squared plus b x plus c equals 0">
+      <mi>a</mi><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mi>b</mi><mi>x</mi><mo>+</mo><mi>c</mi><mo>=</mo><mn>0</mn>
+    </math>
+    read on through their fallback text within the line.</p>
+    <p>A drawing referenced like any raster illustration:</p>
+    <img src="images/gauge.svg" alt="a boxed dial with a red needle"/>
+    <p>A drawing carried inline in the chapter itself:</p>
+    <svg xmlns="http://www.w3.org/2000/svg" width="140" height="60" viewBox="0 0 140 60">
+      <rect x="2" y="2" width="136" height="56" fill="#f4eede" stroke="#333333" stroke-width="2"/>
+      <polygon points="20,48 50,12 80,48" fill="#5a7d2a"/>
+      <circle cx="108" cy="24" r="12" fill="#c8a200"/>
+    </svg>
+    <p>And the cover-page pattern, a vector frame around a raster plate:</p>
+    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+         width="72" height="72" viewBox="0 0 72 72">
+      <rect x="0" y="0" width="72" height="72" fill="none" stroke="#8b0000" stroke-width="4"/>
+      <image xlink:href="images/square.png" x="8" y="8" width="56" height="56"/>
+    </svg>
+    <p>Text after the figures closes the chapter.</p>
+  </section>
+</body>
+</html>

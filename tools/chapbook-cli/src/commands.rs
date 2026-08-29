@@ -121,7 +121,7 @@ fn load_chapter_assets(
             }
         }
     }
-    chapbook_layout::collect_images(doc, |href| {
+    chapbook_layout::collect_images(doc, Some(fonts), |href| {
         book.resource(chapter_href, href).ok().map(|r| r.data)
     })
 }

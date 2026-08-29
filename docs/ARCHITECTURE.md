@@ -269,14 +269,46 @@ types use. MSRV 1.92 (hayro's floor; stylo 0.20 needs 1.89), stable toolchain �
 ## Explicitly out of scope
 
 Fixed-layout EPUB (detected, rejected with a clear error), JavaScript
-(spec-permitted omission for reading systems), MathML layout (the
-spec-provided fallback for non-MathML reading systems applies instead:
-`<math altimg>` renders the publisher's equation image, `<math alttext>`
-renders as text — `chapbook-layout`'s `dom::math_fallback`), vertical
-writing modes, shrink-to-fit floated blocks (floated images and floated blocks
-with an explicit width lay out for real; the rest stay in flow), CSS
-counters in generated content, absolute positioning (treated as static),
-media overlays, DRM.
+(spec-permitted omission for reading systems), inline MathML layout
+(block `<math display="block">` renders natively — see "Foreign content"
+below — inline math takes the spec-provided fallback for non-MathML
+reading systems: `<math altimg>` renders the publisher's equation image,
+`<math alttext>` renders as text — `chapbook-layout`'s
+`dom::math_fallback`), vertical writing modes, shrink-to-fit floated
+blocks (floated images and floated blocks with an explicit width lay out
+for real; the rest stay in flow), CSS counters in generated content,
+absolute positioning (treated as static), media overlays, DRM.
+
+## Foreign content: MathML and SVG
+
+Both render without the DOM, the cascade, or the paint seam learning they
+exist, and both are features of `chapbook-layout` (default on; the
+stripped e-ink profile's knobs):
+
+- **MathML** (`mathml`). The DOM rewrite (`dom::math_fallback`) still runs
+  unconditionally — the post-rewrite tree is the locator-text authority,
+  identical on every build. What the feature adds is rendering: each
+  outermost `<math>` is serialized before the rewrite (`dom::foreign`), and
+  at paginate time `mathml::prepare` lays out every block-mode formula with
+  the `formulary` crate against a MATH-table face from the session fontdb
+  (STIX Two Math is embedded as the face of last resort; a publisher's
+  `@font-face` math font wins over it). A prepared formula becomes a
+  replaced block that lowers to an ordinary line fragment — glyph runs on
+  the math face, fraction bars and `mathbackground` fills as decorations —
+  so the display list keeps its three ops and both renderers are untouched.
+  A formula defers to the publisher's fallback when it is inline, when
+  formulary reports unsupported structure and a fallback exists, when the
+  layout needs mirrored glyphs (RTL math), or when no MATH font is loaded.
+- **SVG** (`svg`). Rasterized by resvg at `collect_images` time into the
+  shared `ImageStore` — straight RGBA at the SVG's intrinsic size — so an
+  SVG is indistinguishable from a decoded PNG downstream, dithering
+  regions included. Covers `<img src>` pointing at SVG (content-sniffed,
+  never by extension) and inline `<svg>` subtrees (serialized at parse
+  time, replaced in the box tree only once rasterized; otherwise they
+  keep flattening to their text, so locator text never depends on the
+  feature). `<image>` hrefs inside SVG resolve through the same fetch
+  closure as everything else; SVG `<text>` shapes against a fontdb copied
+  from the session's `FontSystem`, never the host's font list.
 
 ## Deferred
 

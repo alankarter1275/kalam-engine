@@ -474,6 +474,16 @@ enum cb_capability
      * anything can be fetched.
      */
     CB_CAP_BUNDLED_HTTP = 16,
+    /**
+     * SVG images rasterize. Without it they degrade silently (a missing
+     * `<img>`, an inline `<svg>` flattened to its text).
+     */
+    CB_CAP_SVG = 32,
+    /**
+     * Block MathML renders natively. Without it every `<math>` takes the
+     * EPUB altimg/alttext fallback.
+     */
+    CB_CAP_MATHML = 64,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

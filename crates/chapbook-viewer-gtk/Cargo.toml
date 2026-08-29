@@ -14,6 +14,6 @@ authors.workspace = true
 # target the crate is a stub `main` and no dependencies at all.
 [target.'cfg(target_os = "linux")'.dependencies]
 chapbook-core = { workspace = true }
-chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds"] }
+chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds", "svg", "mathml"] }
 chapbook-render-tinyskia = { workspace = true }
 gtk4 = { version = "0.11", features = ["v4_10"] }

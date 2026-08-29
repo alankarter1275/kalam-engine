@@ -2258,6 +2258,10 @@ impl Session {
             .faces()
             .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
             .collect();
+        // The embedded math face is a rendering resource, not a reading
+        // typeface: a family picker must not offer it.
+        #[cfg(feature = "mathml")]
+        families.retain(|name| name != chapbook_layout::MATH_FONT_FAMILY);
         families.sort_unstable();
         families.dedup();
         families
@@ -2768,7 +2772,7 @@ impl Session {
                 }
             }
         }
-        let images = chapbook_layout::collect_images(&doc, |img_href| {
+        let images = chapbook_layout::collect_images(&doc, Some(&self.fonts), |img_href| {
             epub.resource(&href, img_href).ok().map(|r| r.data)
         });
 

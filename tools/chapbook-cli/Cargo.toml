@@ -22,7 +22,7 @@ chapbook-epub = { workspace = true }
 chapbook-cbz = { workspace = true }
 chapbook-pdf = { workspace = true }
 image = { workspace = true }
-chapbook-layout = { workspace = true }
+chapbook-layout = { workspace = true, features = ["svg", "mathml"] }
 chapbook-paint = { workspace = true }
 chapbook-render-tinyskia = { workspace = true }
 # The dev CLI is a desktop process: it wants the bundled transport.

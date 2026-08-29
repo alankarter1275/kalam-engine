@@ -44,6 +44,12 @@ pub struct DocumentInner {
     pub(crate) guard: SharedRwLock,
     /// Base URL for CSS parsing within this document (relative url() etc.).
     pub(crate) url_data: UrlExtraData,
+    /// Original `<math>` markup captured before the fallback rewrite,
+    /// keyed by the rewritten node. A rendering input only — locator text
+    /// comes from the tree, never from here (see `dom::foreign`).
+    pub(crate) math: std::collections::HashMap<NodeId, super::foreign::MathSource>,
+    /// Serialized outermost inline `<svg>` subtrees, same contract.
+    pub(crate) svg: std::collections::HashMap<NodeId, String>,
 }
 
 impl std::ops::Deref for Document {
@@ -203,6 +209,8 @@ impl Document {
                 base_path,
                 guard: SharedRwLock::new(),
                 url_data: UrlExtraData(ServoArc::new(url)),
+                math: std::collections::HashMap::new(),
+                svg: std::collections::HashMap::new(),
             }),
         };
         doc.inner.seal();
@@ -355,6 +363,23 @@ impl DocumentInner {
     }
 
     /// True if this element is in the XHTML namespace with the given tag name.
+    /// Serialized inline `<svg>` roots captured at parse time — a rendering
+    /// input for `collect_images`, never a locator input.
+    pub fn svg_sources(&self) -> impl Iterator<Item = (NodeId, &String)> + '_ {
+        self.svg.iter().map(|(id, xml)| (*id, xml))
+    }
+
+    /// The captured `<math>` source, when this node was an outermost MathML
+    /// root before the fallback rewrite.
+    pub fn math_source(&self, id: NodeId) -> Option<&super::foreign::MathSource> {
+        self.math.get(&id)
+    }
+
+    /// All captured `<math>` sources (see [`Self::math_source`]).
+    pub fn math_sources(&self) -> impl Iterator<Item = (NodeId, &super::foreign::MathSource)> + '_ {
+        self.math.iter().map(|(id, source)| (*id, source))
+    }
+
     pub fn is_html_element(&self, id: NodeId, name: &LocalName) -> bool {
         match &self.nodes[id].data {
             NodeData::Element(e) => e.name.ns == ns!(html) && e.name.local == *name,

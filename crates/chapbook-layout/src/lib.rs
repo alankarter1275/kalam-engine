@@ -27,8 +27,12 @@ pub mod dom;
 mod fonts;
 mod fragmentation;
 mod hyphenate;
+#[cfg(feature = "mathml")]
+mod mathml;
 mod paginate;
 mod style_to_attrs;
+#[cfg(feature = "svg")]
+mod svg;
 mod table;
 mod webfonts;
 
@@ -42,6 +46,8 @@ use chapbook_paint::{ImageStore, Page};
 use crate::dom::Document;
 
 pub use fonts::build_font_system;
+#[cfg(feature = "mathml")]
+pub use fonts::MATH_FONT_FAMILY;
 pub use fragmentation::{BreakRule, FragRules, FragStyle};
 pub use webfonts::{extract_font_faces, register_font, FontFace};
 
@@ -102,11 +108,15 @@ pub fn paginate(
 ) -> ChapterLayout {
     let frag = FragRules::parse(css_sources).resolve(doc);
     let locator = crate::dom::locator_offsets(doc);
+    #[cfg(feature = "mathml")]
+    let math = crate::mathml::prepare(doc, fonts, &locator);
     let input = boxtree::BoxTreeInput {
         doc,
         frag: &frag,
         locator: &locator,
         images,
+        #[cfg(feature = "mathml")]
+        math: &math,
         quote_depth: std::cell::Cell::new(0),
     };
 
@@ -133,16 +143,36 @@ pub fn paginate(
     }
 }
 
-/// Decode every `<img>`'s bytes into an [`ImageStore`] keyed by node tag.
-/// `fetch` resolves an `src` attribute (as written) to raw bytes — callers
-/// close over their container (e.g. `Book::resource` against the chapter
-/// path). Undecodable or unresolvable images are skipped; layout degrades
-/// them to nothing.
+/// Decode every `<img>`'s bytes — and rasterize every inline `<svg>` — into
+/// an [`ImageStore`] keyed by node tag. `fetch` resolves an `src` attribute
+/// or SVG `<image>` href (as written) to raw bytes — callers close over
+/// their container (e.g. `Book::resource` against the chapter path).
+/// Undecodable or unresolvable images are skipped; layout degrades them to
+/// nothing (an inline `<svg>` degrades to its flattened text).
+///
+/// `fonts` shapes any `<text>` inside SVG content; `None` renders SVG
+/// without text. Ignored entirely when the `svg` feature is off.
+#[cfg_attr(not(feature = "svg"), allow(unused_variables, unused_mut))]
 pub fn collect_images(
     doc: &Document,
+    fonts: Option<&FontSystem>,
     mut fetch: impl FnMut(&str) -> Option<Vec<u8>>,
 ) -> ImageStore {
     let mut store = ImageStore::default();
+    // Built on first SVG encountered: copying faces out of the session's
+    // FontSystem is not free, and most books have no SVG at all.
+    #[cfg(feature = "svg")]
+    let mut svg_fonts: Option<std::sync::Arc<resvg::usvg::fontdb::Database>> = None;
+    #[cfg(feature = "svg")]
+    let svg_db = |svg_fonts: &mut Option<std::sync::Arc<resvg::usvg::fontdb::Database>>| {
+        svg_fonts
+            .get_or_insert_with(|| match fonts {
+                Some(fonts) => crate::svg::svg_fontdb(fonts),
+                None => std::sync::Arc::new(resvg::usvg::fontdb::Database::new()),
+            })
+            .clone()
+    };
+
     for id in doc.descendants(doc.root()) {
         let crate::dom::NodeData::Element(el) = &doc.node(id).data else {
             continue;
@@ -154,6 +184,18 @@ pub fn collect_images(
             continue;
         };
         let Some(bytes) = fetch(src) else { continue };
+        #[cfg(feature = "svg")]
+        if crate::svg::sniff(&bytes) {
+            // Hrefs inside the SVG file resolve relative to the file, not
+            // the chapter that embedded it.
+            let src = src.to_string();
+            let mut nested = |href: &str| fetch(&join_href(&src, href));
+            let db = svg_db(&mut svg_fonts);
+            if let Some((w, h, rgba)) = crate::svg::rasterize(&bytes, &mut nested, db) {
+                store.insert(crate::dom::node_tag(id), w, h, rgba);
+            }
+            continue;
+        }
         let Ok(decoded) = image::load_from_memory(&bytes) else {
             continue;
         };
@@ -161,5 +203,25 @@ pub fn collect_images(
         let (w, h) = (rgba.width(), rgba.height());
         store.insert(crate::dom::node_tag(id), w, h, rgba.into_raw());
     }
+
+    // Inline `<svg>` subtrees, serialized at parse time. Their hrefs are
+    // chapter-relative, exactly like an `<img>` src.
+    #[cfg(feature = "svg")]
+    for (id, xml) in doc.svg_sources() {
+        let db = svg_db(&mut svg_fonts);
+        if let Some((w, h, rgba)) = crate::svg::rasterize(xml.as_bytes(), &mut fetch, db) {
+            store.insert(crate::dom::node_tag(id), w, h, rgba);
+        }
+    }
     store
+}
+
+/// Resolve `href` against the directory of `src` (both as written in the
+/// book). The container's own resolution handles any `..` segments.
+#[cfg(feature = "svg")]
+fn join_href(src: &str, href: &str) -> String {
+    match src.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/{href}"),
+        None => href.to_string(),
+    }
 }

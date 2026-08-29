@@ -28,6 +28,7 @@ euclid = { workspace = true }
 app_units = { workspace = true }
 url = { workspace = true }
 image = { workspace = true }
+log = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
@@ -35,10 +36,33 @@ proptest = { workspace = true }
 chapbook-epub = { workspace = true }
 
 [features]
+default = ["svg", "mathml"]
 # Strict well-formed-XML parsing of content documents via xml5ever on the same
 # tree builder; the default html5ever path is lenient about real-world EPUBs.
 strict-xml = ["dep:xml5ever"]
+# SVG images (`<img src="*.svg">` and inline `<svg>`), rasterized into the
+# ImageStore by resvg. Off, SVGs degrade exactly as before the feature
+# existed: undecodable `<img>` vanishes, inline `<svg>` flattens to its text.
+svg = ["dep:resvg"]
+# Native MathML Core rendering via formulary, with STIX Two Math (OFL 1.1,
+# `assets/`) embedded as the math font of last resort. Off, `<math>` takes
+# the EPUB altimg/alttext fallback path (`dom::math_fallback`) unchanged.
+# ~820 KB of font in the binary — the stripped e-ink profile's reason to
+# say no.
+mathml = ["dep:formulary", "dep:ttf-parser"]
 
 [dependencies.xml5ever]
+workspace = true
+optional = true
+
+[dependencies.resvg]
+workspace = true
+optional = true
+
+[dependencies.formulary]
+workspace = true
+optional = true
+
+[dependencies.ttf-parser]
 workspace = true
 optional = true

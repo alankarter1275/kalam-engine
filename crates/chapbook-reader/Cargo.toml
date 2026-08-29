@@ -16,7 +16,7 @@ authors.workspace = true
 # third-party crates to 196, and takes the entire TLS stack (rustls, ring,
 # webpki) and the entire PDF stack (hayro plus its JBIG2, JPEG2000, CCITT
 # and PostScript decoders) out of the build.
-default = ["library", "cbz", "pdf", "opds", "ureq"]
+default = ["library", "cbz", "pdf", "opds", "ureq", "svg", "mathml"]
 # The local bookshelf: imported books, reading positions, annotations,
 # saved catalogs. Off, the session reads but remembers nothing — every book
 # opens at the beginning and marks cannot be stored — and rusqlite and
@@ -41,6 +41,15 @@ opds = ["dep:chapbook-opds", "library", "_comic", "_image-book"]
 # no bundled fallback left for it to fall back to, and `Session::open_with`
 # says so rather than failing to compile.
 ureq = ["chapbook-opds/ureq"]
+# SVG images in EPUB chapters (`<img src="*.svg">`, inline `<svg>`),
+# rasterized by resvg. A rendering capability, not a format: off, SVGs
+# degrade silently (missing image, flattened text), which is why it is a
+# named choice rather than always-on.
+svg = ["chapbook-layout/svg"]
+# Native MathML Core rendering (formulary + an embedded STIX Two Math,
+# ~820 KB of font in the binary). Off, `<math>` takes the EPUB
+# altimg/alttext fallback; locator text is identical either way.
+mathml = ["chapbook-layout/mathml"]
 
 # Internal, set by the features above; do not enable directly. They name
 # the two capabilities the session gains, so the `cfg`s below say what they
@@ -60,6 +69,9 @@ chapbook-epub = { workspace = true }
 chapbook-cbz = { workspace = true, optional = true }
 chapbook-pdf = { workspace = true, optional = true }
 chapbook-opds = { workspace = true, optional = true, default-features = false }
+# Defaults off (via the workspace entry) so the `svg`/`mathml`
+# passthroughs above are real choices: with layout's defaults inherited
+# here, no consumer could ever turn them off.
 chapbook-layout = { workspace = true }
 chapbook-paint = { workspace = true }
 chapbook-library = { workspace = true, optional = true }

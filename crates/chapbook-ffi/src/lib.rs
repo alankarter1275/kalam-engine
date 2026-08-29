@@ -159,6 +159,12 @@ pub enum cb_capability {
     /// A transport is bundled. Without it a host must supply its own before
     /// anything can be fetched.
     CB_CAP_BUNDLED_HTTP = 16,
+    /// SVG images rasterize. Without it they degrade silently (a missing
+    /// `<img>`, an inline `<svg>` flattened to its text).
+    CB_CAP_SVG = 32,
+    /// Block MathML renders natively. Without it every `<math>` takes the
+    /// EPUB altimg/alttext fallback.
+    CB_CAP_MATHML = 64,
 }
 
 /// A bitmask of [`cb_capability`].
@@ -180,6 +186,12 @@ pub extern "C" fn cb_capabilities() -> u32 {
         }
         if cfg!(feature = "ureq") {
             bits |= cb_capability::CB_CAP_BUNDLED_HTTP as u32;
+        }
+        if cfg!(feature = "svg") {
+            bits |= cb_capability::CB_CAP_SVG as u32;
+        }
+        if cfg!(feature = "mathml") {
+            bits |= cb_capability::CB_CAP_MATHML as u32;
         }
         bits
     })

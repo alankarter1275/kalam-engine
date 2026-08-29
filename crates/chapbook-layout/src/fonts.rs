@@ -65,6 +65,15 @@ pub fn build_font_system(source: &FontSource) -> Result<(FontSystem, FontReport)
         unresolved_generics: unresolved_generics(&db),
     };
 
+    // The math font of last resort, after the emptiness check (a session
+    // whose *source* produced nothing is still refused) and after the
+    // report (which describes the source, not the build). Loaded last on
+    // purpose: math font selection prefers the latest-loaded MATH-table
+    // face, so a publisher's `@font-face` math font (registered later)
+    // wins, and this face wins over a math-capable host font.
+    #[cfg(feature = "mathml")]
+    db.load_font_data(include_bytes!("../assets/STIXTwoMath-Regular.otf").to_vec());
+
     let locale = source
         .locale
         .clone()
@@ -81,6 +90,11 @@ pub fn build_font_system(source: &FontSource) -> Result<(FontSystem, FontReport)
     };
     Ok((fonts, report))
 }
+
+/// Family name of the embedded math face. A rendering resource, not a
+/// reading typeface — family enumeration for font pickers excludes it.
+#[cfg(feature = "mathml")]
+pub const MATH_FONT_FAMILY: &str = "STIX Two Math";
 
 fn describe(faces: &[Faces]) -> String {
     let mut parts: Vec<String> = Vec::new();

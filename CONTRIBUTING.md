@@ -116,9 +116,11 @@ These are not style preferences. Each one has cost somebody a day.
 
 ## Out of scope
 
-Fixed-layout EPUB, JavaScript, MathML layout (`<math>` renders via the
-EPUB altimg/alttext fallback), vertical writing modes, absolute
-positioning, media overlays, DRM.
+Fixed-layout EPUB, JavaScript, inline MathML layout (block
+`<math display="block">` renders natively via formulary; inline math and
+anything formulary cannot represent render via the EPUB altimg/alttext
+fallback), vertical writing modes, absolute positioning, media overlays,
+DRM.
 
 ## Gotchas
 

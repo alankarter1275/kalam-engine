@@ -16,6 +16,6 @@ vello = { workspace = true }
 pollster = { workspace = true }
 
 [dev-dependencies]
-chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds"] }
+chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds", "svg", "mathml"] }
 chapbook-render-tinyskia = { workspace = true }
 tiny-skia = { workspace = true }

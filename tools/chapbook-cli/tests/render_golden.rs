@@ -101,6 +101,19 @@ fn render_golden_illustrated_dark() {
     );
 }
 
+/// Native block MathML (STIX glyphs and fraction/radical rules), inline
+/// math falling back to its alttext, an SVG `<img>`, an inline `<svg>`,
+/// and an SVG-wrapped raster `<image>` in one golden.
+#[test]
+fn render_golden_foreign() {
+    check_golden_of(
+        "fixtures/epub/foreign.epub",
+        0,
+        0,
+        "fixtures/render/foreign-s0p0.png",
+    );
+}
+
 #[test]
 fn render_golden_comic_page() {
     // Comic pages carry no text, so this golden is font-independent.

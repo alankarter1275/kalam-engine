@@ -371,6 +371,10 @@ impl<'f> Paginator<'f> {
             BlockKind::Image { width, height } => {
                 self.place_image(block, *width, *height, inner_x, inner_w);
             }
+            #[cfg(feature = "mathml")]
+            BlockKind::Math(math) => {
+                self.place_math(block, math, inner_x, inner_w);
+            }
             BlockKind::Table(table) => {
                 self.place_table(block, table, inner_x, inner_w);
             }
@@ -551,6 +555,127 @@ impl<'f> Paginator<'f> {
             tag: crate::dom::node_tag(block.node),
         });
         self.y += h;
+        self.placed_on_page += 1;
+    }
+
+    /// Place a natively rendered block formula: scaled down to the measure
+    /// like an image, kept whole, centered (MathML Core block math centers
+    /// on its container), and lowered to an ordinary line fragment — glyph
+    /// runs on the math face, rules and `mathbackground` fills as
+    /// decorations (decorations paint under the glyphs, and formulary
+    /// emits backgrounds before the content they sit behind).
+    #[cfg(feature = "mathml")]
+    fn place_math(
+        &mut self,
+        block: &BlockBox,
+        math: &crate::mathml::PreparedMath,
+        x: f32,
+        inner_w: f32,
+    ) {
+        use formulary::Item;
+        let to_rgba = |c: formulary::Color| chapbook_core::Rgba::new(c.r, c.g, c.b, c.a);
+
+        let (width, height) = (math.width, math.ascent + math.descent);
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        self.commit_margin();
+        // Shrink to the measure, never grow. A formula taller than a page
+        // is placed alone and overflows, clipped at paint, like any
+        // too-tall line.
+        let scale = (inner_w / width).min(1.0);
+        let (w, h) = (width * scale, height * scale);
+        if h > self.remaining() + 0.01 && !self.at_page_top() {
+            self.new_page_keeping();
+        }
+        let fallback_color = text_color(&block.style);
+        let mut runs: Vec<GlyphRun> = Vec::new();
+        let mut decorations: Vec<Decoration> = Vec::new();
+        let mut advances = math.advances.iter().copied();
+        for item in &math.items {
+            match *item {
+                Item::Glyph {
+                    id,
+                    x: gx,
+                    y: gy,
+                    size,
+                    color,
+                    // `prepare` refused any layout with a mirrored glyph.
+                    mirrored: _,
+                } => {
+                    let advance = advances.next().unwrap_or(0.0) * scale;
+                    let color = color.map(to_rgba).unwrap_or(fallback_color);
+                    let size = size * scale;
+                    let glyph = Glyph {
+                        id: id.0,
+                        x: gx * scale,
+                        y: gy * scale,
+                        advance,
+                        locator: math.locator,
+                    };
+                    match runs.last_mut() {
+                        Some(run) if run.font_size == size && run.color == color => {
+                            run.glyphs.push(glyph);
+                        }
+                        _ => runs.push(GlyphRun {
+                            font: math.font,
+                            font_size: size,
+                            font_weight: 400,
+                            color,
+                            glyphs: vec![glyph],
+                        }),
+                    }
+                }
+                Item::Rule {
+                    x: rx,
+                    y: ry,
+                    w: rw,
+                    h: rh,
+                    color,
+                } => decorations.push(Decoration {
+                    x: rx * scale,
+                    width: rw * scale,
+                    y: (math.ascent + ry) * scale,
+                    thickness: rh * scale,
+                    color: color.map(to_rgba).unwrap_or(fallback_color),
+                }),
+                Item::Background {
+                    x: rx,
+                    y: ry,
+                    w: rw,
+                    h: rh,
+                    color,
+                } => decorations.push(Decoration {
+                    x: rx * scale,
+                    width: rw * scale,
+                    y: (math.ascent + ry) * scale,
+                    thickness: rh * scale,
+                    color: to_rgba(color),
+                }),
+                // `Item` is non-exhaustive; an unknown future item kind
+                // simply does not draw.
+                _ => {}
+            }
+        }
+        let rect = Rect {
+            origin: Point::new(
+                self.content.origin.x + x + (inner_w - w) / 2.0,
+                self.content.origin.y + self.y,
+            ),
+            size: Size::new(w, h),
+        };
+        self.pages.last_mut().unwrap().fragments.push(Fragment {
+            rect,
+            kind: FragmentKind::Line(LineFragment {
+                baseline: math.ascent * scale,
+                runs,
+                decorations,
+                text: math.text.clone(),
+                locator_start: math.locator,
+            }),
+            tag: crate::dom::node_tag(block.node),
+        });
+        self.y += h.min(self.content.size.h);
         self.placed_on_page += 1;
     }
 

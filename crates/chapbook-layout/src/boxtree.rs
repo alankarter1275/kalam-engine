@@ -49,6 +49,9 @@ pub enum BlockKind {
     Rule,
     /// A real table grid (see `crate::table`).
     Table(Box<crate::table::TableBox>),
+    /// A natively laid-out block `<math>` (see `crate::mathml`).
+    #[cfg(feature = "mathml")]
+    Math(Box<crate::mathml::PreparedMath>),
 }
 
 /// One inline formatting context: styled text runs in document order, with
@@ -121,6 +124,9 @@ pub struct BoxTreeInput<'a> {
     pub locator: &'a HashMap<NodeId, u32>,
     /// Decoded images keyed by node tag (from `crate::collect_images`).
     pub images: &'a ImageStore,
+    /// Formulas laid out by formulary (from `crate::mathml::prepare`).
+    #[cfg(feature = "mathml")]
+    pub math: &'a crate::mathml::MathStore,
     /// CSS quote nesting depth for `open-quote`/`close-quote` content,
     /// advanced in document order as the box tree is walked.
     pub quote_depth: std::cell::Cell<usize>,
@@ -197,7 +203,7 @@ fn build_block(input: &BoxTreeInput, node: NodeId, style: ServoArc<ComputedValue
     // the image (and a floated image can wrap its paragraph's text).
     let has_block_child = doc.node(node).children.iter().any(|child| {
         matches!(&doc.node(*child).data, NodeData::Element(_))
-            && (replaced_kind(doc, *child).is_some()
+            && (replaced_kind(input, *child).is_some()
                 || doc.primary_styles(*child).is_some_and(|s| {
                     !matches!(display_of(&s), DisplayClass::Inline | DisplayClass::None)
                 }))
@@ -578,31 +584,50 @@ fn push_marker(
 enum ReplacedKind {
     Image,
     Rule,
+    #[cfg(feature = "mathml")]
+    Math,
 }
 
-fn replaced_kind(doc: &Document, id: NodeId) -> Option<ReplacedKind> {
+fn replaced_kind(input: &BoxTreeInput, id: NodeId) -> Option<ReplacedKind> {
+    let doc = input.doc;
+    // A prepared formula wins over the fallback form its node was rewritten
+    // into (an `<img>` for altimg, a flattening `<math>` otherwise).
+    #[cfg(feature = "mathml")]
+    if input.math.contains(crate::dom::node_tag(id)) {
+        return Some(ReplacedKind::Math);
+    }
     if doc.is_html_element(id, &markup5ever::local_name!("img")) {
         Some(ReplacedKind::Image)
     } else if doc.is_html_element(id, &markup5ever::local_name!("hr")) {
         Some(ReplacedKind::Rule)
+    } else if crate::dom::is_svg_root(doc, id)
+        && input.images.dims(crate::dom::node_tag(id)).is_some()
+    {
+        // An inline `<svg>` is replaced only once rasterized; without an
+        // entry in the store it keeps flattening to its text as before.
+        Some(ReplacedKind::Image)
     } else {
         None
     }
 }
 
-/// Build a replaced block for `img`/`hr`. An image missing from the store
-/// (unresolvable src, undecodable data) degrades to nothing.
+/// Build a replaced block for `img`/`hr`/`svg`/`math`. An image missing
+/// from the store (unresolvable src, undecodable data) degrades to nothing.
 fn replaced_block(
     input: &BoxTreeInput,
     node: NodeId,
     style: &ServoArc<ComputedValues>,
 ) -> Option<BlockBox> {
-    let kind = match replaced_kind(input.doc, node)? {
+    let kind = match replaced_kind(input, node)? {
         ReplacedKind::Rule => BlockKind::Rule,
         ReplacedKind::Image => {
             let (width, height) = input.images.dims(crate::dom::node_tag(node))?;
             BlockKind::Image { width, height }
         }
+        #[cfg(feature = "mathml")]
+        ReplacedKind::Math => BlockKind::Math(Box::new(
+            input.math.get(crate::dom::node_tag(node))?.clone(),
+        )),
     };
     Some(BlockBox {
         node,

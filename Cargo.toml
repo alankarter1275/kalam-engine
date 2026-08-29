@@ -34,7 +34,11 @@ readme = "README.md"
 # Internal crates
 chapbook-core = { path = "crates/chapbook-core" }
 chapbook-epub = { path = "crates/chapbook-epub" }
-chapbook-layout = { path = "crates/chapbook-layout" }
+# `default-features = false` for the same reason as chapbook-opds below:
+# without it here, chapbook-reader's own `default-features = false` (which
+# makes its `svg`/`mathml` passthroughs real choices) is silently ignored.
+# Members that want the defaults name them (chapbook-cli does).
+chapbook-layout = { path = "crates/chapbook-layout", default-features = false }
 chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
 chapbook-render-vello = { path = "crates/chapbook-render-vello" }
@@ -103,6 +107,23 @@ image = { version = "0.25", default-features = false, features = [
     "gif",
     "webp",
 ] }
+# SVG rasterization (CPU, over the tiny-skia already in the graph). `text`
+# because book diagrams carry labels — usvg gets a fontdb copied from the
+# session's own FontSystem, never the host's, so goldens stay deterministic;
+# `raster-images` because EPUB cover SVGs wrap a JPEG `<image>`. No
+# `system-fonts`: font policy belongs to `FontSource`, nothing else.
+resvg = { version = "0.48", default-features = false, features = [
+    "text",
+    "raster-images",
+] }
+# MathML Core layout: OpenType MATH metrics in, glyphs-and-rules out. Its
+# `svg` feature is a debugging emitter we have no use for. ttf-parser rides
+# along (same version formulary pins) to read glyph advances and detect
+# MATH tables — formulary's own face handle is crate-private.
+formulary = { version = "0.1", default-features = false, features = [
+    "shaping",
+] }
+ttf-parser = "0.25"
 
 # EPUB. We only ever read: `write` is rbook's EPUB *authoring* half.
 rbook = { version = "0.7", default-features = false, features = [

@@ -29,9 +29,15 @@ pub fn parse_xhtml(bytes: &[u8], base_path: &str) -> Result<Document> {
     let mut document = parse_document(sink, ParseOpts::default())
         .from_utf8()
         .one(bytes);
-    // MathML gets no layout; rewrite <math> subtrees into their EPUB
-    // altimg/alttext fallback before anything walks the tree.
+    // MathML gets no layout from stylo; capture each <math> source for the
+    // native renderer, then rewrite the subtree into its EPUB altimg/alttext
+    // fallback before anything walks the tree — the fallback tree is the
+    // locator authority whether or not the native renderer runs.
     super::math_fallback::apply_mathml_fallback(&mut document);
+    // Inline <svg> stays in the tree (its text keeps its locator
+    // contribution); the serialized source lets layout treat it as a
+    // replaced image when a rasterizer is in the build.
+    super::foreign::capture_svg_roots(&mut document);
     // Fill node back-pointers/self-ids now that the tree is complete; &Node
     // becomes a self-sufficient handle for the stylo traits.
     document.seal();

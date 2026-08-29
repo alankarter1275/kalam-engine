@@ -32,6 +32,7 @@ pub(super) fn apply_mathml_fallback(doc: &mut Document) {
     let mut math_roots = Vec::new();
     collect_math_roots(doc, doc.root(), &mut math_roots);
     for id in math_roots {
+        super::foreign::capture_math(doc, id);
         rewrite(doc, id);
     }
 }
