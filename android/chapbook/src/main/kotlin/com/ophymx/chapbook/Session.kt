@@ -80,8 +80,11 @@ class Session private constructor(private var handle: Long) : AutoCloseable {
          * Takes ownership of [pfd]: it is detached here and closed by the
          * session, so the caller must not close it or use it again.
          *
-         * A book opened this way does not reach the library — no path means
-         * nothing to fingerprint — so it opens at the beginning every time.
+         * A book opened this way reaches the library by content — hashed on
+         * open, recorded under the same edition fingerprint a path import
+         * gets — so its position and annotations persist. Reopening the
+         * *file* next launch is the app's job: take a persistable URI
+         * grant, re-resolve it, and hand the descriptor back here.
          */
         fun openFd(pfd: ParcelFileDescriptor, libraryDir: String): Session? {
             val handle = Native.openFd(pfd.detachFd(), libraryDir)

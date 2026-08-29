@@ -20,7 +20,7 @@ crate-type = ["cdylib", "rlib"]
 # position, no annotations, no settings — and nothing says so. It opens,
 # renders and conforms; it just never comes back where it was left.
 # `opds` stays off: it is the only feature that pulls in TLS, and the
-# trust-store question is not this spike's (see `docs/FFI.md`).
+# trust-store question is not settled here (see `android/README.md`).
 chapbook-reader = { workspace = true, features = ["library", "cbz", "pdf", "svg", "mathml"] }
 
 [target.'cfg(target_os = "android")'.dependencies]

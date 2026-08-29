@@ -32,7 +32,11 @@
 //! rather than merely looking wrong. That is why the source is a required
 //! argument rather than a setting with a default.
 //!
-//! The full evidence is in `docs/FFI.md`, *Fonts, on every platform*.
+//! The evidence was gathered on real devices during the Android and iOS
+//! bring-up; the rules it bought live in these types — no `Default` on
+//! [`Generics`] or [`Fallbacks`], zero faces an error, nothing loading
+//! host fonts implicitly — and the open per-platform questions in
+//! `docs/PLATFORM.md` §3.
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -430,27 +430,81 @@ changed, book finished) should replace polling where shells need to react.
 
 ## 3. The portability layer
 
-Designed in [docs/FFI.md](FFI.md), which is where the boundary, the input
-model and the Android spike plan now live. What follows is the statement of
-the problem; that document is the proposed answer.
+**Built, and proven from outside the workspace at every level it names.**
+This section used to be the statement of a missing boundary; two spikes — an
+Android ladder driven to a real device and an iOS ladder driven to a
+simulator app — shaped the API, their findings were fixed in safe Rust, and
+the boundary froze only after both had walked it.
 
-**FFI is the gate.** "Different devices" mostly means different host
-languages, and there is no C API or bindings layer, so Android/Kotlin,
-iOS/Swift, and WASM apps cannot be built at all. Designing this boundary is
-also the forcing function for §2's API cleanups — a string-sniffing
-constructor and imperative UI verbs do not survive the trip.
+- **The C ABI** is `crates/chapbook-ffi`, with `include/chapbook.h` checked
+  in beside it: hand-written, Contract tier, golden-tested against the
+  crate, compiled as C99/C11/C17 in the gate, every entry point wrapped in
+  `catch_unwind`, nothing crossing owned. The crate docs state the rules
+  and the rejected alternative (UniFFI); `cb_capabilities()` exists because
+  a header cannot say which artifact a host actually loaded, and a build
+  without the library reads perfectly and remembers nothing.
+- **Typed sources** close the string-sniffing constructor: a path, bytes,
+  a seekable handle, or a catalog URL, with the format sniffed from the
+  bytes. Every capability the constructor used to reach for behind the
+  caller's back — fonts, credentials, transport, the library directory, a
+  cache budget — arrives through `SessionConfig`.
+- **The input model** is `chapbook_core::input`: an `Action` vocabulary,
+  `TapZones` that read the book's direction so a shell cannot default every
+  platform to LTR, and a `KeyMap` that already knows Kobo and PocketBook
+  page-turn buttons — applied through `Session::apply`, whose
+  `ActionOutcome` distinguishes *repaint* from *consumed* because Android's
+  volume slider is what happens when a shell cannot. Settled on a
+  touchscreen before it crossed the header.
+- **Lifecycle and power** are `suspend()`, `set_cache_budget` and
+  `release_caches`. Suspend closes the database rather than merely
+  flushing: an iOS app holding a POSIX advisory lock in a shared container
+  when it suspends is killed by the watchdog (`0xdead10cc`), which makes
+  lock release a design constraint rather than a bug found later.
+- **Android** is `crates/chapbook-jni` plus the `android/` Gradle pair
+  (library AAR and demo) — a direct Rust binding, deliberately not a
+  consumer of the header; `docs/STABILITY.md` has that argument and
+  `android/README.md` the platform notes.
+- **iOS** is the Swift package in `ios/` over the header — the consumer
+  that cannot route around it, which is what keeps a C ABI honest. An
+  XCFramework by necessity: the device and simulator slices are both
+  arm64 and `lipo` refuses to put them in one file. `ios/README.md` has
+  the platform notes.
 
-**Input abstraction.** Shells hand-translate events today. A platform wants a
-gesture/intent model (tap zones, swipe, long-press select, pinch-zoom for
-comics and PDF) and a key-mapping model — remembering that Kobo and
-PocketBook have *physical page-turn buttons*, which desktop shells never
-exercise.
+**What is still open here, none of it structural:**
 
-**Lifecycle and power.** No suspend/resume, no "save state now, you are being
-killed." Mandatory on mobile and e-ink. On Apple platforms it also has to
-release file locks, not merely persist — see FFI.md.
+- **Device-only questions.** The iOS rungs ran on a simulator, which is not
+  App Sandbox confinement: still owed to a physical device are bundled
+  SQLite in a real container, whether `/System/Library/Fonts` is readable
+  from inside the sandbox (the simulator says yes and proves nothing),
+  bookmark revocation, and iCloud placeholder files — legal, named, not
+  yet downloaded. Android's rungs ran on an x86_64 emulator plus one
+  device; iOS closed the arm64 half for Apple only.
+- **Fonts.** Three decisions, recorded when the font source landed:
+  whether an embedded source ships in every shell binary or only in tests
+  (four Crimson Text faces is not nothing; the standing rule is that
+  shells must *name* a source, so nobody falls back to one serif
+  silently); who owns the per-target generic-family tables
+  (recommendation: `chapbook-layout` ships known-good mappings per
+  platform with a shell override, rather than every shell rediscovering
+  that `sans-serif` means Roboto); and whether to send fontdb its missing
+  six-line iOS branch upstream. Related and also unapplied: cosmic-text's
+  `fontconfig` feature still compiles into every unix target, including
+  the two (iOS, Android) where `/etc/fonts/fonts.conf` cannot exist — it
+  wants a per-target dependency declaration.
+- **WASM stays a demo, deliberately.** `wasm-bindgen` wraps Rust, not C,
+  so a browser build is a sibling exporter over the same shape, never a
+  header consumer. The EPUB-only profile it forces
+  (`--no-default-features`: no SQLite, no loader thread, fonts embedded,
+  opened from bytes) is the same profile a stripped e-ink build wants, is
+  measured at 6.0 MB / 2.08 MB gzipped for the whole reading path, and is
+  held open by a `cargo check --target wasm32-unknown-unknown` in CI —
+  check it in CI, do not ship it from CI. A session in that profile reads
+  and remembers nothing, which are the honest consequences of having
+  nowhere to write. stylo styles single-threaded by construction
+  (`chapbook-layout/tests/sequential.rs` pins it), so no
+  `SharedArrayBuffer` gymnastics are owed.
 
-**The boundary is not the only thing that assumes a desktop.** Designing it
+**The boundary is not the only thing that assumed a desktop.** Designing it
 surfaced the same assumption in the OPDS transport, the credential store and
 the library's file custody. Those are §7.
 
@@ -619,10 +673,10 @@ last two record a failure that motivated one.
 
 ## 7. The edges assume a desktop
 
-The iOS assessment in [docs/FFI.md](FFI.md) asked a larger question than the
-FFI: is this engine the right shape to build an Apple app on, or should an
-iOS app lean on Apple's frameworks instead? The answer splits cleanly, and
-the split is the same one §2 found in the constructor.
+The iOS assessment asked a larger question than the FFI: is this engine the
+right shape to build an Apple app on, or should an iOS app lean on Apple's
+frameworks instead? The answer splits cleanly, and the split is the same
+one §2 found in the constructor.
 
 **The engine is right. The edges are wrong.** Keep the pipeline, the locator
 design, the schema and the format parsers. Push transport, credentials, file
@@ -699,8 +753,9 @@ sockets: the caller injects an `HttpClient`, a blocking trait over an owned
 `HttpRequest`/`HttpResponse` pair chosen to survive a trip through a foreign
 runtime. `UreqHttp` is one implementation behind a default feature;
 `--no-default-features` leaves a dependency tree with no ureq, no rustls and
-no `ring` in it, which is also the answer to FFI.md's second NDK
-prerequisite.
+no `ring` in it — which also removes the second of the two C dependencies
+that made the NDK an Android prerequisite (bundled SQLite is the other, and
+that one stays).
 
 `HttpClient::download` is the part worth noting for iOS specifically: it has
 a default that streams to a temp file and renames, and it exists to be
@@ -767,22 +822,31 @@ boundary.
 
 ### Custody: bookmarks, not copies
 
-`Library::import` does `std::fs::read` on the whole file to SHA-1 it, and so
-does `fingerprint_of_file`. For a large CBZ or PDF that is a hundreds-of-
-megabyte spike against a mobile memory limit, for a hash that should stream.
-Small, concrete, and worth fixing on every platform.
+A private directory owning copies of books is a desktop idea. iOS users
+expect books to live in Files or iCloud Drive, reached through the document
+browser and security-scoped bookmarks — visible to them, not sealed inside
+a container, and not duplicated. Android's storage access framework is the
+same shape with a `content://` URI where the bookmark would be.
 
-The deeper mismatch is that a private directory owning copies of books is a
-desktop idea. iOS users expect books to live in Files or iCloud Drive,
-reached through the document browser and security-scoped bookmarks — visible
-to them, not sealed inside a container, and not duplicated.
+**The engine's half is done.** The library keys identity by edition
+fingerprint — a streaming hash of the bytes, no longer a whole-file read —
+and a book that arrives as bytes or a descriptor is *adopted*: recorded
+with metadata, cover and an empty `file_path`, never copied. Positions,
+annotations and per-book settings key on the record, so a descriptor-opened
+book comes back where the reader left it, and the same file imported by
+path on a desktop resolves to the same shelf row.
 
-The schema already anticipates this: `books` carries `file_path` *and*
-`source_path`, and `import` already writes an empty `file_path` for a book it
-does not copy. So "we hold a record but not the file" is expressible today.
-What is missing is somewhere to persist the bookmark, so a cold launch can
-re-resolve access *before* the session is constructed — see FFI.md on why
-that ordering is not optional.
+**The shell's half is holding the way back to the file.** A security-scoped
+bookmark or a persistable URI grant is the platform's object, revocable and
+meaningless to the engine, so the shell persists it and re-resolves it *on
+every cold launch, before the session is constructed* — scoped access does
+not survive relaunch, and the engine must not be handed a descriptor whose
+access has lapsed. The remaining design question is the shelf: a browsing
+UI over adopted books needs the shell to map its stored bookmarks to
+library records (the fingerprint is the natural key), and a book whose
+bookmark has been revoked — moved, deleted, or an iCloud placeholder — is a
+row the shell must degrade gracefully rather than a case the engine can
+see.
 
 ### Storage stays SQLite, and is already sync-shaped
 
@@ -867,17 +931,14 @@ bug.
 
 ## Priorities
 
-1. **FFI boundary (§3)** — gate on the largest device markets; forces the
-   session API into SDK shape, which is also what §2's remaining piece
-   (typed sources and injectable I/O instead of `open(&str)`) needs.
-2. **The edges (§7)** — file custody is what remains. The credential store,
-   the transport, typed sources and the library directory are all done,
-   arriving through `SessionConfig` or `Source`, so the constructor no
-   longer reaches past its caller for anything. Custody is now the *only*
-   reason a `content://` book cannot remember where the reader was. Sequenced here because it is
-   the same shape work as §2's remaining piece and lands in the same pass,
-   The accessibility finding no longer constrains what the first C ABI may
-   leave out — see §7.
+1. **FFI boundary (§3)** — done: the C ABI, the input model, lifecycle,
+   and both platform bindings exist and are tested from outside; what §3
+   still lists is device-only verification and font policy, not structure.
+2. **The edges (§7)** — the engine's side is done end to end: credential
+   store, transport, typed sources, library directory, and now custody —
+   a descriptor-opened book is adopted by fingerprint and keeps its
+   place. What remains lives in shells: persisting bookmarks and URI
+   grants, and the shelf-over-adopted-books mapping.
 3. **Sync clients (§5)** — belongs to the platform, not to each app, and
    annotation interchange rides along.
 4. **Hygiene (§6)** — continuous, never urgent, decides whether any of this

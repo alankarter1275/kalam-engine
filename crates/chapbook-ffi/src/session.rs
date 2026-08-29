@@ -25,8 +25,8 @@ pub struct cb_session {
     /// The tap policy for this session — beside the session rather than a
     /// free-standing struct so the one field a host must *not* choose, the
     /// reading direction, is read off the book on every configuration and
-    /// can never be handed in wrong. That shape was settled on a device:
-    /// see `docs/FFI.md`, *What the touchscreen settled*.
+    /// can never be handed in wrong. That shape was settled on a device,
+    /// where every shell defaulting to `Ltr` was the bug about to ship.
     pub(crate) zones: TapZones,
 }
 
@@ -197,9 +197,9 @@ fn open_with(source: Source, config: *mut cb_config) -> *mut cb_session {
 
 /// Open a book from a filesystem path. **Consumes `config`** either way.
 ///
-/// Returns null on failure; `cb_last_error_message` says why. Only path
-/// sources reach the library, so this is the one door with a reading
-/// position behind it.
+/// Returns null on failure; `cb_last_error_message` says why. The book is
+/// imported into the library (when the config names one): copied, indexed,
+/// and reopened at its stored reading position.
 #[no_mangle]
 pub unsafe extern "C" fn cb_session_open_path(
     path: *const c_char,
@@ -219,8 +219,11 @@ pub unsafe extern "C" fn cb_session_open_path(
 /// download it performed itself. The bytes are copied; the caller's buffer
 /// is its own again on return.
 ///
-/// **Consumes `config`.** Does not reach the library: there is no file to
-/// fingerprint, so the book opens at the beginning every time.
+/// **Consumes `config`.** Reaches the library by content: the bytes are
+/// hashed and the book adopted — recorded, not copied — under the same
+/// edition fingerprint a path import gets, so its position, annotations
+/// and per-book settings persist. Keeping hold of the *file* for the next
+/// launch stays the host's job.
 #[no_mangle]
 pub unsafe extern "C" fn cb_session_open_bytes(
     bytes: *const u8,
@@ -252,8 +255,11 @@ pub unsafe extern "C" fn cb_session_open_bytes(
 /// security-scoped file.
 ///
 /// **Takes ownership of `fd`** and closes it when the session is closed, so
-/// the caller must have detached it. **Consumes `config`.** Does not reach
-/// the library, for the same reason as bytes.
+/// the caller must have detached it. **Consumes `config`.** Reaches the
+/// library the same way bytes do: hashed on open, adopted by fingerprint,
+/// position and annotations persist. The descriptor is not something the
+/// library can reopen, so re-resolving the bookmark or URI grant on the
+/// next launch stays the caller's job — resolve first, then open.
 ///
 /// Unix only: a descriptor is what Android and iOS hand out, and Windows
 /// has no analogue worth guessing at from here.

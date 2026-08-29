@@ -1083,7 +1083,7 @@ fn taps_find_highlights_recolor_them_and_list_every_mark() {
 }
 
 /// A session may cross threads but may not be shared across them, which is
-/// the shape every binding in `docs/FFI.md` is built on: a host holds one
+/// the shape every binding is built on: a host holds one
 /// opaque handle, moves it freely, and needs no lock of its own. `Sync`
 /// fails today on the loader's receiver and on rusqlite's connection, so
 /// only the half we actually rely on is asserted here — if `Send` ever

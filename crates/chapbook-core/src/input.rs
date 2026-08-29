@@ -13,7 +13,7 @@
 //! edge a page turn comes from, and a [`KeyMap`] that already knows a Kobo
 //! has physical page-turn buttons. No event loop, no I/O, no timers.
 //!
-//! See `docs/FFI.md`, *Input, lifecycle and power*.
+//! `docs/SHELLS.md` §3 is the guide to driving it from a shell.
 
 use crate::page::PageMetrics;
 

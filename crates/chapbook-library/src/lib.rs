@@ -182,9 +182,49 @@ impl Library {
     /// can produce one and nothing was asking, so a shelf had no image to
     /// draw and would have had to reopen every book to get one.
     pub fn import(&mut self, source: &Path, publication: &dyn Publication) -> Result<BookId> {
+        let fingerprint = Self::fingerprint_of_file(source)?;
+        let fallback_title = source
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        self.record(
+            publication,
+            &fingerprint,
+            &fallback_title,
+            &source.to_string_lossy(),
+            Some(source),
+        )
+    }
+
+    /// Record a book the library holds no copy of.
+    ///
+    /// The custody answer for a book that arrives as a descriptor or as
+    /// bytes — an Android `content://` resolve, an iOS security-scoped
+    /// bookmark: the platform owns the file and the shell owns the means
+    /// of reaching it again, so the library keeps a *record* — identity,
+    /// metadata, cover, and everything positions and annotations key on —
+    /// and copies nothing. `file_path` stays empty, which the schema has
+    /// always allowed and [`BookRecord`] callers already tolerate.
+    ///
+    /// The caller supplies the fingerprint because only the caller still
+    /// has the stream — see [`Self::fingerprint_of_reader`]. Adopting a
+    /// fingerprint the shelf already knows returns the existing book, so a
+    /// book imported by path on one platform and opened by descriptor on
+    /// another resolves to the same record.
+    pub fn adopt(&mut self, fingerprint: &str, publication: &dyn Publication) -> Result<BookId> {
+        self.record(publication, fingerprint, "Untitled", "", None)
+    }
+
+    fn record(
+        &mut self,
+        publication: &dyn Publication,
+        fingerprint: &str,
+        fallback_title: &str,
+        source_label: &str,
+        copy_from: Option<&Path>,
+    ) -> Result<BookId> {
         let metadata = publication.metadata();
-        let bytes = std::fs::read(source)?;
-        let fingerprint = hex(&Sha1::digest(&bytes));
 
         if let Some(existing) = self
             .conn
@@ -199,13 +239,10 @@ impl Library {
             return Ok(BookId(existing));
         }
 
-        let title = metadata.title.clone().unwrap_or_else(|| {
-            source
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        });
+        let title = metadata
+            .title
+            .clone()
+            .unwrap_or_else(|| fallback_title.to_owned());
         let tx = self.conn.transaction().map_err(db_err)?;
         tx.execute(
             "INSERT INTO books (title, language, identifier, file_path, source_path, fingerprint, added_at)
@@ -214,7 +251,7 @@ impl Library {
                 title,
                 metadata.language,
                 metadata.identifier,
-                source.to_string_lossy(),
+                source_label,
                 fingerprint
             ],
         )
@@ -235,18 +272,21 @@ impl Library {
             .map_err(db_err)?;
         }
 
-        // Managed copy named by id; extension preserved for format sniffing.
-        let extension = source
-            .extension()
-            .map(|e| e.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "epub".into());
-        let file_path = self.books_dir.join(format!("{id}.{extension}"));
-        std::fs::write(&file_path, &bytes)?;
-        tx.execute(
-            "UPDATE books SET file_path = ?1 WHERE id = ?2",
-            params![file_path.to_string_lossy(), id],
-        )
-        .map_err(db_err)?;
+        if let Some(source) = copy_from {
+            // Managed copy named by id; extension preserved for format
+            // sniffing.
+            let extension = source
+                .extension()
+                .map(|e| e.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "epub".into());
+            let file_path = self.books_dir.join(format!("{id}.{extension}"));
+            std::fs::copy(source, &file_path)?;
+            tx.execute(
+                "UPDATE books SET file_path = ?1 WHERE id = ?2",
+                params![file_path.to_string_lossy(), id],
+            )
+            .map_err(db_err)?;
+        }
 
         // A missing or unwritable cover is not an import failure: the book
         // is fine and a shelf can fall back to a title card.
@@ -421,8 +461,7 @@ impl Library {
     /// fingerprint. Positions/annotations stay keyed to the book id and get
     /// re-anchored by [`restore_position`], never orphaned.
     pub fn update_edition(&mut self, id: BookId, source: &Path) -> Result<()> {
-        let bytes = std::fs::read(source)?;
-        let fingerprint = hex(&Sha1::digest(&bytes));
+        let fingerprint = Self::fingerprint_of_file(source)?;
         let file_path: String = self
             .conn
             .query_row(
@@ -431,11 +470,30 @@ impl Library {
                 |row| row.get(0),
             )
             .map_err(db_err)?;
-        std::fs::write(&file_path, &bytes)?;
+        // An adopted book has no managed copy to refresh.
+        if !file_path.is_empty() {
+            std::fs::copy(source, &file_path)?;
+        }
         self.conn
             .execute(
                 "UPDATE books SET fingerprint = ?1, source_path = ?2 WHERE id = ?3",
                 params![fingerprint, source.to_string_lossy(), id.0],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// [`Self::update_edition`] for a book with no path: a new edition
+    /// arrived through a handle, so there are no bytes to copy — only the
+    /// identity to move, so the next open matches by fingerprint instead
+    /// of re-anchoring through the identifier every time. A managed copy,
+    /// if the book was once imported by path, stays on the previous
+    /// edition; the platform owns the current one.
+    pub fn update_edition_fingerprint(&mut self, id: BookId, fingerprint: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE books SET fingerprint = ?1 WHERE id = ?2",
+                params![fingerprint, id.0],
             )
             .map_err(db_err)?;
         Ok(())
@@ -493,7 +551,42 @@ impl Library {
     }
 
     pub fn fingerprint_of_file(path: &Path) -> Result<String> {
-        Ok(hex(&Sha1::digest(std::fs::read(path)?)))
+        Ok(Self::fingerprint_stream(std::fs::File::open(path)?)?)
+    }
+
+    /// Fingerprint a seekable handle, rewound to the start on both sides
+    /// of the hash so the format reader gets an untouched stream.
+    ///
+    /// This is how a descriptor-opened book gets the same edition identity
+    /// a path import gets, which is what lets it reach the shelf at all —
+    /// see [`Self::adopt`].
+    pub fn fingerprint_of_reader(reader: &mut dyn chapbook_core::ReadSeek) -> Result<String> {
+        reader.seek(std::io::SeekFrom::Start(0))?;
+        let fingerprint = Self::fingerprint_stream(&mut *reader)?;
+        reader.seek(std::io::SeekFrom::Start(0))?;
+        Ok(fingerprint)
+    }
+
+    /// Fingerprint bytes a host already holds whole.
+    pub fn fingerprint_of_bytes(bytes: &[u8]) -> String {
+        hex(&Sha1::digest(bytes))
+    }
+
+    /// SHA-1 of a stream, a buffer at a time. The whole-file
+    /// `std::fs::read` this replaced was a transient allocation the size
+    /// of the book — for a large comic, a real spike against a phone's
+    /// memory ceiling, spent on a hash that streams.
+    fn fingerprint_stream(mut reader: impl std::io::Read) -> std::io::Result<String> {
+        let mut hasher = Sha1::new();
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        Ok(hex(&hasher.finalize()))
     }
 
     pub fn position(&self, id: BookId) -> Result<Option<StoredPosition>> {

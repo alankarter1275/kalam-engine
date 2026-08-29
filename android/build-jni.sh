@@ -52,7 +52,7 @@ done
 # `chapbook-jni` binds `chapbook-reader` directly and deliberately: Kotlin
 # reaches Rust through JNI, which is already a C ABI, so routing it through
 # `chapbook-ffi` as well would put two C-shaped boundaries back to back with
-# Rust in the middle converting both ways. See docs/FFI.md.
+# Rust in the middle converting both ways. See docs/STABILITY.md.
 #
 # That leaves `chapbook-ffi`'s header unexercised on this platform, and the
 # thing worth knowing is cheap to ask directly: does it compile under the
