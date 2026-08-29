@@ -49,7 +49,7 @@ svg = ["dep:resvg", "dep:fontdb"]
 # the EPUB altimg/alttext fallback path (`dom::math_fallback`) unchanged.
 # ~820 KB of font in the binary — the stripped e-ink profile's reason to
 # say no.
-mathml = ["dep:formulary", "dep:ttf-parser"]
+mathml = ["dep:formulary"]
 
 [dependencies.xml5ever]
 workspace = true
@@ -66,9 +66,5 @@ workspace = true
 optional = true
 
 [dependencies.formulary]
-workspace = true
-optional = true
-
-[dependencies.ttf-parser]
 workspace = true
 optional = true

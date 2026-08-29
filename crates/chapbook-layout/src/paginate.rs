@@ -591,7 +591,6 @@ impl<'f> Paginator<'f> {
         let fallback_color = text_color(&block.style);
         let mut runs: Vec<GlyphRun> = Vec::new();
         let mut decorations: Vec<Decoration> = Vec::new();
-        let mut advances = math.advances.iter().copied();
         for item in &math.items {
             match *item {
                 Item::Glyph {
@@ -599,11 +598,12 @@ impl<'f> Paginator<'f> {
                     x: gx,
                     y: gy,
                     size,
+                    advance,
                     color,
                     // `prepare` refused any layout with a mirrored glyph.
                     mirrored: _,
                 } => {
-                    let advance = advances.next().unwrap_or(0.0) * scale;
+                    let advance = advance * scale;
                     let color = color.map(to_rgba).unwrap_or(fallback_color);
                     let size = size * scale;
                     let glyph = Glyph {
