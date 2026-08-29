@@ -300,7 +300,8 @@ stripped e-ink profile's knobs):
   formulary reports unsupported structure and a fallback exists, when the
   layout needs mirrored glyphs (RTL math), or when no MATH font is loaded.
 - **SVG** (`svg`). Rasterized by resvg at `collect_images` time into the
-  shared `ImageStore` — straight RGBA at the SVG's intrinsic size — so an
+  shared `ImageStore` — RGBA at the SVG's intrinsic size (the store
+  premultiplies once at insert, so frames composite in place) — so an
   SVG is indistinguishable from a decoded PNG downstream, dithering
   regions included. Covers `<img src>` pointing at SVG (content-sniffed,
   never by extension) and inline `<svg>` subtrees (serialized at parse

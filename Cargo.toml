@@ -116,6 +116,15 @@ resvg = { version = "0.48", default-features = false, features = [
     "text",
     "raster-images",
 ] }
+# usvg's fontdb (0.24 — a second build beside cosmic-text's 0.23), named
+# only to enable `fs`: file-backed session faces then load into usvg by
+# path (metadata parse, bytes read on demand) instead of by bulk copy.
+# The types still come via `resvg::usvg::fontdb`; resvg's own feature for
+# this is `system-fonts`, which also drags in fontconfig policy we refuse.
+fontdb = { version = "0.24", default-features = false, features = [
+    "std",
+    "fs",
+] }
 # MathML Core layout: OpenType MATH metrics in, glyphs-and-rules out. Its
 # `svg` feature is a debugging emitter we have no use for. ttf-parser rides
 # along (same version formulary pins) to read glyph advances and detect

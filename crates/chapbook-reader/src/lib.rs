@@ -324,6 +324,22 @@ pub struct Session {
     /// Where jumps came from, so a footnote can be returned from. Only
     /// jumps push; ordinary page turns don't.
     back_stack: Vec<Locator>,
+    /// Per-unit locator-text char counts, computed once per book: a
+    /// property of the file, not of any layout, so it never invalidates.
+    /// Position capture needs the whole spine's counts, and without this
+    /// every save re-inflated and re-parsed every chapter — on a callback
+    /// (`suspend`) with a documented time budget.
+    char_counts: std::cell::OnceCell<Vec<u64>>,
+    /// The most recently extracted unit locator text. One entry, replaced
+    /// on a different unit: selection, capture, search, and highlight
+    /// resolution ask for the same unit in bursts, and each ask was an
+    /// inflate + parse + walk. Survives relayout by design — locator text
+    /// is metrics-independent.
+    unit_text_cache: std::cell::RefCell<Option<(usize, String)>>,
+    /// `ChapterLayout::approx_bytes` per cached unit, maintained at
+    /// insert/removal — `cache_bytes()` runs in the eviction loop, and
+    /// recomputing it deep-walked every glyph of every cached chapter.
+    layout_bytes: HashMap<usize, usize>,
     /// Fragment to land on once the target unit has laid out — the
     /// anchor-flavored sibling of `pending_offset`, unit-paired for the
     /// same reason.
@@ -952,6 +968,9 @@ impl Session {
             links: HashMap::new(),
             back_stack: Vec::new(),
             pending_anchor: None,
+            char_counts: std::cell::OnceCell::new(),
+            unit_text_cache: std::cell::RefCell::new(None),
+            layout_bytes: HashMap::new(),
         })
     }
 
@@ -1020,7 +1039,7 @@ impl Session {
                 }
             }
             if self.placeholders.remove(&spine) {
-                self.layouts.remove(&spine);
+                self.drop_layout(spine);
             }
             // A page that just landed is 15 MB of decoded RGBA for a comic;
             // this is the moment the cache grows, so it is the moment to
@@ -1129,7 +1148,7 @@ impl Session {
         let had = self.metrics.is_some();
         let locator = self.current_offset();
         self.metrics = Some(metrics);
-        self.layouts.clear();
+        self.clear_layouts();
         self.placeholders.clear();
         // Image-book pixels are metrics-independent; only text chapters
         // rebuild their per-layout stores.
@@ -1371,7 +1390,10 @@ impl Session {
 
     fn relayout_keeping_position(&mut self) {
         let locator = self.current_offset();
-        self.layouts.clear();
+        self.clear_layouts();
+        // Glyph masks are keyed by size; a relayout that changed the font
+        // scale would otherwise leave the old sizes' masks resident.
+        self.renderer = chapbook_render_tinyskia::Renderer::new();
         self.placeholders.clear();
         if matches!(self.book, OpenBook::Epub(_)) {
             self.images.clear();
@@ -1648,7 +1670,7 @@ impl Session {
         let (start, end) = self.selected_range()?;
         let raw: String = match self.book.publication().kind() {
             BookKind::Epub => {
-                let unit = unit_locator_text(self.book.publication(), self.spine)?;
+                let unit = self.cached_unit_text(self.spine)?;
                 unit.chars()
                     .skip(start as usize)
                     .take((end - start) as usize)
@@ -1980,7 +2002,7 @@ impl Session {
     /// page has loaded.
     fn unit_text(&self, spine: usize) -> Option<String> {
         match self.book.publication().kind() {
-            BookKind::Epub => unit_locator_text(self.book.publication(), spine),
+            BookKind::Epub => self.cached_unit_text(spine),
             BookKind::Pdf => {
                 let unit = self.loaded_units.get(&spine)?;
                 Some(unit.text.iter().map(|line| line.text.as_str()).collect())
@@ -1989,27 +2011,40 @@ impl Session {
         }
     }
 
-    /// Char counts around the current unit, extracted over the whole
-    /// spine. One pass serves any number of captures in the same unit.
+    /// Char counts around the current unit. The per-unit counts are a
+    /// property of the file — computed once per session (the one remaining
+    /// whole-book pass) and reused by every subsequent capture, so saving
+    /// a position on suspend stops re-parsing the entire spine.
     #[cfg(feature = "library")]
     fn unit_char_context(&self) -> UnitCharContext {
-        let mut ctx = UnitCharContext {
-            text: String::new(),
-            prior: 0,
-            total: 0,
-        };
-        for i in 0..self.book.publication().spine().len() {
-            let text = unit_locator_text(self.book.publication(), i).unwrap_or_default();
-            let chars = text.chars().count() as u64;
-            if i < self.spine {
-                ctx.prior += chars;
-            }
-            if i == self.spine {
-                ctx.text = text;
-            }
-            ctx.total += chars;
+        let counts = self.char_counts.get_or_init(|| {
+            (0..self.book.publication().spine().len())
+                .map(|i| {
+                    unit_locator_text(self.book.publication(), i)
+                        .map(|text| text.chars().count() as u64)
+                        .unwrap_or(0)
+                })
+                .collect()
+        });
+        UnitCharContext {
+            text: self.cached_unit_text(self.spine).unwrap_or_default(),
+            prior: counts.iter().take(self.spine).sum(),
+            total: counts.iter().sum(),
         }
-        ctx
+    }
+
+    /// A unit's locator text through the one-entry cache. Selection,
+    /// capture, search, and highlight resolution ask for the same unit in
+    /// bursts, and every miss is an inflate + parse + walk.
+    fn cached_unit_text(&self, spine: usize) -> Option<String> {
+        if let Some((cached_spine, text)) = self.unit_text_cache.borrow().as_ref() {
+            if *cached_spine == spine {
+                return Some(text.clone());
+            }
+        }
+        let text = unit_locator_text(self.book.publication(), spine)?;
+        self.unit_text_cache.replace(Some((spine, text.clone())));
+        Some(text)
     }
 
     // ---- Rendering ----
@@ -2300,12 +2335,18 @@ impl Session {
     pub fn release_caches(&mut self) {
         let pinned = self.spine;
         self.layouts.retain(|spine, _| *spine == pinned);
+        self.layout_bytes.retain(|spine, _| *spine == pinned);
         self.images.retain(|spine, _| *spine == pinned);
         self.loaded_units.retain(|spine, _| *spine == pinned);
         self.placeholders.retain(|spine| *spine == pinned);
+        self.links.retain(|spine, _| *spine == pinned);
         #[cfg(feature = "library")]
         self.resolved_highlights.retain(|spine, _| *spine == pinned);
         self.used_at.retain(|spine, _| *spine == pinned);
+        self.unit_text_cache.replace(None);
+        // The renderer's glyph-mask cache is the one cache with no other
+        // release path; a fresh renderer starts it empty.
+        self.renderer = chapbook_render_tinyskia::Renderer::new();
     }
 
     /// You are about to be stopped: persist, and let go of the database.
@@ -2367,10 +2408,7 @@ impl Session {
     /// `ChapterLayout::approx_bytes`. A host reporting memory, or deciding
     /// whether to lower the budget, wants this.
     pub fn cache_bytes(&self) -> usize {
-        self.layouts
-            .values()
-            .map(|l| l.approx_bytes())
-            .sum::<usize>()
+        self.layout_bytes.values().sum::<usize>()
             + self.images.values().map(|i| i.bytes()).sum::<usize>()
     }
 
@@ -2393,6 +2431,24 @@ impl Session {
     fn touch(&mut self, spine: usize) {
         self.use_clock += 1;
         self.used_at.insert(spine, self.use_clock);
+    }
+
+    /// Cache a unit's layout, recording its byte estimate once —
+    /// `cache_bytes()` runs inside the eviction loop and must not deep-walk
+    /// every cached chapter per probe.
+    fn cache_layout(&mut self, spine: usize, layout: ChapterLayout) {
+        self.layout_bytes.insert(spine, layout.approx_bytes());
+        self.layouts.insert(spine, layout);
+    }
+
+    fn drop_layout(&mut self, spine: usize) {
+        self.layouts.remove(&spine);
+        self.layout_bytes.remove(&spine);
+    }
+
+    fn clear_layouts(&mut self) {
+        self.layouts.clear();
+        self.layout_bytes.clear();
     }
 
     /// Drop least-recently-used units until the caches fit the budget.
@@ -2430,11 +2486,16 @@ impl Session {
                 // a session with nothing to show.
                 return;
             };
-            self.layouts.remove(&victim);
+            self.drop_layout(victim);
             self.images.remove(&victim);
             self.loaded_units.remove(&victim);
             self.placeholders.remove(&victim);
             self.used_at.remove(&victim);
+            // Rebuildable side tables that ride along with a unit's layout;
+            // without this they escape the budget the host set.
+            self.links.remove(&victim);
+            #[cfg(feature = "library")]
+            self.resolved_highlights.remove(&victim);
         }
     }
 
@@ -2648,7 +2709,7 @@ impl Session {
                 // image store already (inserted by poll_loaded).
                 BookKind::Comic | BookKind::Pdf => {
                     let layout = self.layout_image_unit(spine, &metrics);
-                    self.layouts.insert(spine, layout);
+                    self.cache_layout(spine, layout);
                     self.touch(spine);
                     self.evict_keeping(Some(spine));
                     return self.layouts.get(&spine);
@@ -2658,7 +2719,7 @@ impl Session {
                 Some((layout, images)) => (layout, Some(images)),
                 None => return None,
             };
-            self.layouts.insert(spine, layout);
+            self.cache_layout(spine, layout);
             if let Some(images) = images {
                 self.images.insert(spine, images);
             }
@@ -2777,6 +2838,11 @@ impl Session {
         });
 
         let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
+        // NOT kept across chapters, although StyleEngine is built for it
+        // (`set_author_sheets` swaps sheets in place): stylo's `Device`
+        // owns a `Box<dyn FontMetricsProvider>` without a `Send` bound, so
+        // a retained engine would cost `Session: Send` — the FFI contract.
+        // Revisit at the next stylo upgrade.
         let mut engine = cascade::StyleEngine::new(metrics, &self.settings);
         engine.set_author_sheets(&sheets);
         engine.style_document(&mut doc);

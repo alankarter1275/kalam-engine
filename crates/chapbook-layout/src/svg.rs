@@ -40,20 +40,40 @@ pub(crate) fn sniff(bytes: &[u8]) -> bool {
     text.contains("<svg")
 }
 
-/// Copy the session's faces into a fontdb for usvg (the fontdb versions
-/// differ, so the database cannot be shared). Font files are deduplicated
-/// by data pointer — a multi-face file loads once.
+/// Does the SVG carry `<text>` (or `<textPath>`) content? Only then does
+/// usvg consult a fontdb, and building one is the expensive part of
+/// rasterization — covers and unlabeled diagrams skip it entirely.
+pub(crate) fn has_text(bytes: &[u8]) -> bool {
+    bytes.windows(5).any(|w| w == b"<text")
+}
+
+/// Rebuild the session's faces as a fontdb for usvg (the fontdb versions
+/// differ, so the database cannot be shared). File-backed faces load by
+/// path — a metadata parse; usvg reads the bytes on demand for the fonts
+/// a document actually uses — so the host font set is never bulk-copied.
+/// Only memory-backed faces (webfonts, the embedded math face) copy, and
+/// files are deduplicated so a multi-face file loads once.
 pub(crate) fn svg_fontdb(fonts: &cosmic_text::FontSystem) -> Arc<usvg::fontdb::Database> {
+    use cosmic_text::fontdb::Source;
     let src = fonts.db();
     let mut db = usvg::fontdb::Database::new();
-    let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-    let ids: Vec<_> = src.faces().map(|f| f.id).collect();
-    for id in ids {
-        src.with_face_data(id, |data, _| {
-            if seen.insert((data.as_ptr() as usize, data.len())) {
-                db.load_font_data(data.to_vec());
+    let mut seen_files: std::collections::HashSet<&std::path::Path> =
+        std::collections::HashSet::new();
+    let mut seen_data: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for face in src.faces() {
+        match &face.source {
+            Source::File(path) | Source::SharedFile(path, _) => {
+                if seen_files.insert(path.as_path()) {
+                    let _ = db.load_font_file(path);
+                }
             }
-        });
+            Source::Binary(data) => {
+                let bytes = data.as_ref().as_ref();
+                if seen_data.insert((bytes.as_ptr() as usize, bytes.len())) {
+                    db.load_font_data(bytes.to_vec());
+                }
+            }
+        }
     }
     db.set_serif_family(
         src.family_name(&cosmic_text::fontdb::Family::Serif)
@@ -81,11 +101,22 @@ pub(crate) fn svg_fontdb(fonts: &cosmic_text::FontSystem) -> Arc<usvg::fontdb::D
 /// Rasterize SVG bytes to `(width, height, straight RGBA8)`, `None` when
 /// usvg rejects them. `fetch` resolves an `<image>` href (as written in the
 /// SVG) to raw bytes; unresolvable references drop that image only.
+/// `fonts` provides the shaping fontdb and is called only when the document
+/// (or a nested SVG it references) actually contains text.
 pub(crate) fn rasterize(
     bytes: &[u8],
     fetch: &mut dyn FnMut(&str) -> Option<Vec<u8>>,
-    fontdb: Arc<usvg::fontdb::Database>,
+    fonts: &mut dyn FnMut() -> Arc<usvg::fontdb::Database>,
 ) -> Option<(u32, u32, Vec<u8>)> {
+    let db_for = |needed: bool, fonts: &mut dyn FnMut() -> Arc<usvg::fontdb::Database>| {
+        if needed {
+            fonts()
+        } else {
+            Arc::new(usvg::fontdb::Database::new())
+        }
+    };
+    let needs_text = has_text(bytes);
+
     // Pass one: parse with a recording resolver. If the SVG never asks for
     // an external href, this tree is final.
     let wanted: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -98,7 +129,7 @@ pub(crate) fn rasterize(
             ..Default::default()
         };
         let options = usvg::Options {
-            fontdb: fontdb.clone(),
+            fontdb: db_for(needs_text, fonts),
             image_href_resolver: recorder,
             ..Default::default()
         };
@@ -109,7 +140,9 @@ pub(crate) fn rasterize(
     let tree = if wanted.is_empty() {
         tree
     } else {
-        // Pass two: same parse, hrefs served from prefetched bytes.
+        // Pass two: same parse, hrefs served from prefetched bytes. A
+        // nested SVG may carry text of its own, so the fontdb decision is
+        // remade over everything this parse will see.
         let fetched: HashMap<String, Vec<u8>> = wanted
             .into_iter()
             .filter_map(|href| {
@@ -120,6 +153,8 @@ pub(crate) fn rasterize(
                 Some((href.clone(), data?))
             })
             .collect();
+        let needs_text = needs_text || fetched.values().any(|data| sniff(data) && has_text(data));
+        let fontdb = db_for(needs_text, fonts);
         let inner_fontdb = fontdb.clone();
         let server = usvg::ImageHrefResolver {
             resolve_string: Box::new(move |href: &str, _opts: &usvg::Options| {

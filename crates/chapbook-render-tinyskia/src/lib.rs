@@ -204,18 +204,10 @@ fn draw_image(
     let Some(stored) = images.get(resource) else {
         return;
     };
-    // Premultiply straight RGBA for tiny-skia.
-    let mut data = stored.rgba.clone();
-    for px in data.as_chunks_mut::<4>().0 {
-        let a = u16::from(px[3]);
-        px[0] = (u16::from(px[0]) * a / 255) as u8;
-        px[1] = (u16::from(px[1]) * a / 255) as u8;
-        px[2] = (u16::from(px[2]) * a / 255) as u8;
-    }
-    let Some(size) = tiny_skia::IntSize::from_wh(stored.width, stored.height) else {
-        return;
-    };
-    let Some(src) = Pixmap::from_vec(data, size) else {
+    // The store holds premultiplied RGBA — drawn in place, no per-frame
+    // copy or conversion (a full-page comic image is ~10 MB).
+    let Some(src) = tiny_skia::PixmapRef::from_bytes(&stored.rgba, stored.width, stored.height)
+    else {
         return;
     };
     let sx = dest.size.w * scale / stored.width as f32;
@@ -227,5 +219,5 @@ fn draw_image(
         ..PixmapPaint::default()
     };
     // draw_pixmap positions via the transform; the x/y args stay zero.
-    pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, transform, None);
+    pixmap.draw_pixmap(0, 0, src, &paint, transform, None);
 }

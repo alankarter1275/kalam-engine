@@ -952,7 +952,7 @@ impl<'f> Paginator<'f> {
                     if probe.len() == 1 {
                         let mut lines = probe;
                         lines[0].x_indent += indent;
-                        self.emit_lines(&lines, x + l, tag);
+                        self.emit_lines(&mut lines, x + l, tag);
                         return;
                     }
                     let split = first.byte_end;
@@ -966,14 +966,14 @@ impl<'f> Paginator<'f> {
                     for line in &mut lines {
                         line.x_indent += indent;
                     }
-                    self.emit_lines(&lines, x + l, tag);
+                    self.emit_lines(&mut lines, x + l, tag);
                     content = rest;
                     continue;
                 }
                 // Degenerate first line (leading <br>): fall through with
                 // the indent dropped.
             }
-            let lines = self.shape_inline(&content, &block.style, avail);
+            let mut lines = self.shape_inline(&content, &block.style, avail);
             if lines.is_empty() {
                 return;
             }
@@ -987,7 +987,7 @@ impl<'f> Paginator<'f> {
                 take += 1;
             }
             if take == lines.len() {
-                self.emit_lines(&lines, x + l, tag);
+                self.emit_lines(&mut lines, x + l, tag);
                 return;
             }
             if take == 0 {
@@ -1001,7 +1001,7 @@ impl<'f> Paginator<'f> {
                 continue;
             }
             let (_, rest) = split_inline(&content, split);
-            self.emit_lines(&lines[..take], x + l, tag);
+            self.emit_lines(&mut lines[..take], x + l, tag);
             content = rest;
         }
     }
@@ -1020,7 +1020,13 @@ impl<'f> Paginator<'f> {
         width: f32,
         indent: f32,
     ) -> Vec<ShapedLine> {
-        // Never indent away more than most of the measure.
+        // Never indent away more than most of the measure. The probe is a
+        // full shape whose lines are reused verbatim when no split is
+        // needed (dialogue: most indented paragraphs are one line). A
+        // probe that stopped at the first line was tried and measured
+        // slower — cosmic-text shapes per buffer line (per paragraph)
+        // regardless, so it saved only materialization while costing
+        // one-line paragraphs a second full shape.
         let indent = indent.min(width * 0.8);
         let probe = self.shape_inline(inline, block_style, width - indent);
         let needs_split = probe.len() > 1
@@ -1316,7 +1322,7 @@ impl<'f> Paginator<'f> {
         }
     }
 
-    fn place_lines(&mut self, lines: Vec<ShapedLine>, block: &BlockBox, x: f32, tag: u64) {
+    fn place_lines(&mut self, mut lines: Vec<ShapedLine>, block: &BlockBox, x: f32, tag: u64) {
         if lines.is_empty() {
             return;
         }
@@ -1352,7 +1358,7 @@ impl<'f> Paginator<'f> {
             let rest_after_page = total - i - fits;
 
             if rest_after_page == 0 {
-                self.emit_lines(&lines[i..], x, tag);
+                self.emit_lines(&mut lines[i..], x, tag);
                 break;
             }
 
@@ -1386,7 +1392,7 @@ impl<'f> Paginator<'f> {
                 }
             }
 
-            self.emit_lines(&lines[i..i + take], x, tag);
+            self.emit_lines(&mut lines[i..i + take], x, tag);
             i += take;
             if i < total {
                 self.new_page();
@@ -1394,7 +1400,11 @@ impl<'f> Paginator<'f> {
         }
     }
 
-    fn emit_lines(&mut self, lines: &[ShapedLine], x: f32, tag: u64) {
+    /// Emit shaped lines as page fragments. Takes the lines' contents:
+    /// every caller emits a given line exactly once, so the glyph vectors
+    /// and text move instead of cloning — a chapter's worth of lines is
+    /// megabytes of glyphs.
+    fn emit_lines(&mut self, lines: &mut [ShapedLine], x: f32, tag: u64) {
         for line in lines {
             let rect = Rect {
                 origin: Point::new(
@@ -1409,9 +1419,9 @@ impl<'f> Paginator<'f> {
                 rect,
                 kind: FragmentKind::Line(LineFragment {
                     baseline: line.baseline,
-                    runs: line.runs.clone(),
-                    decorations: line.decorations.clone(),
-                    text: line.text.clone(),
+                    runs: std::mem::take(&mut line.runs),
+                    decorations: std::mem::take(&mut line.decorations),
+                    text: std::mem::take(&mut line.text),
                     locator_start: line.locator_start,
                 }),
                 tag,
