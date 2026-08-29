@@ -56,8 +56,8 @@ fn collect_svg_roots(doc: &Document, id: NodeId, out: &mut Vec<NodeId>) {
         out.push(id);
         return;
     }
-    for child in doc.node(id).children.clone() {
-        collect_svg_roots(doc, child, out);
+    for child in &doc.node(id).children {
+        collect_svg_roots(doc, *child, out);
     }
 }
 

@@ -586,6 +586,7 @@ dependencies = [
  "cosmic-text",
  "cssparser",
  "euclid",
+ "fontdb 0.24.0",
  "formulary",
  "html5ever",
  "hyphenation",

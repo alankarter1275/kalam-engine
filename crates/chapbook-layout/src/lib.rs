@@ -159,12 +159,13 @@ pub fn collect_images(
     mut fetch: impl FnMut(&str) -> Option<Vec<u8>>,
 ) -> ImageStore {
     let mut store = ImageStore::default();
-    // Built on first SVG encountered: copying faces out of the session's
-    // FontSystem is not free, and most books have no SVG at all.
+    // Built on first use: rebuilding the session's faces as usvg's fontdb
+    // is not free, and most books have no SVG at all — and of those that
+    // do, most carry no `<text>`, so `rasterize` may never ask.
     #[cfg(feature = "svg")]
     let mut svg_fonts: Option<std::sync::Arc<resvg::usvg::fontdb::Database>> = None;
     #[cfg(feature = "svg")]
-    let svg_db = |svg_fonts: &mut Option<std::sync::Arc<resvg::usvg::fontdb::Database>>| {
+    let mut svg_db = || {
         svg_fonts
             .get_or_insert_with(|| match fonts {
                 Some(fonts) => crate::svg::svg_fontdb(fonts),
@@ -173,6 +174,12 @@ pub fn collect_images(
             .clone()
     };
 
+    // `<img>` nodes and their sources up front, so a source referenced by
+    // several elements (a repeated ornament, a shared figure) fetches and
+    // decodes once. Only repeated sources pay for a cache entry, and the
+    // cache dies with this call — the single-use image costs what it did.
+    let mut img_nodes: Vec<(crate::dom::NodeId, &str)> = Vec::new();
+    let mut uses: HashMap<&str, u32> = HashMap::new();
     for id in doc.descendants(doc.root()) {
         let crate::dom::NodeData::Element(el) = &doc.node(id).data else {
             continue;
@@ -183,33 +190,44 @@ pub fn collect_images(
         let Some(src) = el.attr(&markup5ever::local_name!("src")) else {
             continue;
         };
-        let Some(bytes) = fetch(src) else { continue };
-        #[cfg(feature = "svg")]
-        if crate::svg::sniff(&bytes) {
-            // Hrefs inside the SVG file resolve relative to the file, not
-            // the chapter that embedded it.
-            let src = src.to_string();
-            let mut nested = |href: &str| fetch(&join_href(&src, href));
-            let db = svg_db(&mut svg_fonts);
-            if let Some((w, h, rgba)) = crate::svg::rasterize(&bytes, &mut nested, db) {
-                store.insert(crate::dom::node_tag(id), w, h, rgba);
+        img_nodes.push((id, src));
+        *uses.entry(src).or_insert(0) += 1;
+    }
+
+    type Decoded = Option<(u32, u32, Vec<u8>)>;
+    let mut decoded_cache: HashMap<&str, Decoded> = HashMap::new();
+    for (id, src) in img_nodes {
+        if let Some(cached) = decoded_cache.get(src) {
+            if let Some((w, h, rgba)) = cached {
+                store.insert(crate::dom::node_tag(id), *w, *h, rgba.clone());
             }
             continue;
         }
-        let Ok(decoded) = image::load_from_memory(&bytes) else {
-            continue;
-        };
-        let rgba = decoded.to_rgba8();
-        let (w, h) = (rgba.width(), rgba.height());
-        store.insert(crate::dom::node_tag(id), w, h, rgba.into_raw());
+        let decoded = fetch(src).and_then(|bytes| {
+            #[cfg(feature = "svg")]
+            if crate::svg::sniff(&bytes) {
+                // Hrefs inside the SVG file resolve relative to the file,
+                // not the chapter that embedded it.
+                let mut nested = |href: &str| fetch(&join_href(src, href));
+                return crate::svg::rasterize(&bytes, &mut nested, &mut svg_db);
+            }
+            let rgba = image::load_from_memory(&bytes).ok()?.to_rgba8();
+            let (w, h) = (rgba.width(), rgba.height());
+            Some((w, h, rgba.into_raw()))
+        });
+        if uses[src] > 1 {
+            decoded_cache.insert(src, decoded.clone());
+        }
+        if let Some((w, h, rgba)) = decoded {
+            store.insert(crate::dom::node_tag(id), w, h, rgba);
+        }
     }
 
     // Inline `<svg>` subtrees, serialized at parse time. Their hrefs are
     // chapter-relative, exactly like an `<img>` src.
     #[cfg(feature = "svg")]
     for (id, xml) in doc.svg_sources() {
-        let db = svg_db(&mut svg_fonts);
-        if let Some((w, h, rgba)) = crate::svg::rasterize(xml.as_bytes(), &mut fetch, db) {
+        if let Some((w, h, rgba)) = crate::svg::rasterize(xml.as_bytes(), &mut fetch, &mut svg_db) {
             store.insert(crate::dom::node_tag(id), w, h, rgba);
         }
     }

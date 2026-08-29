@@ -233,29 +233,26 @@ impl Page {
 
 impl LineFragment {
     /// Caret offset for a fragment-local x: the nearest glyph boundary.
+    ///
+    /// Streams the glyphs with one-element lookahead — this runs per line
+    /// per drag *event* during selection, so it must not allocate.
     fn offset_at_x(&self, x: f32) -> Option<u32> {
-        // Glyphs in visual order with their end boundaries.
         let mut result: Option<u32> = None;
         let mut first: Option<(f32, u32)> = None;
-        let mut boundaries: Vec<(f32, f32, u32)> = Vec::new();
-        for run in &self.runs {
-            for glyph in &run.glyphs {
-                boundaries.push((glyph.x, glyph.advance, glyph.locator));
-                if first.is_none_or(|(fx, _)| glyph.x < fx) {
-                    first = Some((glyph.x, glyph.locator));
-                }
+        let mut glyphs = self.runs.iter().flat_map(|run| &run.glyphs).peekable();
+        while let Some(glyph) = glyphs.next() {
+            if first.is_none_or(|(fx, _)| glyph.x < fx) {
+                first = Some((glyph.x, glyph.locator));
             }
-        }
-        for (i, &(gx, advance, locator)) in boundaries.iter().enumerate() {
-            if x >= gx {
-                result = Some(if x > gx + advance / 2.0 {
+            if x >= glyph.x {
+                result = Some(if x > glyph.x + glyph.advance / 2.0 {
                     // Right half: the next boundary.
-                    boundaries
-                        .get(i + 1)
-                        .map(|&(_, _, next)| next.max(locator))
-                        .unwrap_or(locator + 1)
+                    glyphs
+                        .peek()
+                        .map(|next| next.locator.max(glyph.locator))
+                        .unwrap_or(glyph.locator + 1)
                 } else {
-                    locator
+                    glyph.locator
                 });
             }
         }

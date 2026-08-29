@@ -103,17 +103,24 @@ impl std::fmt::Display for VelloError {
 
 impl std::error::Error for VelloError {}
 
-/// Face bytes by font id.
+/// Face bytes by font id, image blobs by resource id.
 ///
 /// The paint seam hands out a `FontSystem`, and reading a face out of its
 /// database copies the bytes, so every backend ends up keeping something
-/// like this. Shared by the offscreen and windowed paths.
+/// like this. Image blobs exist for the same reason on the other axis: a
+/// fresh `Blob` has a fresh id, so an uncached image would re-upload to
+/// the GPU on every frame. Image entries are keyed to one `ImageStore`
+/// identity and dropped wholesale when a different store arrives (resource
+/// ids repeat across chapters), so they never hold more than the current
+/// unit's images. Shared by the offscreen and windowed paths.
 #[derive(Default)]
-pub struct FontCache {
+pub struct RenderCache {
     faces: HashMap<cosmic_text::fontdb::ID, FontData>,
+    image_store: u64,
+    images: HashMap<u64, ImageData>,
 }
 
-impl FontCache {
+impl RenderCache {
     fn data(
         &mut self,
         id: cosmic_text::fontdb::ID,
@@ -127,6 +134,26 @@ impl FontCache {
         }
         self.faces.get(&id)
     }
+
+    fn image(&mut self, store: &ImageStore, resource: u64) -> Option<ImageData> {
+        if self.image_store != store.id() {
+            self.images.clear();
+            self.image_store = store.id();
+        }
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.images.entry(resource) {
+            let stored = store.get(resource)?;
+            slot.insert(ImageData {
+                data: Blob::new(Arc::new(stored.rgba.clone())),
+                format: ImageFormat::Rgba8,
+                alpha_type: ImageAlphaType::AlphaPremultiplied,
+                width: stored.width,
+                height: stored.height,
+            });
+        }
+        // `ImageData` clones by refcount; the blob id stays stable, which
+        // is what lets vello's atlas reuse the upload.
+        self.images.get(&resource).cloned()
+    }
 }
 
 /// Translate display ops into a vello scene.
@@ -136,7 +163,7 @@ impl FontCache {
 /// where they send it.
 pub fn build_scene(
     dl: &DisplayList,
-    cache: &mut FontCache,
+    cache: &mut RenderCache,
     fonts: &mut cosmic_text::FontSystem,
     images: &ImageStore,
     scale: f32,
@@ -163,20 +190,13 @@ pub fn build_scene(
                 );
             }
             DisplayOp::Image { resource, dest } => {
-                let Some(stored) = images.get(*resource) else {
+                let Some(image) = cache.image(images, *resource) else {
                     continue;
-                };
-                let image = ImageData {
-                    data: Blob::new(Arc::new(stored.rgba.clone())),
-                    format: ImageFormat::Rgba8,
-                    alpha_type: ImageAlphaType::Alpha,
-                    width: stored.width,
-                    height: stored.height,
                 };
                 let placement = Affine::translate((dest.min_x() as f64, dest.min_y() as f64))
                     * Affine::scale_non_uniform(
-                        dest.size.w as f64 / stored.width.max(1) as f64,
-                        dest.size.h as f64 / stored.height.max(1) as f64,
+                        dest.size.w as f64 / image.width.max(1) as f64,
+                        dest.size.h as f64 / image.height.max(1) as f64,
                     );
                 scene.draw_image(&ImageBrush::new(image), to_device * placement);
             }
@@ -218,7 +238,7 @@ pub struct VelloRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: Renderer,
-    fonts: FontCache,
+    fonts: RenderCache,
     max_texture: u32,
 }
 
@@ -269,7 +289,7 @@ impl VelloRenderer {
             device,
             queue,
             renderer,
-            fonts: FontCache::default(),
+            fonts: RenderCache::default(),
             max_texture: limits.max_texture_dimension_2d,
         })
     }
@@ -456,7 +476,7 @@ pub struct VelloWindow {
     context: vello::util::RenderContext,
     surface: vello::util::RenderSurface<'static>,
     renderer: Renderer,
-    fonts: FontCache,
+    fonts: RenderCache,
 }
 
 impl VelloWindow {
@@ -492,7 +512,7 @@ impl VelloWindow {
             context,
             surface,
             renderer,
-            fonts: FontCache::default(),
+            fonts: RenderCache::default(),
         })
     }
 

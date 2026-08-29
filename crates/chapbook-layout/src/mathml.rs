@@ -81,14 +81,16 @@ pub(crate) fn prepare(
     if candidates.is_empty() {
         return store;
     }
-    let Some(font_id) = math_font(fonts.db()) else {
-        log::warn!(
-            "document has block MathML but no loaded font carries an \
-             OpenType MATH table; falling back to altimg/alttext"
-        );
-        return store;
-    };
-
+    // Parse and screen every candidate first, so the font scan and the
+    // face open below run only when a formula will actually lay out.
+    struct Screened {
+        tag: u64,
+        root: formulary::MathRoot,
+        font_size: f32,
+        text: String,
+        locator: u32,
+    }
+    let mut screened = Vec::new();
     for (id, source) in candidates {
         let root = match formulary::parse(&source.xml) {
             Ok(root) => root,
@@ -108,17 +110,41 @@ pub(crate) fn prepare(
         let Some(style) = doc.primary_styles(id) else {
             continue;
         };
-        let font_size = crate::style_to_attrs::font_size_px(&style);
-        let text = match &source.alttext {
-            Some(alt) => alt.clone(),
-            None => String::new(),
-        };
-        let offset = locator.get(&id).copied().unwrap_or(0);
-        let prepared = fonts.db().with_face_data(font_id, |data, index| {
-            let font = MathFont::new(data, index).ok()?;
-            let laid = formulary::layout(&root, &font, &LayoutOptions { font_size });
-            let face = ttf_parser::Face::parse(data, index).ok()?;
-            let upem = f32::from(face.units_per_em());
+        screened.push(Screened {
+            tag: node_tag(id),
+            root,
+            font_size: crate::style_to_attrs::font_size_px(&style),
+            text: source.alttext.clone().unwrap_or_default(),
+            locator: locator.get(&id).copied().unwrap_or(0),
+        });
+    }
+    if screened.is_empty() {
+        return store;
+    }
+    let Some(font_id) = math_font(fonts.db()) else {
+        log::warn!(
+            "document has block MathML but no loaded font carries an \
+             OpenType MATH table; falling back to altimg/alttext"
+        );
+        return store;
+    };
+
+    // One face open for the whole document. `with_face_data` on a
+    // file-backed face re-reads the file every call, and `MathFont::new`
+    // re-parses the MATH table — per-formula would make both O(formulas).
+    let prepared = fonts.db().with_face_data(font_id, |data, index| {
+        let font = MathFont::new(data, index).ok()?;
+        let face = ttf_parser::Face::parse(data, index).ok()?;
+        let upem = f32::from(face.units_per_em());
+        let mut out = Vec::with_capacity(screened.len());
+        'formula: for c in screened {
+            let laid = formulary::layout(
+                &c.root,
+                &font,
+                &LayoutOptions {
+                    font_size: c.font_size,
+                },
+            );
             let mut advances = Vec::new();
             for item in &laid.items {
                 if let Item::Glyph {
@@ -126,8 +152,9 @@ pub(crate) fn prepare(
                 } = item
                 {
                     if *mirrored {
-                        // Right-to-left math: a glyph run cannot mirror.
-                        return None;
+                        // Right-to-left math: a glyph run cannot mirror;
+                        // this formula falls back, the rest still render.
+                        continue 'formula;
                     }
                     let advance = face
                         .glyph_hor_advance(ttf_parser::GlyphId(id.0))
@@ -135,20 +162,24 @@ pub(crate) fn prepare(
                     advances.push(f32::from(advance) * size / upem);
                 }
             }
-            Some(PreparedMath {
-                font: font_id,
-                width: laid.width,
-                ascent: laid.ascent,
-                descent: laid.descent,
-                items: laid.items,
-                advances,
-                text,
-                locator: offset,
-            })
-        });
-        if let Some(Some(prepared)) = prepared {
-            store.0.insert(node_tag(id), prepared);
+            out.push((
+                c.tag,
+                PreparedMath {
+                    font: font_id,
+                    width: laid.width,
+                    ascent: laid.ascent,
+                    descent: laid.descent,
+                    items: laid.items,
+                    advances,
+                    text: c.text,
+                    locator: c.locator,
+                },
+            ));
         }
+        Some(out)
+    });
+    if let Some(Some(prepared)) = prepared {
+        store.0.extend(prepared);
     }
     store
 }

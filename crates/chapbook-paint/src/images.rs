@@ -3,13 +3,28 @@
 //! between layout (intrinsic dimensions) and renderers (pixels).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Default)]
+/// Store identity for renderer-side caches (see [`ImageStore::id`]).
+static NEXT_STORE_ID: AtomicU64 = AtomicU64::new(1);
+
 pub struct ImageStore {
+    id: u64,
     images: HashMap<u64, StoredImage>,
 }
 
-/// Straight (non-premultiplied) RGBA8; backends premultiply as needed.
+impl Default for ImageStore {
+    fn default() -> Self {
+        ImageStore {
+            id: NEXT_STORE_ID.fetch_add(1, Ordering::Relaxed),
+            images: HashMap::new(),
+        }
+    }
+}
+
+/// Premultiplied RGBA8, converted once at [`ImageStore::insert`] — a frame
+/// composites images without touching the pixels again (tiny-skia reads
+/// them in place; vello marks the upload premultiplied).
 pub struct StoredImage {
     pub width: u32,
     pub height: u32,
@@ -17,8 +32,19 @@ pub struct StoredImage {
 }
 
 impl ImageStore {
-    pub fn insert(&mut self, id: u64, width: u32, height: u32, rgba: Vec<u8>) {
+    /// Store straight (non-premultiplied) RGBA8 — what decoders produce.
+    /// Premultiplication happens here, once, instead of per frame in every
+    /// backend. Opaque images (comics, PDF pages) pass through unchanged.
+    pub fn insert(&mut self, id: u64, width: u32, height: u32, mut rgba: Vec<u8>) {
         debug_assert_eq!(rgba.len(), (width * height * 4) as usize);
+        for px in rgba.as_chunks_mut::<4>().0 {
+            let a = u16::from(px[3]);
+            if a < 255 {
+                px[0] = (u16::from(px[0]) * a / 255) as u8;
+                px[1] = (u16::from(px[1]) * a / 255) as u8;
+                px[2] = (u16::from(px[2]) * a / 255) as u8;
+            }
+        }
         self.images.insert(
             id,
             StoredImage {
@@ -27,6 +53,14 @@ impl ImageStore {
                 rgba,
             },
         );
+    }
+
+    /// A process-unique identity, changing with every new store. What a
+    /// renderer-side cache (e.g. vello's image blobs) keys on to know its
+    /// entries describe *this* store — resource ids alone repeat across
+    /// chapters, since they come from per-document arenas.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn get(&self, id: u64) -> Option<&StoredImage> {

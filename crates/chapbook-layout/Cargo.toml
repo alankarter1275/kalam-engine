@@ -43,7 +43,7 @@ strict-xml = ["dep:xml5ever"]
 # SVG images (`<img src="*.svg">` and inline `<svg>`), rasterized into the
 # ImageStore by resvg. Off, SVGs degrade exactly as before the feature
 # existed: undecodable `<img>` vanishes, inline `<svg>` flattens to its text.
-svg = ["dep:resvg"]
+svg = ["dep:resvg", "dep:fontdb"]
 # Native MathML Core rendering via formulary, with STIX Two Math (OFL 1.1,
 # `assets/`) embedded as the math font of last resort. Off, `<math>` takes
 # the EPUB altimg/alttext fallback path (`dom::math_fallback`) unchanged.
@@ -56,6 +56,12 @@ workspace = true
 optional = true
 
 [dependencies.resvg]
+workspace = true
+optional = true
+
+# Only to switch fontdb 0.24's `fs` on for the usvg build; see the
+# workspace entry. Nothing imports `fontdb` directly.
+[dependencies.fontdb]
 workspace = true
 optional = true
 
