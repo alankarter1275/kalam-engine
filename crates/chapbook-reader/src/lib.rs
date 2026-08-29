@@ -329,6 +329,7 @@ pub struct Session {
     /// Position capture needs the whole spine's counts, and without this
     /// every save re-inflated and re-parsed every chapter — on a callback
     /// (`suspend`) with a documented time budget.
+    #[cfg(feature = "library")]
     char_counts: std::cell::OnceCell<Vec<u64>>,
     /// The most recently extracted unit locator text. One entry, replaced
     /// on a different unit: selection, capture, search, and highlight
@@ -968,6 +969,7 @@ impl Session {
             links: HashMap::new(),
             back_stack: Vec::new(),
             pending_anchor: None,
+            #[cfg(feature = "library")]
             char_counts: std::cell::OnceCell::new(),
             unit_text_cache: std::cell::RefCell::new(None),
             layout_bytes: HashMap::new(),
