@@ -603,7 +603,6 @@ dependencies = [
  "stylo_static_prefs",
  "stylo_traits",
  "sys-locale",
- "ttf-parser",
  "unicode-script",
  "url",
  "xml5ever",
@@ -1433,9 +1432,9 @@ dependencies = [
 
 [[package]]
 name = "formulary"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f00111150ce82585c17f38976d668d4b4cc9b0b554f64a0df63693d8ffed00a7"
+checksum = "994e1a4a2c17552253a1ebac4433ddaff326a6d99f60982d2d3bb57b1092db5d"
 dependencies = [
  "roxmltree 0.21.1",
  "rustybuzz",

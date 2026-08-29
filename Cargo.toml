@@ -126,13 +126,12 @@ fontdb = { version = "0.24", default-features = false, features = [
     "fs",
 ] }
 # MathML Core layout: OpenType MATH metrics in, glyphs-and-rules out. Its
-# `svg` feature is a debugging emitter we have no use for. ttf-parser rides
-# along (same version formulary pins) to read glyph advances and detect
-# MATH tables — formulary's own face handle is crate-private.
-formulary = { version = "0.1", default-features = false, features = [
+# `svg` feature is a debugging emitter we have no use for. 0.2 carries
+# glyph advances in the display list and probes MATH tables itself, so no
+# font parser rides along anymore.
+formulary = { version = "0.2", default-features = false, features = [
     "shaping",
 ] }
-ttf-parser = "0.25"
 
 # EPUB. We only ever read: `write` is rbook's EPUB *authoring* half.
 rbook = { version = "0.7", default-features = false, features = [

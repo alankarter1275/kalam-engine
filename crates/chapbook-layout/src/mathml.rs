@@ -18,6 +18,10 @@
 //! - **Parse warnings with a publisher fallback present**: the publisher's
 //!   altimg/alttext is more faithful than our `mrow` error recovery.
 //!   Warnings without a fallback still render — better than token soup.
+//! - **Arabic token text with a publisher fallback present**: formulary
+//!   lays Arabic out logical-order and unshaped, so the publisher's
+//!   fallback is the faithful rendering. Without one, unshaped still
+//!   beats token soup.
 //! - **Mirrored glyphs** (right-to-left math): a glyph run cannot express
 //!   the horizontal flip, and drawing a radical backwards is worse than
 //!   the fallback.
@@ -55,9 +59,6 @@ pub(crate) struct PreparedMath {
     pub ascent: f32,
     pub descent: f32,
     pub items: Vec<Item>,
-    /// Advance per [`Item::Glyph`] in item order, at that glyph's size
-    /// (selection geometry wants a horizontal extent per glyph).
-    pub advances: Vec<f32>,
     /// Line-fragment text: the publisher's alttext when present.
     pub text: String,
     /// Locator-text offset of the formula (every glyph repeats it, so
@@ -107,6 +108,13 @@ pub(crate) fn prepare(
             );
             continue;
         }
+        if source.has_fallback && root.has_arabic_text() {
+            log::info!(
+                "MathML carries Arabic token text (formulary would lay it \
+                 unshaped); preferring the publisher's fallback"
+            );
+            continue;
+        }
         let Some(style) = doc.primary_styles(id) else {
             continue;
         };
@@ -134,10 +142,8 @@ pub(crate) fn prepare(
     // re-parses the MATH table — per-formula would make both O(formulas).
     let prepared = fonts.db().with_face_data(font_id, |data, index| {
         let font = MathFont::new(data, index).ok()?;
-        let face = ttf_parser::Face::parse(data, index).ok()?;
-        let upem = f32::from(face.units_per_em());
         let mut out = Vec::with_capacity(screened.len());
-        'formula: for c in screened {
+        for c in screened {
             let laid = formulary::layout(
                 &c.root,
                 &font,
@@ -145,22 +151,14 @@ pub(crate) fn prepare(
                     font_size: c.font_size,
                 },
             );
-            let mut advances = Vec::new();
-            for item in &laid.items {
-                if let Item::Glyph {
-                    id, size, mirrored, ..
-                } = item
-                {
-                    if *mirrored {
-                        // Right-to-left math: a glyph run cannot mirror;
-                        // this formula falls back, the rest still render.
-                        continue 'formula;
-                    }
-                    let advance = face
-                        .glyph_hor_advance(ttf_parser::GlyphId(id.0))
-                        .unwrap_or(0);
-                    advances.push(f32::from(advance) * size / upem);
-                }
+            // Right-to-left math: a glyph run cannot mirror; this formula
+            // falls back, the rest still render.
+            let mirrored = laid
+                .items
+                .iter()
+                .any(|item| matches!(item, Item::Glyph { mirrored: true, .. }));
+            if mirrored {
+                continue;
             }
             out.push((
                 c.tag,
@@ -170,7 +168,6 @@ pub(crate) fn prepare(
                     ascent: laid.ascent,
                     descent: laid.descent,
                     items: laid.items,
-                    advances,
                     text: c.text,
                     locator: c.locator,
                 },
@@ -189,13 +186,11 @@ pub(crate) fn prepare(
 /// registers after the source faces and the embedded STIX Two Math, and
 /// the embedded face (loaded at the end of `build_font_system`) beats any
 /// math-capable host font that happened into the source.
+/// `MathFont::probe` reads only the table directory, cheap enough that
+/// scanning the whole list needs no cache.
 fn math_font(db: &fontdb::Database) -> Option<fontdb::ID> {
     let ids: Vec<fontdb::ID> = db.faces().map(|f| f.id).collect();
-    ids.into_iter().rev().find(|id| {
-        db.with_face_data(*id, |data, index| {
-            ttf_parser::Face::parse(data, index)
-                .is_ok_and(|face| face.tables().math.is_some_and(|m| m.constants.is_some()))
-        })
-        .unwrap_or(false)
-    })
+    ids.into_iter()
+        .rev()
+        .find(|id| db.with_face_data(*id, MathFont::probe).unwrap_or(false))
 }
