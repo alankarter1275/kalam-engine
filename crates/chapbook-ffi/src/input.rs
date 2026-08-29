@@ -5,8 +5,8 @@
 //! genuinely engine knowledge: an action vocabulary, a tap-zone policy
 //! that knows which edge a page turn comes from, and the default key
 //! table. The model lives in `chapbook_core::input`; this file is its C
-//! shape, held back until a touchscreen had actually exercised it — see
-//! `docs/FFI.md`, *What the touchscreen settled*.
+//! shape, held back until a touchscreen had actually exercised it — the
+//! Android device run is what let it cross.
 
 use chapbook_reader::chapbook_core::{Action, ActionOutcome, Key, KeyMap, ReadingDirection};
 

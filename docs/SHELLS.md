@@ -82,7 +82,7 @@ let session = Session::open(&source, FontSource::android_system())?;
 `FontSource` names three things separately, because a build can get any
 one right and the others wrong: which faces exist, what the five CSS
 generics mean, and what to try when a glyph is missing. `chapbook_core::font`
-documents each; `docs/FFI.md` has the evidence.
+documents each.
 
 Two things to read back after opening. `session.font_report()` says how
 many faces loaded and names any generic that resolved to a family nothing

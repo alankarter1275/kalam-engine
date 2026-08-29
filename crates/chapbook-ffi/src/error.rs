@@ -102,7 +102,7 @@ impl cb_status {
 thread_local! {
     /// The last failure reported on *this thread*.
     ///
-    /// `docs/FFI.md` proposed hanging this off the session, and building it
+    /// The obvious design hangs this off the session, and building it
     /// is what showed why it cannot: the failures a host most needs
     /// explained — a book that would not open, a font source that resolved
     /// to nothing, a config it built wrong — are exactly the ones where no

@@ -383,10 +383,9 @@ pub const FONT_STEP_PX: f32 = 2.0;
 /// Every field here replaces something the session used to reach for on its
 /// own — installed fonts, environment variables — and each of those
 /// assumptions holds on exactly one of the platforms chapbook targets.
-/// Adding to this struct is how the next one arrives (`docs/FFI.md` lists
-/// the transport, the library directory and a cache budget as the ones
-/// still outstanding), which is the point of it being a struct: the
-/// alternative is changing `open`'s signature once per capability.
+/// Adding to this struct is how the next capability arrives, which is the
+/// point of it being a struct: the alternative is changing `open`'s
+/// signature once per capability.
 pub struct SessionConfig {
     /// Where fonts come from. Required, and required for the reasons in
     /// [`Session::open`].

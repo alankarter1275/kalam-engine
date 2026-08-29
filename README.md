@@ -83,21 +83,31 @@ an XCFramework) or `libchapbook_ffi.so`.
 Android does **not** go through this header: Kotlin reaches Rust over JNI,
 which is already a C ABI, so `chapbook-jni` binds `chapbook-reader`
 directly rather than stacking a second boundary on the first. See
-[docs/FFI.md](docs/FFI.md).
+[docs/STABILITY.md](docs/STABILITY.md).
 
 ## Android
 
 `android/` is a Gradle project with an AAR library module and a demo app,
 over `chapbook-jni`. It builds, draws a book, opens one from a `content://`
 URI with no path and no extension, and passes the conformance harness on a
-device — all five rungs of `docs/FFI.md`'s ladder. It is a spike whose purpose is to shape the portability
-boundary rather than to be built on — read [docs/FFI.md](docs/FFI.md) before
-touching it, including the prerequisites, which are not obvious.
+device. Read [android/README.md](android/README.md) before touching it,
+including the prerequisites, which are not obvious.
 
 ```sh
 export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/<version>
 ./android/build-jni.sh release      # cargo-ndk into jniLibs, then check linkage
 cd android && ./gradlew :demo:assembleDebug
+```
+
+## iOS
+
+`ios/` is a Swift package, `Chapbook`, over the C header — a library for
+building iOS ereader apps, plus a small demo app that picks a book, stores
+a security-scoped bookmark, and reopens it cold at the page the reader
+left. Read [ios/README.md](ios/README.md), including the platform notes.
+
+```sh
+./ios/build-xcframework.sh          # Rust staticlibs → Chapbook.xcframework
 ```
 
 ## Getting started
@@ -176,7 +186,6 @@ units resolved by approximation.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design: crate boundaries and why they fall where they do |
 | [docs/SHELLS.md](docs/SHELLS.md) | Writing a shell against `Session`: the loop, the loader rule, and the conformance harness |
 | [docs/STABILITY.md](docs/STABILITY.md) | Which crates carry semver discipline, which are internals, and why |
-| [docs/FFI.md](docs/FFI.md) | The portability boundary: bindings, typed sources, input and the Android spike |
 | [docs/LOCATORS.md](docs/LOCATORS.md) | Reading positions that survive relayout, and EPUB CFI |
 | [docs/OPDS-INTEROP.md](docs/OPDS-INTEROP.md) | What the OPDS client must interoperate with, and how it was verified |
 | [docs/PLATFORM.md](docs/PLATFORM.md) | Porting to real devices: panels, e-ink, cross-compilation, what is proven and what is not |

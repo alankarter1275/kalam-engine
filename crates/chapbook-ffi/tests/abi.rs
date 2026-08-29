@@ -1,8 +1,7 @@
 //! Drive the C ABI the way a host does — through its own `extern "C"`
 //! entry points, with raw pointers, out-parameters and status codes.
 //!
-//! This is the check `docs/FFI.md`'s sequencing step 3 asks for, and it
-//! exists because of a hole the Android spike left: `chapbook-jni`'s
+//! It exists because of a hole the Android spike left: `chapbook-jni`'s
 //! binding is `#[cfg(target_os = "android")]`, so **nothing in `cargo test`
 //! ever compiled it**, and its two failure classes — a symbol that does not
 //! exist and a signature that does not match — were caught by a shell

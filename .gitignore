@@ -16,6 +16,7 @@
 /android/chapbook/src/main/jniLibs/
 /android/demo/src/main/assets/
 
-# iOS spike: compiled Swift binaries for slices this repo never ships.
-/ios/spike/build/
-/ios/spike/rung5/build/
+# iOS: Rust-built framework slices and app build output; SwiftPM state.
+/ios/Chapbook/Chapbook.xcframework/
+/ios/Chapbook/.build/
+/ios/demo/build/

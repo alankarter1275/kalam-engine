@@ -25,8 +25,8 @@ pub struct cb_session {
     /// The tap policy for this session — beside the session rather than a
     /// free-standing struct so the one field a host must *not* choose, the
     /// reading direction, is read off the book on every configuration and
-    /// can never be handed in wrong. That shape was settled on a device:
-    /// see `docs/FFI.md`, *What the touchscreen settled*.
+    /// can never be handed in wrong. That shape was settled on a device,
+    /// where every shell defaulting to `Ltr` was the bug about to ship.
     pub(crate) zones: TapZones,
 }
 

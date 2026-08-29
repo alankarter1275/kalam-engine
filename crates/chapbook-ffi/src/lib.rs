@@ -5,7 +5,11 @@
 //! directly, a browser through a `wasm-bindgen` wrapper over the same core.
 //! It is hand-written rather than generated because it is the one object
 //! all three share, and because a generated binding dictates the API's
-//! shape from the outside — see `docs/FFI.md`, *Which FFI technology*.
+//! shape from the outside. UniFFI was the considered alternative — it
+//! would have generated idiomatic Kotlin and Swift and deleted most of the
+//! glue — and was rejected on purpose rather than by default: it is
+//! MPL-2.0 and therefore a `deny.toml` decision, its WASM story is not the
+//! one wanted here, and the shape it dictates is its own.
 //!
 //! # The rules this ABI keeps
 //!

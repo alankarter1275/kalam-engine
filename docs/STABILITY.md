@@ -143,8 +143,7 @@ of a second build system and a third hand-written layer to keep in sync.
 So `chapbook-jni` stays what it was: a direct Rust binding over
 `chapbook-reader`, exporting JNI symbols. It is no longer throwaway — it is
 the native half of the Android artifact — and it is *not* a Contract-tier
-consumer of `chapbook-ffi`. `docs/FFI.md`'s *Building the C ABI* section has
-the full argument.
+consumer of `chapbook-ffi`.
 
 That leaves `chapbook-ffi` with one guaranteed consumer rather than two, and
 that is fine: iOS is the one that cannot route around it, because Swift
