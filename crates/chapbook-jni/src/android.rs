@@ -158,10 +158,12 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_open(
 /// `mimetype` entry and the `%PDF` header are in the bytes, and a name that
 /// was never going to arrive cannot be trusted anyway.
 ///
-/// **A handle does not reach the library.** No path means no file to
-/// fingerprint and no stable identity to key a position on, so a book
-/// opened this way opens at the beginning every time. That is custody,
-/// not source typing, and `docs/PLATFORM.md` owns it.
+/// **A handle reaches the library by content.** The stream is hashed on
+/// open and the book adopted under the same edition fingerprint a path
+/// import gets — recorded, not copied — so position, annotations and
+/// per-book settings persist. What the engine cannot do is reopen the
+/// file: holding a persistable URI grant and re-resolving it next launch
+/// is the app's half of custody, per `docs/PLATFORM.md`.
 #[no_mangle]
 pub extern "system" fn Java_com_ophymx_chapbook_Native_openFd(
     mut env: JNIEnv,

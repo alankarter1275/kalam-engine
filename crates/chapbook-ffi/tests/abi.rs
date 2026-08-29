@@ -575,6 +575,64 @@ fn a_reading_position_survives_a_close_and_reopen() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_descriptor_book_keeps_its_place_across_the_boundary() {
+    // The custody flow a phone runs, spelled in C: resolve, open a
+    // descriptor, read, suspend, relaunch, resolve again, open again — and
+    // come back where the reader left off. The engine adopts the book by
+    // its bytes' fingerprint, so no path ever crosses.
+    if cb_capabilities() & cb_capability::CB_CAP_LIBRARY as u32 == 0 {
+        eprintln!("skipped: this build has no library, so nothing persists");
+        return;
+    }
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/epub/long.epub");
+    let dir = std::env::temp_dir().join(format!("chapbook-ffi-fd-restore-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("library dir");
+    let dir_c = cstr(&dir.to_string_lossy());
+
+    let open_one = || {
+        use std::os::fd::IntoRawFd;
+        let fd = std::fs::File::open(&path)
+            .expect("fixture opens")
+            .into_raw_fd();
+        let config = unsafe { cb_config_new(fonts()) };
+        assert_eq!(
+            unsafe { cb_config_set_library_dir(config, dir_c.as_ptr()) },
+            cb_status::CB_OK
+        );
+        let session = unsafe { cb_session_open_fd(fd, cb_format::CB_FORMAT_GUESS, config) };
+        assert!(!session.is_null(), "open fd: {}", last_error());
+        assert_eq!(
+            unsafe { cb_session_set_metrics(session, metrics()) },
+            cb_status::CB_OK
+        );
+        session
+    };
+
+    let left_at = {
+        let session = open_one();
+        for _ in 0..6 {
+            let mut moved = false;
+            unsafe { cb_session_next_page(session, &mut moved) };
+        }
+        let mut at = cb_position { spine: 0, page: 0 };
+        unsafe { cb_session_position(session, &mut at) };
+        assert_eq!(unsafe { cb_session_suspend(session) }, cb_status::CB_OK);
+        unsafe { cb_session_close(session) };
+        at
+    };
+    assert!(left_at.spine > 0 || left_at.page > 0, "moved off the start");
+
+    let session = open_one();
+    let mut back = cb_position { spine: 0, page: 0 };
+    unsafe { cb_session_position(session, &mut back) };
+    assert_eq!(back.spine, left_at.spine, "reopened in the same unit");
+    unsafe { cb_session_close(session) };
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn memory_calls_are_answerable_and_do_not_lose_the_place() {
     let session = open("memory", "epub/illustrated.epub");

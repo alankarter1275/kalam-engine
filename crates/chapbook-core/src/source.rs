@@ -118,15 +118,17 @@ impl Format {
 
 /// Where a book's bytes come from.
 ///
-/// Only [`Path`](Self::Path) participates in the library — fingerprinting,
-/// position restore, import — because the other two have no stable identity
-/// to key on and no file to record. That is a real gap for a `content://`
-/// URI, and closing it is the custody question in `docs/PLATFORM.md`
-/// (persisting a bookmark, not a copy), not something a source type can
-/// answer on its own.
+/// Every local variant participates in the library: identity is the
+/// edition fingerprint — a hash of the bytes — which all three can
+/// produce, so a book opened from a descriptor keeps its position and its
+/// annotations just as a path-opened one does. What differs is custody: a
+/// [`Path`](Self::Path) is imported (the library copies and owns the
+/// file), the other two are adopted (the library records the book; the
+/// file stays the platform's, and reaching it again next launch — the
+/// security-scoped bookmark, the URI grant — is the shell's job; see
+/// `docs/PLATFORM.md`).
 pub enum Source {
-    /// A local file. The desktop case, and the only one the library knows
-    /// how to remember.
+    /// A local file. The desktop case.
     Path(PathBuf),
     /// Bytes already in memory — a WASM `ArrayBuffer`, a download the host
     /// performed itself.
@@ -169,8 +171,8 @@ impl Source {
         }
     }
 
-    /// The file this came from, when there is one. `None` is what makes a
-    /// source invisible to the library.
+    /// The file this came from, when there is one. `None` means the
+    /// library adopts rather than imports: a record, no copy.
     pub fn path(&self) -> Option<&Path> {
         match self {
             Source::Path(path) => Some(path),

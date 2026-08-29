@@ -637,6 +637,66 @@ fn book_at_path(format: Format, path: &Path) -> Result<OpenBook> {
     }
 }
 
+/// Match an opened book into the library: by edition fingerprint, then by
+/// publication identifier for a replaced edition, else as a new record —
+/// imported (copied) when there is a path, adopted (recorded, not copied)
+/// when there is not. Returns the book's id and whether the stored state
+/// was written against this same edition; `false` routes restore through
+/// the re-anchor chain.
+#[cfg(feature = "library")]
+fn shelve(
+    library: &mut chapbook_library::Library,
+    book: &OpenBook,
+    fingerprint: &str,
+    path: Option<&Path>,
+) -> (Option<chapbook_library::BookId>, bool) {
+    if let Ok(Some(id)) = library.find_by_fingerprint(fingerprint) {
+        return (Some(id), true);
+    }
+    if let Some(identifier) = &book.publication().metadata().identifier {
+        if let Ok(Some(id)) = library.find_by_identifier(identifier) {
+            let _ = match path {
+                Some(path) => library.update_edition(id, path),
+                None => library.update_edition_fingerprint(id, fingerprint),
+            };
+            return (Some(id), false);
+        }
+    }
+    let id = match path {
+        Some(path) => library.import(path, book.publication()).ok(),
+        None => library.adopt(fingerprint, book.publication()).ok(),
+    };
+    (id, true)
+}
+
+/// Where the reader left off, from the library — the start unit and the
+/// offset held pending until that unit lays out. `(0, None)` wherever
+/// there is nothing stored or nobody to ask.
+#[cfg(feature = "library")]
+fn restored_start(
+    library: &Option<chapbook_library::Library>,
+    book: &OpenBook,
+    book_id: OpenedBookId,
+    same_edition: bool,
+) -> (usize, Option<u32>) {
+    match (library, book_id) {
+        (Some(lib), Some(id)) => match lib.position(id) {
+            Ok(Some(stored)) => {
+                let (locator, tier) = chapbook_library::restore_position(
+                    &stored.locator,
+                    same_edition,
+                    book.publication().spine(),
+                    |i| unit_locator_text(book.publication(), i),
+                );
+                log::info!("resuming at unit {} ({tier:?})", locator.spine_index + 1);
+                (locator.spine_index, Some(locator.char_offset))
+            }
+            _ => (0, None),
+        },
+        _ => (0, None),
+    }
+}
+
 impl Session {
     /// Open a book from a path or an `http(s)://` OPDS URL (resolved to a
     /// PSE page stream). Local books are matched into the library
@@ -678,10 +738,14 @@ impl Session {
     /// path to give: an Android `content://` URI resolved to a file
     /// descriptor, an iOS security-scoped file, a WASM `ArrayBuffer`.
     ///
-    /// Only path sources reach the library. Bytes and handles have no file
-    /// to record and no stable identity to key a position on, so they open
-    /// at the beginning every time — the custody question in
-    /// `docs/PLATFORM.md`, not something a source type settles.
+    /// Every local source reaches the library. A path is imported — copied
+    /// into the library, which owns it from then on. Bytes and handles are
+    /// *adopted*: hashed on the way in and recorded under the same edition
+    /// fingerprint a path import gets, so positions, annotations and
+    /// per-book settings key on the book's identity while the file stays
+    /// wherever the platform keeps it. Reaching that file again on the
+    /// next launch — the bookmark, the URI grant — is the shell's half of
+    /// custody; see `docs/PLATFORM.md`.
     pub fn open_with(source: impl Into<Source>, config: SessionConfig) -> Result<Session> {
         let source = source.into();
         let SessionConfig {
@@ -793,18 +857,55 @@ impl Session {
             }
 
             // A source with no file behind it: bytes a host already holds,
-            // or a handle it resolved from a `content://` URI. Neither
-            // reaches the library — there is no path to record and no
-            // stable identity to key a position on. Closing that is the
-            // custody question in `docs/PLATFORM.md` (persist a bookmark,
-            // not a copy), which a source type cannot answer alone.
+            // or a handle it resolved from a `content://` URI or a
+            // security-scoped bookmark. No path — but the library keys
+            // identity by edition fingerprint, not by file, so the bytes
+            // are hashed on the way in and the book is *adopted*: a
+            // record, a position, annotations, no copy. Custody of the
+            // file — the bookmark that reaches it again — stays with the
+            // shell; see `docs/PLATFORM.md`.
             Source::Bytes { format, bytes } => {
+                #[cfg(feature = "library")]
+                let fingerprint = library
+                    .is_some()
+                    .then(|| chapbook_library::Library::fingerprint_of_bytes(&bytes));
                 let format = resolve_format(format, &bytes)?;
-                (book_from_bytes(format, bytes)?, None, 0, None, true)
+                let book = book_from_bytes(format, bytes)?;
+
+                #[cfg(not(feature = "library"))]
+                let (book_id, start_spine, pending_offset, same_edition) = (None, 0, None, true);
+                #[cfg(feature = "library")]
+                let (book_id, same_edition) = match (library.as_mut(), &fingerprint) {
+                    (Some(lib), Some(fp)) => shelve(lib, &book, fp, None),
+                    _ => (None, true),
+                };
+                #[cfg(feature = "library")]
+                let (start_spine, pending_offset) =
+                    restored_start(&library, &book, book_id, same_edition);
+                (book, book_id, start_spine, pending_offset, same_edition)
             }
             Source::Reader { format, mut reader } => {
+                // Hashed before it is opened, while the stream is still
+                // ours to rewind.
+                #[cfg(feature = "library")]
+                let fingerprint = match library.is_some() {
+                    true => chapbook_library::Library::fingerprint_of_reader(reader.as_mut()).ok(),
+                    false => None,
+                };
                 let format = resolve_format(format, &peek(reader.as_mut())?)?;
-                (book_from_reader(format, reader)?, None, 0, None, true)
+                let book = book_from_reader(format, reader)?;
+
+                #[cfg(not(feature = "library"))]
+                let (book_id, start_spine, pending_offset, same_edition) = (None, 0, None, true);
+                #[cfg(feature = "library")]
+                let (book_id, same_edition) = match (library.as_mut(), &fingerprint) {
+                    (Some(lib), Some(fp)) => shelve(lib, &book, fp, None),
+                    _ => (None, true),
+                };
+                #[cfg(feature = "library")]
+                let (start_spine, pending_offset) =
+                    restored_start(&library, &book, book_id, same_edition);
+                (book, book_id, start_spine, pending_offset, same_edition)
             }
 
             Source::Path(ref source_path) => {
@@ -819,40 +920,16 @@ impl Session {
                 let (book_id, start_spine, pending_offset, same_edition) = (None, 0, None, true);
 
                 #[cfg(feature = "library")]
-                let mut same_edition = true;
-                #[cfg(feature = "library")]
-                let book_id = library.as_mut().and_then(|lib| {
-                    let fingerprint = chapbook_library::Library::fingerprint_of_file(path).ok()?;
-                    if let Ok(Some(id)) = lib.find_by_fingerprint(&fingerprint) {
-                        return Some(id);
-                    }
-                    if let Some(identifier) = &book.publication().metadata().identifier {
-                        if let Ok(Some(id)) = lib.find_by_identifier(identifier) {
-                            same_edition = false;
-                            let _ = lib.update_edition(id, path);
-                            return Some(id);
-                        }
-                    }
-                    lib.import(path, book.publication()).ok()
-                });
-
-                #[cfg(feature = "library")]
-                let (start_spine, pending_offset) = match (&library, book_id) {
-                    (Some(lib), Some(id)) => match lib.position(id) {
-                        Ok(Some(stored)) => {
-                            let (locator, tier) = chapbook_library::restore_position(
-                                &stored.locator,
-                                same_edition,
-                                book.publication().spine(),
-                                |i| unit_locator_text(book.publication(), i),
-                            );
-                            log::info!("resuming at unit {} ({tier:?})", locator.spine_index + 1);
-                            (locator.spine_index, Some(locator.char_offset))
-                        }
-                        _ => (0, None),
+                let (book_id, same_edition) = match library.as_mut() {
+                    Some(lib) => match chapbook_library::Library::fingerprint_of_file(path) {
+                        Ok(fp) => shelve(lib, &book, &fp, Some(path)),
+                        Err(_) => (None, true),
                     },
-                    _ => (0, None),
+                    None => (None, true),
                 };
+                #[cfg(feature = "library")]
+                let (start_spine, pending_offset) =
+                    restored_start(&library, &book, book_id, same_edition);
                 (book, book_id, start_spine, pending_offset, same_edition)
             }
         };
