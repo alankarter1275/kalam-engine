@@ -123,7 +123,14 @@ impl Session {
         {
             return None;
         }
-        let images = self.images.get(&spine).unwrap_or(&self.empty_images);
+        // Field accesses rather than `unit_images`: the renderer borrows
+        // `self.fonts` mutably alongside this, so the compiler must see
+        // disjoint fields, which a method call would hide.
+        let images = self
+            .units
+            .get(&spine)
+            .and_then(|unit| unit.images.as_ref())
+            .unwrap_or(&self.empty_images);
         self.renderer
             .render(&dl, &mut self.fonts, images, scale, target);
         // Panel policy is backend-neutral: the same conversion a GPU shell

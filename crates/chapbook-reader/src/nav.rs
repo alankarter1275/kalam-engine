@@ -6,7 +6,6 @@ use chapbook_core::{
 };
 use chapbook_paint::FrameIntent;
 
-use crate::open::OpenBook;
 use crate::{Session, SettingsScope, FONT_STEP_PX};
 
 impl Session {
@@ -236,14 +235,10 @@ impl Session {
 
     fn relayout_keeping_position(&mut self) {
         let locator = self.current_offset();
-        self.clear_layouts();
+        self.drop_metrics_dependent();
         // Glyph masks are keyed by size; a relayout that changed the font
         // scale would otherwise leave the old sizes' masks resident.
         self.renderer = chapbook_render_tinyskia::Renderer::new();
-        self.placeholders.clear();
-        if matches!(self.book, OpenBook::Epub(_)) {
-            self.images.clear();
-        }
         let spine = self.spine;
         if let Some(layout) = self.layout_unit(spine) {
             self.page = layout.page_of(locator);
@@ -302,8 +297,9 @@ impl Session {
             .pages
             .get(page)?
             .offset_at_exact(Point::new(px, py))?;
-        self.links
-            .get(&spine)?
+        self.unit(spine)?
+            .links
+            .as_ref()?
             .iter()
             .find(|link| offset >= link.start && offset < link.end)
             .map(|link| link.href.clone())

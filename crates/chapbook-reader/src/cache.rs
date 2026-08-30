@@ -3,10 +3,38 @@
 //! lifecycle that closes the library.
 
 use chapbook_layout::ChapterLayout;
+use chapbook_paint::ImageStore;
 
-use crate::Session;
+use crate::open::OpenBook;
+use crate::{Session, UnitState};
 
 impl Session {
+    /// A unit's cached state, if any facet of it exists.
+    pub(crate) fn unit(&self, spine: usize) -> Option<&UnitState> {
+        self.units.get(&spine)
+    }
+
+    /// A unit's cached state, created empty if absent. Prefer the direct
+    /// `self.units.entry(..)` form where another field of `self` is
+    /// borrowed across the call — a method borrows all of `self`.
+    pub(crate) fn unit_mut(&mut self, spine: usize) -> &mut UnitState {
+        self.units.entry(spine).or_default()
+    }
+
+    /// A unit's cached layout, if it is laid out.
+    pub(crate) fn layout(&self, spine: usize) -> Option<&ChapterLayout> {
+        self.units.get(&spine)?.layout.as_ref()
+    }
+
+    /// A unit's image store, or the shared empty one — so callers can
+    /// hold a reference either way.
+    pub(crate) fn unit_images(&self, spine: usize) -> &ImageStore {
+        self.units
+            .get(&spine)
+            .and_then(|unit| unit.images.as_ref())
+            .unwrap_or(&self.empty_images)
+    }
+
     /// Give back everything that can be rebuilt, keeping only the unit on
     /// screen.
     ///
@@ -18,15 +46,7 @@ impl Session {
     /// not a lost anything.
     pub fn release_caches(&mut self) {
         let pinned = self.spine;
-        self.layouts.retain(|spine, _| *spine == pinned);
-        self.layout_bytes.retain(|spine, _| *spine == pinned);
-        self.images.retain(|spine, _| *spine == pinned);
-        self.loaded_units.retain(|spine, _| *spine == pinned);
-        self.placeholders.retain(|spine| *spine == pinned);
-        self.links.retain(|spine, _| *spine == pinned);
-        #[cfg(feature = "library")]
-        self.resolved_highlights.retain(|spine, _| *spine == pinned);
-        self.used_at.retain(|spine, _| *spine == pinned);
+        self.units.retain(|spine, _| *spine == pinned);
         self.unit_text_cache.replace(None);
         // The renderer's glyph-mask cache is the one cache with no other
         // release path; a fresh renderer starts it empty.
@@ -92,8 +112,10 @@ impl Session {
     /// `ChapterLayout::approx_bytes`. A host reporting memory, or deciding
     /// whether to lower the budget, wants this.
     pub fn cache_bytes(&self) -> usize {
-        self.layout_bytes.values().sum::<usize>()
-            + self.images.values().map(|i| i.bytes()).sum::<usize>()
+        self.units
+            .values()
+            .map(|unit| unit.layout_bytes + unit.images.as_ref().map_or(0, ImageStore::bytes))
+            .sum()
     }
 
     /// What the caches are allowed to hold.
@@ -114,25 +136,34 @@ impl Session {
     /// Note that a unit was just used, for eviction order.
     pub(crate) fn touch(&mut self, spine: usize) {
         self.use_clock += 1;
-        self.used_at.insert(spine, self.use_clock);
+        let clock = self.use_clock;
+        self.unit_mut(spine).used_at = clock;
     }
 
     /// Cache a unit's layout, recording its byte estimate once —
     /// `cache_bytes()` runs inside the eviction loop and must not deep-walk
     /// every cached chapter per probe.
     pub(crate) fn cache_layout(&mut self, spine: usize, layout: ChapterLayout) {
-        self.layout_bytes.insert(spine, layout.approx_bytes());
-        self.layouts.insert(spine, layout);
+        let unit = self.unit_mut(spine);
+        unit.layout_bytes = layout.approx_bytes();
+        unit.layout = Some(layout);
     }
 
-    pub(crate) fn drop_layout(&mut self, spine: usize) {
-        self.layouts.remove(&spine);
-        self.layout_bytes.remove(&spine);
-    }
-
-    pub(crate) fn clear_layouts(&mut self) {
-        self.layouts.clear();
-        self.layout_bytes.clear();
+    /// Drop what a metrics or settings change invalidates, unit by unit:
+    /// layouts and placeholder pages always, and text books' image stores,
+    /// which are rebuilt per layout. Everything else is a fact about the
+    /// *file*, not the geometry — links are locator-space, image-book
+    /// pixels are metrics-independent — and survives.
+    pub(crate) fn drop_metrics_dependent(&mut self) {
+        let epub = matches!(self.book, OpenBook::Epub(_));
+        for unit in self.units.values_mut() {
+            unit.layout = None;
+            unit.layout_bytes = 0;
+            unit.placeholder = false;
+            if epub {
+                unit.images = None;
+            }
+        }
     }
 
     /// Drop least-recently-used units until the caches fit the budget.
@@ -157,29 +188,28 @@ impl Session {
     pub(crate) fn evict_keeping(&mut self, keep: Option<usize>) {
         let pinned = self.spine;
         while self.cache_bytes() > self.cache_budget {
-            // Oldest use first; a unit with no recorded use is older still.
+            // Oldest use first, among units actually holding memory; a
+            // unit with no recorded use is older still (`used_at` of 0).
             let victim = self
-                .layouts
-                .keys()
-                .chain(self.images.keys())
-                .copied()
-                .filter(|spine| *spine != pinned && Some(*spine) != keep)
-                .min_by_key(|spine| self.used_at.get(spine).copied().unwrap_or(0));
+                .units
+                .iter()
+                .filter(|(spine, unit)| {
+                    **spine != pinned
+                        && Some(**spine) != keep
+                        && (unit.layout.is_some() || unit.images.is_some())
+                })
+                .min_by_key(|(_, unit)| unit.used_at)
+                .map(|(spine, _)| *spine);
             let Some(victim) = victim else {
                 // Only the pinned unit is left. One page over budget beats
                 // a session with nothing to show.
                 return;
             };
-            self.drop_layout(victim);
-            self.images.remove(&victim);
-            self.loaded_units.remove(&victim);
-            self.placeholders.remove(&victim);
-            self.used_at.remove(&victim);
-            // Rebuildable side tables that ride along with a unit's layout;
-            // without this they escape the budget the host set.
-            self.links.remove(&victim);
-            #[cfg(feature = "library")]
-            self.resolved_highlights.remove(&victim);
+            // Every facet goes together — the point of `UnitState`. The
+            // side tables that ride along with a layout used to be listed
+            // here one by one, and forgetting one let it escape the budget
+            // the host set.
+            self.units.remove(&victim);
         }
     }
 }

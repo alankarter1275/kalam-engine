@@ -142,9 +142,9 @@ impl Session {
         });
         self.mark_range(FrameIntent::Annotation, start, end);
         // Show it immediately: the cache is authoritative once populated.
-        self.resolved_highlights
-            .entry(spine)
-            .or_default()
+        self.unit_mut(spine)
+            .resolved_highlights
+            .get_or_insert_with(Vec::new)
             .push(Highlight {
                 id,
                 spine,
@@ -184,7 +184,10 @@ impl Session {
     /// resolves only once its page has loaded. Bookmarks are points and
     /// paint nothing, so they aren't here.
     pub fn highlights(&mut self, spine: usize) -> &[Highlight] {
-        if !self.resolved_highlights.contains_key(&spine) {
+        let attempted = self
+            .unit(spine)
+            .is_some_and(|unit| unit.resolved_highlights.is_some());
+        if !attempted {
             // Extracting a unit's text is not free; skip it entirely when
             // nothing is stored against this unit.
             let resolved = if self.stored.iter().any(|a| a.target == spine) {
@@ -195,11 +198,11 @@ impl Session {
             } else {
                 Vec::new()
             };
-            self.resolved_highlights.insert(spine, resolved);
+            self.unit_mut(spine).resolved_highlights = Some(resolved);
         }
-        self.resolved_highlights
-            .get(&spine)
-            .map_or(&[][..], Vec::as_slice)
+        self.unit(spine)
+            .and_then(|unit| unit.resolved_highlights.as_deref())
+            .unwrap_or(&[])
     }
 
     /// The stored highlight under a point in panel coordinates — what a
@@ -232,7 +235,11 @@ impl Session {
         for stored in self.stored.iter_mut().filter(|a| a.id == id) {
             stored.color = color.clone();
         }
-        for resolved in self.resolved_highlights.values_mut() {
+        for resolved in self
+            .units
+            .values_mut()
+            .filter_map(|unit| unit.resolved_highlights.as_mut())
+        {
             for highlight in resolved.iter_mut().filter(|h| h.id == id) {
                 highlight.color = color.clone();
             }
@@ -272,7 +279,11 @@ impl Session {
         // Its extent has to be read before it is dropped from the cache.
         let range = self.highlight_range(id);
         self.stored.retain(|a| a.id != id);
-        for resolved in self.resolved_highlights.values_mut() {
+        for resolved in self
+            .units
+            .values_mut()
+            .filter_map(|unit| unit.resolved_highlights.as_mut())
+        {
             resolved.retain(|h| h.id != id);
         }
         match range {
@@ -364,8 +375,9 @@ impl Session {
 
     /// The extent of a resolved highlight on the current page.
     fn highlight_range(&self, id: i64) -> Option<(u32, u32)> {
-        self.resolved_highlights
-            .get(&self.spine)?
+        self.unit(self.spine)?
+            .resolved_highlights
+            .as_ref()?
             .iter()
             .find(|h| h.id == id)
             .map(|h| (h.start, h.end))

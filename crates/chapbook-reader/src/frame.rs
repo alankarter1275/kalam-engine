@@ -76,7 +76,7 @@ impl Session {
     /// it lies on another page and so disturbs nothing here.
     #[cfg(feature = "library")]
     fn range_damage(&self, start: u32, end: u32) -> Option<Rect> {
-        let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
+        let page = self.layout(self.spine)?.pages.get(self.page)?;
         page.rects_for_range(start, end)
             .into_iter()
             .reduce(|damage, rect| damage.union(&rect))
@@ -127,7 +127,7 @@ impl Session {
         // A moved selection disturbs both where it was and where it is.
         let current = self.selected_range();
         if current != self.painted_selection {
-            let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
+            let page = self.layout(self.spine)?.pages.get(self.page)?;
             let moved = [self.painted_selection, current]
                 .into_iter()
                 .flatten()
@@ -208,7 +208,7 @@ impl Session {
         }
         self.page = self.page.min(page_count - 1);
         let page_idx = page_idx.min(page_count - 1);
-        let layout = self.layouts.get(&spine)?;
+        let layout = self.layout(spine)?;
         let page = layout.pages.get(page_idx)?;
         Some(chapbook_paint::build_display_list(
             page,

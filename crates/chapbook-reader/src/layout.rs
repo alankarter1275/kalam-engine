@@ -61,29 +61,29 @@ impl Session {
                         text,
                         natural,
                     } = unit;
-                    self.images.entry(spine).or_default().insert(
+                    let unit = self.unit_mut(spine);
+                    unit.images.get_or_insert_with(Default::default).insert(
                         spine as u64 + 1,
                         width,
                         height,
                         rgba,
                     );
-                    self.loaded_units.insert(
-                        spine,
-                        LoadedUnit {
-                            width,
-                            height,
-                            text,
-                            natural,
-                        },
-                    );
+                    unit.loaded = Some(LoadedUnit {
+                        width,
+                        height,
+                        text,
+                        natural,
+                    });
                 }
                 Err(message) => {
                     log::error!("page {} failed to load: {message}", spine + 1);
                     self.load_errors.insert(spine, message);
                 }
             }
-            if self.placeholders.remove(&spine) {
-                self.drop_layout(spine);
+            let unit = self.unit_mut(spine);
+            if std::mem::take(&mut unit.placeholder) {
+                unit.layout = None;
+                unit.layout_bytes = 0;
             }
             // A page that just landed is 15 MB of decoded RGBA for a comic;
             // this is the moment the cache grows, so it is the moment to
@@ -131,7 +131,7 @@ impl Session {
     /// comic units.
     pub(crate) fn layout_unit(&mut self, spine: usize) -> Option<&ChapterLayout> {
         let metrics = self.metrics?;
-        if !self.layouts.contains_key(&spine) {
+        if self.layout(spine).is_none() {
             let built = match self.book.publication().kind() {
                 BookKind::Epub => self.layout_text_unit(spine, &metrics),
                 // Image books load on the worker; a placeholder shows
@@ -142,7 +142,7 @@ impl Session {
                     self.cache_layout(spine, layout);
                     self.touch(spine);
                     self.evict_keeping(Some(spine));
-                    return self.layouts.get(&spine);
+                    return self.layout(spine);
                 }
             };
             let (layout, images) = match built {
@@ -151,7 +151,7 @@ impl Session {
             };
             self.cache_layout(spine, layout);
             if let Some(images) = images {
-                self.images.insert(spine, images);
+                self.unit_mut(spine).images = Some(images);
             }
         }
         // Touch on every call, not only on a build: eviction order is
@@ -159,7 +159,7 @@ impl Session {
         // most-used thing there is.
         self.touch(spine);
         self.evict_keeping(Some(spine));
-        self.layouts.get(&spine)
+        self.layout(spine)
     }
 
     /// Build the one-page layout for an image-book unit. When the unit
@@ -176,18 +176,21 @@ impl Session {
         if let Some(loader) = self.loader.as_mut() {
             let next = spine + 1;
             if next < self.book.publication().spine().len()
-                && !self.loaded_units.contains_key(&next)
+                && !self.units.get(&next).is_some_and(|u| u.loaded.is_some())
                 && !self.load_errors.contains_key(&next)
             {
                 loader.request(next);
             }
         }
-        let Some(unit) = self.loaded_units.get(&spine) else {
+        let Some(unit) = self.units.get(&spine).and_then(|u| u.loaded.as_ref()) else {
             #[cfg(feature = "_image-book")]
             if !self.load_errors.contains_key(&spine) {
                 if let Some(loader) = self.loader.as_mut() {
                     loader.request(spine);
-                    self.placeholders.insert(spine);
+                    // Field access, not `unit_mut`: the loader borrow is
+                    // still live, and a method call would borrow all of
+                    // `self` across it.
+                    self.units.entry(spine).or_default().placeholder = true;
                 }
             }
             // Placeholder: an empty themed page until the load lands.
@@ -278,7 +281,9 @@ impl Session {
         engine.style_document(&mut doc);
         // The document is parsed here and nowhere else; take its links
         // while we have it.
-        self.links.insert(spine, dom::links(&doc));
+        // Field access, not `unit_mut`: `epub` borrows `self.book` for
+        // the rest of this function.
+        self.units.entry(spine).or_default().links = Some(dom::links(&doc));
         let layout = chapbook_layout::paginate(&doc, &sheets, metrics, &mut self.fonts, &images);
         Some((layout, images))
     }

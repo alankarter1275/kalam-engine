@@ -144,7 +144,7 @@ impl Session {
     /// part of that locator space — the extracted lines are contiguous in
     /// it — so they are re-inserted between the sliced lines here.
     fn hidden_text_in_range(&self, start: u32, end: u32) -> Option<String> {
-        let layout = self.layouts.get(&self.spine)?;
+        let layout = self.layout(self.spine)?;
         let mut lines = Vec::new();
         for page in &layout.pages {
             for fragment in &page.fragments {
@@ -185,7 +185,7 @@ impl Session {
     /// Reads only what is already laid out — never the loader thread — so
     /// it is safe on the UI thread.
     pub fn page_text_runs(&self) -> Option<Vec<TextRun>> {
-        let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
+        let page = self.layout(self.spine)?.pages.get(self.page)?;
         let mut runs = Vec::new();
         for fragment in &page.fragments {
             use chapbook_paint::FragmentKind;
@@ -231,8 +231,7 @@ impl Session {
     /// accessibility tree ask for; map with
     /// [`chapbook_core::PageMetrics::page_to_panel`] under rotation.
     pub fn range_rects(&self, start: u32, end: u32) -> Vec<Rect> {
-        self.layouts
-            .get(&self.spine)
+        self.layout(self.spine)
             .and_then(|layout| layout.pages.get(self.page))
             .map(|page| page.rects_for_range(start, end))
             .unwrap_or_default()
@@ -247,7 +246,7 @@ impl Session {
     /// `None` until the page is laid out; empty for a page with nothing to
     /// speak.
     pub fn speakable_page(&self) -> Option<SpeakablePage> {
-        let layout = self.layouts.get(&self.spine)?;
+        let layout = self.layout(self.spine)?;
         let current = layout.pages.get(self.page)?;
         let mut page = SpeakablePage::default();
         let (mut out_len, mut pending_space) = (0u32, false);
@@ -327,7 +326,7 @@ impl Session {
         match self.book.publication().kind() {
             BookKind::Epub => self.cached_unit_text(spine),
             BookKind::Pdf => {
-                let unit = self.loaded_units.get(&spine)?;
+                let unit = self.unit(spine)?.loaded.as_ref()?;
                 Some(unit.text.iter().map(|line| line.text.as_str()).collect())
             }
             BookKind::Comic => None,

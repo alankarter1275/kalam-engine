@@ -584,10 +584,8 @@ impl Session {
             renderer: chapbook_render_tinyskia::Renderer::new(),
             settings,
             metrics: None,
-            layouts: HashMap::new(),
-            images: HashMap::new(),
+            units: HashMap::new(),
             cache_budget: cache_budget.unwrap_or(DEFAULT_CACHE_BUDGET),
-            used_at: HashMap::new(),
             use_clock: 0,
             registered_fonts: HashSet::new(),
             spine: start_spine,
@@ -595,10 +593,8 @@ impl Session {
             pending_offset: pending_offset.map(|offset| (start_spine, offset)),
             #[cfg(feature = "_image-book")]
             loader,
-            loaded_units: HashMap::new(),
             #[cfg(feature = "_image-book")]
             load_errors: HashMap::new(),
-            placeholders: HashSet::new(),
             waker,
             selection: None,
             #[cfg(feature = "library")]
@@ -612,21 +608,17 @@ impl Session {
             #[cfg(feature = "library")]
             stored,
             #[cfg(feature = "library")]
-            resolved_highlights: HashMap::new(),
-            #[cfg(feature = "library")]
             same_edition,
             empty_images: ImageStore::default(),
             pending: FrameIntent::default(),
             pending_damage: PendingDamage::default(),
             painted_selection: None,
             pixel_format: PixelFormat::default(),
-            links: HashMap::new(),
             back_stack: Vec::new(),
             pending_anchor: None,
             #[cfg(feature = "library")]
             char_counts: std::cell::OnceCell::new(),
             unit_text_cache: std::cell::RefCell::new(None),
-            layout_bytes: HashMap::new(),
         })
     }
 }

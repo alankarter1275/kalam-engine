@@ -186,15 +186,13 @@ pub struct Session {
     renderer: chapbook_render_tinyskia::Renderer,
     settings: ReadingSettings,
     metrics: Option<PageMetrics>,
-    layouts: HashMap<usize, ChapterLayout>,
-    images: HashMap<usize, ImageStore>,
-    /// Bytes the two caches above may hold between them.
+    /// Everything the session caches per spine unit — see [`UnitState`].
+    units: HashMap<usize, UnitState>,
+    /// Bytes the unit caches may hold between them.
     cache_budget: usize,
-    /// Last time each unit was used, for eviction order. A counter rather
-    /// than a clock: monotonic, cheap, and it cannot go backwards when the
-    /// host's clock does.
-    used_at: HashMap<usize, u64>,
-    /// Ticks the counter above.
+    /// Ticks [`UnitState::used_at`]. A counter rather than a clock:
+    /// monotonic, cheap, and it cannot go backwards when the host's
+    /// clock does.
     use_clock: u64,
     registered_fonts: HashSet<String>,
     spine: usize,
@@ -213,14 +211,11 @@ pub struct Session {
     /// Worker for image-book units (comics, PDFs); `None` for EPUBs.
     #[cfg(feature = "_image-book")]
     loader: Option<Loader>,
-    /// Metrics-independent metadata of loaded units (pixels live in
-    /// `images`, which image books never clear on relayout).
-    loaded_units: HashMap<usize, LoadedUnit>,
     /// Units the loader failed on, so a retry isn't queued every frame.
+    /// Deliberately not unit state: eviction must not clear the memory
+    /// of a failure, or every eviction would queue the failing load again.
     #[cfg(feature = "_image-book")]
     load_errors: HashMap<usize, String>,
-    /// Units currently showing a placeholder page (relaid once loaded).
-    placeholders: HashSet<usize>,
     waker: WakerCell,
     /// Selection anchor and cursor as locator offsets (unordered).
     selection: Option<(u32, u32)>,
@@ -240,10 +235,6 @@ pub struct Session {
     /// Annotations as stored, awaiting resolution against unit text.
     #[cfg(feature = "library")]
     stored: Vec<StoredAnnotation>,
-    /// Resolved per unit, cached: the locator space of a unit doesn't move
-    /// under relayout, so this survives font-size and theme changes.
-    #[cfg(feature = "library")]
-    resolved_highlights: HashMap<usize, Vec<Highlight>>,
     /// The open file is the edition the positions were captured against.
     #[cfg(feature = "library")]
     same_edition: bool,
@@ -258,8 +249,6 @@ pub struct Session {
     painted_selection: Option<(u32, u32)>,
     /// What the target panel can show; applied to rendered pixels.
     pixel_format: PixelFormat,
-    /// Per-unit hyperlinks in locator space, filled as units lay out.
-    links: HashMap<usize, Vec<dom::Link>>,
     /// Where jumps came from, so a footnote can be returned from. Only
     /// jumps push; ordinary page turns don't.
     back_stack: Vec<Locator>,
@@ -276,14 +265,48 @@ pub struct Session {
     /// inflate + parse + walk. Survives relayout by design — locator text
     /// is metrics-independent.
     unit_text_cache: std::cell::RefCell<Option<(usize, String)>>,
-    /// `ChapterLayout::approx_bytes` per cached unit, maintained at
-    /// insert/removal — `cache_bytes()` runs in the eviction loop, and
-    /// recomputing it deep-walked every glyph of every cached chapter.
-    layout_bytes: HashMap<usize, usize>,
     /// Fragment to land on once the target unit has laid out — the
     /// anchor-flavored sibling of `pending_offset`, unit-paired for the
     /// same reason.
     pending_anchor: Option<(usize, String)>,
+}
+
+/// Everything the session caches for one spine unit.
+///
+/// One struct in one map, so the facets of a unit travel together:
+/// eviction is `units.remove` and cannot forget one. They used to be
+/// eight parallel collections keyed by spine index, and every drop site
+/// enumerated them by hand — which is how the side tables that "ride
+/// along" with a layout once escaped the cache budget entirely.
+///
+/// Two lifetimes share the struct. Eviction and `release_caches` drop a
+/// unit wholesale. A metrics or settings change drops only what layout
+/// derives ([`Session::drop_metrics_dependent`]): `links` and `loaded`
+/// survive, being locator-space and pixel facts about the *file*, and an
+/// image book's `images` survive with them.
+#[derive(Default)]
+struct UnitState {
+    layout: Option<ChapterLayout>,
+    /// `ChapterLayout::approx_bytes`, recorded when `layout` is —
+    /// `cache_bytes()` runs in the eviction loop, and recomputing it
+    /// deep-walked every glyph of every cached chapter.
+    layout_bytes: usize,
+    images: Option<ImageStore>,
+    /// Metrics-independent metadata of a loaded image-book unit (the
+    /// pixels are in `images`).
+    loaded: Option<LoadedUnit>,
+    /// Showing a placeholder page (relaid once the load lands).
+    placeholder: bool,
+    /// Hyperlinks in locator space, taken at parse time.
+    links: Option<Vec<dom::Link>>,
+    /// Highlights resolved into the unit's locator space, cached: that
+    /// space doesn't move under relayout, so this survives font-size and
+    /// theme changes. `Some(empty)` means resolution ran and found
+    /// nothing — distinct from never having run.
+    #[cfg(feature = "library")]
+    resolved_highlights: Option<Vec<Highlight>>,
+    /// Last use, in [`Session::use_clock`] ticks, for eviction order.
+    used_at: u64,
 }
 
 /// The library's handle on the open book.
@@ -495,13 +518,7 @@ impl Session {
         let had = self.metrics.is_some();
         let locator = self.current_offset();
         self.metrics = Some(metrics);
-        self.clear_layouts();
-        self.placeholders.clear();
-        // Image-book pixels are metrics-independent; only text chapters
-        // rebuild their per-layout stores.
-        if matches!(self.book, OpenBook::Epub(_)) {
-            self.images.clear();
-        }
+        self.drop_metrics_dependent();
         if had {
             let spine = self.spine;
             if let Some(layout) = self.layout_unit(spine) {
@@ -548,7 +565,7 @@ impl Session {
     /// The image store backing the current unit's `Image` ops. Empty for
     /// units that carry no images.
     pub fn image_store(&self) -> &ImageStore {
-        self.images.get(&self.spine).unwrap_or(&self.empty_images)
+        self.unit_images(self.spine)
     }
 
     /// What a display list's ops resolve against: the font database its
@@ -557,7 +574,14 @@ impl Session {
     /// into. A shell rasterizing for itself needs both, and they are
     /// disjoint fields, so they come back together.
     pub fn paint_resources(&mut self) -> (&mut cosmic_text::FontSystem, &ImageStore) {
-        let images = self.images.get(&self.spine).unwrap_or(&self.empty_images);
+        // Field accesses rather than `unit_images`: the split borrow
+        // (fonts mutably, images not) needs the compiler to see disjoint
+        // fields, which a method call would hide.
+        let images = self
+            .units
+            .get(&self.spine)
+            .and_then(|unit| unit.images.as_ref())
+            .unwrap_or(&self.empty_images);
         (&mut self.fonts, images)
     }
 
@@ -565,8 +589,7 @@ impl Session {
 
     /// Locator offset of the current page (0 for comics).
     pub fn current_offset(&self) -> u32 {
-        self.layouts
-            .get(&self.spine)
+        self.layout(self.spine)
             .and_then(|l| l.char_map.get(self.page).copied())
             .unwrap_or(0)
     }
@@ -579,11 +602,7 @@ impl Session {
             let Some(id) = self.book_id else {
                 return;
             };
-            let offset = self
-                .layouts
-                .get(&self.spine)
-                .and_then(|l| l.char_map.get(self.page).copied())
-                .unwrap_or(0);
+            let offset = self.current_offset();
             let Ok(item) = self.book.publication().spine_item(self.spine) else {
                 return;
             };
