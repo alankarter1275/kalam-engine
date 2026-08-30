@@ -809,6 +809,22 @@ cb_status cb_font_source_set_generics(struct cb_font_source *fonts,
                                       const char *fantasy);
 
 /**
+ * Use chapbook's own table of the five CSS generic families for the
+ * platform this library was built for.
+ *
+ * The middle option between asking the host, which is right on a Linux
+ * desktop and a coin toss on a phone, and
+ * [`cb_font_source_set_generics`], which is right everywhere and which
+ * every host was otherwise going to spell out separately.
+ *
+ * On a platform whose own answer is already correct this changes nothing,
+ * deliberately: a host asks for chapbook's best answer without also having
+ * to know which platforms need one. `cb_session_font_report` still names
+ * any generic that resolves to nothing, whichever way it was set.
+ */
+cb_status cb_font_source_use_platform_generics(struct cb_font_source *fonts);
+
+/**
  * Release a font source that was never handed to [`cb_config_new`].
  *
  * Passing null is a no-op, so a host can free unconditionally on an error
@@ -1168,15 +1184,79 @@ cb_status cb_session_book_kind(const struct cb_session *session, cb_book_kind *k
 
 /**
  * The settings in force for the open book.
+ *
+ * The chosen font family is **not** here: it is a string, and this struct
+ * is plain data a host can hold by value. Read it with
+ * [`cb_session_font_family`] and set it with
+ * [`cb_session_set_font_family`].
  */
 cb_status cb_session_settings(const struct cb_session *session, struct cb_settings *settings);
 
 /**
  * Apply settings, keeping the reader's place across the reflow.
+ *
+ * The chosen font family is preserved, not cleared — it does not travel
+ * in `cb_settings` and is changed only by
+ * [`cb_session_set_font_family`].
  */
 cb_status cb_session_set_settings(struct cb_session *session,
                                   struct cb_settings settings,
                                   cb_settings_scope scope);
+
+/**
+ * How many font families this session can match.
+ *
+ * The read-back half of the font source, and what a picker needs: a host
+ * cannot offer a choice it cannot enumerate. Grows as chapters load,
+ * because a book's own `@font-face` families join the database when their
+ * unit lays out — so a host that caches this should refresh it after a
+ * unit change rather than once at open.
+ */
+cb_status cb_session_font_family_count(const struct cb_session *session, size_t *count);
+
+/**
+ * One available font family by index, sorted and deduplicated.
+ * `CB_ERR_INVALID_ARGUMENT` past the count.
+ *
+ * Caller-allocates; see [`cb_last_error_message`] for the two-call idiom.
+ */
+cb_status cb_session_font_family_at(const struct cb_session *session,
+                                    size_t index,
+                                    char *buf,
+                                    size_t cap,
+                                    size_t *needed);
+
+/**
+ * The reader's chosen font family, or empty for the publisher's.
+ *
+ * Caller-allocates; see [`cb_last_error_message`] for the two-call idiom.
+ * Empty and unset are the same answer on purpose: a host that wants to
+ * show "Publisher's font" in a picker tests for an empty string, which is
+ * one branch rather than a sentinel it has to remember.
+ */
+cb_status cb_session_font_family(const struct cb_session *session,
+                                 char *buf,
+                                 size_t cap,
+                                 size_t *needed);
+
+/**
+ * Choose the typeface the reader sees, keeping their place across the
+ * reflow.
+ *
+ * `family` is a family name as [`cb_session_font_family_at`] reports them.
+ * Null or empty returns the book to the publisher's own font. A name
+ * nothing in the font database answers to is not an error — the cascade
+ * moves on to the next family, exactly as it would for an unknown family
+ * in a publisher's stylesheet — so a host that wants certainty should
+ * offer only names it enumerated.
+ *
+ * This beats the publisher's `font-family`, which is the point: nearly
+ * every real EPUB sets one. Monospace is left alone, so code listings
+ * stay legible.
+ */
+cb_status cb_session_set_font_family(struct cb_session *session,
+                                     const char *family,
+                                     cb_settings_scope scope);
 
 /**
  * The device-pixel size a surface must be for [`cb_session_render_into`],

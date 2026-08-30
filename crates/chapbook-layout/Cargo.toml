@@ -30,6 +30,15 @@ url = { workspace = true }
 image = { workspace = true }
 log = { workspace = true }
 
+# The one place `fontconfig` is worth having: a host whose font policy
+# actually lives in `/etc/fonts`. Named by exclusion rather than by listing
+# the Linuxes and BSDs, so a new unix target gets the useful behaviour by
+# default and only the three that cannot use it are carved out. Enabling it
+# here is enough for the whole graph — cargo unions features — so no other
+# member repeats this.
+[target.'cfg(all(unix, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies]
+cosmic-text = { workspace = true, features = ["fontconfig"] }
+
 [dev-dependencies]
 insta = { workspace = true }
 proptest = { workspace = true }

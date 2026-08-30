@@ -796,7 +796,8 @@ impl Library {
         let scope = book.map_or(0, |b| b.0);
         self.conn
             .query_row(
-                "SELECT base_font_px, line_height, justify, publisher_styles, theme
+                "SELECT base_font_px, line_height, justify, publisher_styles, theme,
+                        font_family
                  FROM reading_settings WHERE book_id = ?1",
                 params![scope],
                 |row| {
@@ -808,6 +809,9 @@ impl Library {
                         theme: row
                             .get::<_, String>(4)
                             .map(|name| Theme::from_name(&name).unwrap_or_default())?,
+                        // NULL is the publisher's font, which is what every
+                        // row written before v5 means.
+                        font_family: row.get::<_, Option<String>>(5)?,
                     })
                 },
             )
@@ -834,14 +838,15 @@ impl Library {
             .execute(
                 "INSERT INTO reading_settings
                     (book_id, base_font_px, line_height, justify, publisher_styles,
-                     theme, updated_at)
-                 VALUES (?1,?2,?3,?4,?5,?6, strftime('%s','now'))
+                     theme, font_family, updated_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7, strftime('%s','now'))
                  ON CONFLICT(book_id) DO UPDATE SET
                     base_font_px = excluded.base_font_px,
                     line_height = excluded.line_height,
                     justify = excluded.justify,
                     publisher_styles = excluded.publisher_styles,
                     theme = excluded.theme,
+                    font_family = excluded.font_family,
                     updated_at = excluded.updated_at",
                 params![
                     scope,
@@ -850,6 +855,7 @@ impl Library {
                     settings.justify as i64,
                     settings.publisher_styles as i64,
                     settings.theme.name(),
+                    settings.font_family.as_deref(),
                 ],
             )
             .map_err(db_err)?;

@@ -50,17 +50,34 @@ jobs:
     #
     # Scoped to the crates that cross-compile without system libraries —
     # the rest of the workspace wants sqlite, fontconfig and GTK.
-    name: check (armv7 + aarch64)
+    name: check (armv7 + aarch64 + android + ios)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_PIN }}
-          targets: armv7-unknown-linux-gnueabihf, aarch64-unknown-linux-gnu
+          targets: >-
+            armv7-unknown-linux-gnueabihf,
+            aarch64-unknown-linux-gnu,
+            aarch64-linux-android,
+            aarch64-apple-ios
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-core --target armv7-unknown-linux-gnueabihf
       - run: cargo check -p chapbook-core --target aarch64-unknown-linux-gnu
+      # The two device platforms, against the crate that carries the font
+      # policy. The iOS one earns its place twice: cosmic-text's
+      # `fontconfig` feature is excluded per target in chapbook-layout's
+      # manifest, and a Cargo `cfg` is exactly the kind of thing no other
+      # job here would notice breaking. `check` needs no linker and no
+      # Apple SDK, which is why the iOS half can run on Linux at all.
+      #
+      # The generic-family tables themselves are deliberately NOT behind a
+      # `cfg` — they match on `std::env::consts::OS`, so every one of them
+      # compiles and is unit-tested on every host. That was the point of
+      # writing them that way.
+      - run: cargo check -p chapbook-layout --target aarch64-linux-android
+      - run: cargo check -p chapbook-layout --target aarch64-apple-ios
 
   reader-features:
     # chapbook-reader's formats are separately compilable, and a device

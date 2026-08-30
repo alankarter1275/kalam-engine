@@ -91,7 +91,17 @@ markup5ever = "0.39"
 xml5ever = "0.39"
 
 # Text shaping/layout and CPU rasterization
-cosmic-text = "0.19"
+# `fontconfig` is one of its defaults and is turned back on per target by
+# chapbook-layout, which is the crate that builds the font system. It reads
+# `/etc/fonts/fonts.conf` to correct the five CSS generics, which is real
+# work on a Linux desktop and impossible anywhere the file cannot exist.
+# fontdb already excludes it on Android and macOS; iOS is the one that
+# slipped through, being unix and neither, so it took the Linux branch and
+# carried a config parser it could never read a config with.
+cosmic-text = { version = "0.19", default-features = false, features = [
+    "std",
+    "swash",
+] }
 # Both are cosmic-text's own dependencies, named here because chapbook-layout
 # builds the font system itself rather than calling `FontSystem::new()`:
 # `unicode-script` is the script type its `Fallback` trait speaks, so the
