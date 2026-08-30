@@ -1,6 +1,6 @@
 //! The OPDS flow: fetch/sniff/parse feeds, Basic auth with Authentication
 //! Document surfacing, downloads, PSE page urls, OpenSearch. Behavior
-//! contract: docs/OPDS-INTEROP.md.
+//! contract: the crate's INTEROP.md.
 //!
 //! Everything here is protocol, not networking — bytes arrive through an
 //! injected [`HttpClient`] (see `crate::http` for why).

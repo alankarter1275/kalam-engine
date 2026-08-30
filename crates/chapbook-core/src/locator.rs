@@ -56,6 +56,21 @@
 //!
 //! Mixing units across formats is fine because progression is only ever
 //! compared within one book.
+//!
+//! # The resolve chain
+//!
+//! 1. Same file + same [`LOCATOR_VERSION`] → `char_offset` directly.
+//! 2. Same file, older version → re-find the quote nearest `spine_fraction`;
+//!    on success rewrite the offset at the current version (self-healing
+//!    migration).
+//! 3. Different file/edition → quote search across the spine biased by
+//!    `book_progression`; else `spine_href` + `spine_fraction`.
+//! 4. Last resort → `book_progression`. Degrade to "right page-ish", never
+//!    "gone".
+//!
+//! Steps 1–2 and the within-item half of step 4 are [`resolve_in_text`];
+//! cross-file/edition orchestration (which spine items to try, edition
+//! fingerprints) is chapbook-library's `restore` module.
 
 /// Version of the locator-text extraction function. Stored alongside every
 /// persisted position/annotation endpoint; see the module docs for what
@@ -111,7 +126,8 @@ pub struct Quote {
 
 /// The full layered position record persisted for every reading position and
 /// annotation endpoint. Layers degrade gracefully: exact offset → quote →
-/// spine fraction → whole-book progression. See `docs/LOCATORS.md`.
+/// spine fraction → whole-book progression. See the resolve chain in the
+/// module docs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayeredLocator {
     /// Container-root path of the spine item — identity that survives spine
@@ -214,8 +230,8 @@ impl ResolvedOffset {
 }
 
 /// Resolve a layered locator against the locator `text` of a spine item —
-/// steps 1, 2, and the within-item part of step 4 of the fallback chain in
-/// `docs/LOCATORS.md`. Cross-file/edition orchestration (which spine items to
+/// steps 1, 2, and the within-item part of step 4 of the resolve chain in
+/// the module docs. Cross-file/edition orchestration (which spine items to
 /// try, edition fingerprints) belongs to chapbook-library.
 ///
 /// `same_source` is the caller's knowledge of whether `text` came from the

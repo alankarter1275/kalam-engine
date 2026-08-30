@@ -23,7 +23,7 @@
 //!    is what `HttpClient` is for.
 //!
 //! 2. **The key is stable and not a secret.** Catalog URLs may carry
-//!    per-user API keys in the path (`docs/OPDS-INTEROP.md` §4), so keying
+//!    per-user API keys in the path (opds-client's `INTEROP.md` §4), so keying
 //!    on the full URL would make the key unloggable *and* break every
 //!    stored credential when a catalog relocates. [`CredentialKey`] is an
 //!    origin or a library row id. That matters more than it looks: a key

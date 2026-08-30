@@ -1,9 +1,10 @@
 # OPDS fixture corpus
 
-Wire-format fixtures for chapbook-opds (M6). The Atom/JSON pairs were
+Wire-format fixtures for opds-client. The Atom/JSON pairs were
 generated from a reference OPDS server implementation and deliberately
-exercise every feature and quirk `docs/OPDS-INTEROP.md` requires the client
-to handle; parse them in tests before trusting the parser on live catalogs.
+exercise every feature and quirk `crates/opds-client/INTEROP.md` requires
+the client to handle; `crates/opds-client/tests/fixtures.rs` parses every
+one of them.
 
 | File | What it exercises |
 |---|---|

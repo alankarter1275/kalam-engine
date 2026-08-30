@@ -1,5 +1,5 @@
-//! Parse every wire-format fixture in `fixtures/opds/` (docs/OPDS-INTEROP.md
-//! §6). The facet-attribute assertions are the regression canary for the
+//! Parse every wire-format fixture in `fixtures/opds/` (the crate's
+//! INTEROP.md). The facet-attribute assertions are the regression canary for the
 //! parser choice: if they fail, a lossy feed crate has crept back in.
 
 use std::path::PathBuf;

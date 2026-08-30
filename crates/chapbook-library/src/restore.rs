@@ -1,5 +1,6 @@
-//! The cross-file/edition position restore chain (docs/LOCATORS.md §3) —
-//! the orchestration layer above `chapbook_core::resolve_in_text`.
+//! The cross-file/edition position restore chain (steps 3–4 of the resolve
+//! chain in `chapbook_core::locator`'s module docs) — the orchestration
+//! layer above `chapbook_core::resolve_in_text`.
 //!
 //! Degrades to "right page-ish", never "gone": exact offset → quote re-find
 //! in the stored chapter → quote search in neighboring chapters (page-count

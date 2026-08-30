@@ -1,8 +1,8 @@
 //! OPDS-PSE streamed comics as [`Publication`]s.
 //!
 //! A PSE stream is a remote image-per-page comic: one HTTP fetch per page
-//! through a `{pageNumber}` template (0-based; see docs/OPDS-INTEROP.md
-//! §3). This is the producer the `Publication::unit_bytes` blocking
+//! through a `{pageNumber}` template (0-based; see opds-client's
+//! INTEROP.md §3). This is the producer the `Publication::unit_bytes` blocking
 //! contract was written for — a page fetch can take seconds and fail with
 //! `ChapbookError::Network`, and pages cache to disk so a re-read is
 //! local. UI code must call it off the UI thread.

@@ -153,7 +153,7 @@ sha1 = "0.10" # IDPF font de-obfuscation key derivation
 
 # OPDS. NOTE: not atom_syndication/feed-rs — both silently drop the
 # foreign-namespace <link> attributes (opds:*, thr:count, pse:*) that facets
-# and page streaming live in. See docs/OPDS-INTEROP.md §0.
+# and page streaming live in. See crates/opds-client/INTEROP.md §0.
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 quick-xml = "0.42"
 serde = { version = "1", features = ["derive"] }

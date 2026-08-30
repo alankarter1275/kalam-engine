@@ -21,7 +21,8 @@ assumptions; hidpi scaling happens only inside a backend.
 ## Format extensibility (EPUB-first, not EPUB-only)
 
 Chapbook's focus is the reflowable-EPUB pipeline above, but the seams are
-placed so an image-per-page format (CBZ) can join later without a redesign:
+placed so an image-per-page format joins without a redesign — and three
+have:
 
 - **Book model in core.** `BookMetadata`/`SpineItem`/`TocEntry`/`Resource`
   and the `Publication` trait live in `chapbook-core`. The library, reader
@@ -70,8 +71,9 @@ stays that way.
   format-neutral book model (`Publication`, `BookMetadata`, `SpineItem`,
   `TocEntry`), and `Locator { spine_index, char_offset }` plus the layered,
   versioned persistence record (`LayeredLocator`: quote context, spine
-  fraction, whole-book progression) and its resolve chain — see
-  `docs/LOCATORS.md`. `char_offset` indexes the *raw locator text*
+  fraction, whole-book progression) and its resolve chain — spec in
+  `chapbook_core::locator`'s module docs, rationale in `docs/LOCATORS.md`.
+  `char_offset` indexes the *raw locator text*
   (`chapbook_layout::dom::locator_text`, versioned by `LOCATOR_VERSION`),
   not the
   collapsed display text. Also the panel update seam: the `Panel` trait
@@ -214,8 +216,8 @@ stays that way.
   crate still does everything but fetch. `HttpClient::download` has a
   default that streams to a temp file and renames, and exists to be
   overridden by a host that owns a background download facility.
-  Full requirements: `docs/OPDS-INTEROP.md`; wire-format fixtures:
-  `fixtures/opds/`.
+  Full requirements: `crates/opds-client/INTEROP.md` (it travels with the
+  crate); wire-format fixtures: `fixtures/opds/`.
 - **chapbook-opds** — the binding, and the only part of the above that
   could not travel: `StreamedComic`, an OPDS-PSE stream presented as a
   `Publication` (one HTTP fetch per page through a 0-based `{pageNumber}`
@@ -254,8 +256,8 @@ stays that way.
   session needs no knowledge of which one it is talking to, which is the
   evidence that the seam is a seam.
 - **tools/chapbook-cli** — `meta|toc|text|styles|layout|render|opds|lib`;
-  each subcommand ships with its milestone and generates the snapshot inputs
-  for that milestone's golden tests.
+  each subcommand exposes one pipeline stage and generates the snapshot
+  inputs for that stage's golden tests.
 
 ## Version policy
 
@@ -325,9 +327,3 @@ display list, which carries glyph indices and no text; `PLATFORM.md` §7
 has that argument. Each platform wraps the runs in its own tree
 (`UIAccessibilityElement`, `AccessibilityNodeInfo`, AT-SPI); the GTK
 viewer's `PageArea` is the reference, verified against AT-SPI end to end.
-
-## Milestones
-
-M0 scaffold/CI → M1 EPUB+text extraction → M2 stylo cascade → M3 paginated
-layout → M4 pixels (renderer + viewer) → M5 images/@font-face → M6 OPDS →
-M7 library → M8 stretch (tables, CFI, themes, hyphenation, e-ink backend).
