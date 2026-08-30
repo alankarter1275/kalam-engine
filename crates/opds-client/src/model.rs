@@ -1,7 +1,7 @@
 //! The catalog model both OPDS dialects parse into.
 //!
 //! Deliberately close to the wire: the two encodings are not
-//! informationally equivalent (docs/OPDS-INTEROP.md §1), so fields carry
+//! informationally equivalent (the crate's INTEROP.md §1), so fields carry
 //! dialect-specific data as `Option`s rather than pretending to a common
 //! denominator. Hrefs are resolved against the request URL at parse time
 //! but never strict-URI-parsed (PSE templates contain literal braces).

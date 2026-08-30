@@ -216,8 +216,8 @@ stays that way.
   crate still does everything but fetch. `HttpClient::download` has a
   default that streams to a temp file and renames, and exists to be
   overridden by a host that owns a background download facility.
-  Full requirements: `docs/OPDS-INTEROP.md`; wire-format fixtures:
-  `fixtures/opds/`.
+  Full requirements: `crates/opds-client/INTEROP.md` (it travels with the
+  crate); wire-format fixtures: `fixtures/opds/`.
 - **chapbook-opds** — the binding, and the only part of the above that
   could not travel: `StreamedComic`, an OPDS-PSE stream presented as a
   `Publication` (one HTTP fetch per page through a 0-based `{pageNumber}`

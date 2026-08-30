@@ -3,7 +3,8 @@
 Design lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the rationale
 behind reading positions in [docs/LOCATORS.md](docs/LOCATORS.md) (the spec
 is `chapbook_core::locator`'s docs), the OPDS wire contract in
-[docs/OPDS-INTEROP.md](docs/OPDS-INTEROP.md), device porting in
+[crates/opds-client/INTEROP.md](crates/opds-client/INTEROP.md), device
+porting in
 [docs/PLATFORM.md](docs/PLATFORM.md), and driving the engine from a shell
 in [docs/SHELLS.md](docs/SHELLS.md). Read the relevant one before changing
 that subsystem — several of the constraints below are load-bearing in ways

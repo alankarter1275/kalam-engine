@@ -1,12 +1,12 @@
-# OPDS client interop requirements (M6)
+# OPDS client interop requirements
 
-What the OPDS client must handle to work against real catalogs. (It lives
-in `opds-client` now; `chapbook-opds` is the `Publication` binding over it.)
-Every behavior
+What this client must handle to work against real catalogs. Every behavior
 below is observed in servers in the wild (self-hosted catalog servers, comic
-servers, and library-lending stacks, surveyed Aug 2026); the fixture corpus in
-`fixtures/opds/` exercises each one — wire the fixtures into parser tests
-first, then verify against a live catalog.
+servers, and library-lending stacks, surveyed Aug 2026), and each one is
+asserted by the crate's tests: `tests/fixtures.rs` parses the wire-format
+corpus (`fixtures/opds/` at the workspace root, one fixture per quirk),
+`tests/injected_transport.rs` drives the flows over a scripted `HttpClient`,
+and `tests/live_server.rs` is the opt-in smoke against a real catalog.
 
 ## 0. Crate decision: atom_syndication cannot carry OPDS
 
@@ -17,10 +17,11 @@ the six fixed Atom fields. Foreign-namespace attributes on `<link>` —
 cannot be produced on write. Those attributes are where facets and page
 streaming live. `feed-rs` is worse (lossy normalized model).
 
-Requirement: parse feeds at the XML level with `quick-xml` (namespace-aware),
-at minimum for `<link>` elements. `atom_syndication` may be used for nothing
-more than incidental scaffolding, and only if link handling never touches it.
-Budget for full quick-xml parsing — the Atom subset OPDS uses is small.
+So feeds are parsed at the XML level with `quick-xml` (namespace-aware) —
+fully, not just for `<link>` elements; the Atom subset OPDS uses is small.
+`atom_syndication` appears nowhere, and the facet-attribute assertions in
+`tests/fixtures.rs` are the canary that keeps a lossy feed crate from
+creeping back in.
 
 ## 1. Version strategy
 
@@ -75,7 +76,7 @@ switch.
   slashes and dots; path-normalizing or splitting them breaks routing.
   `Content-Disposition` filenames on downloads can be garbage — sanitize.
 
-## 3. Page streaming (OPDS-PSE) — for the comic milestone
+## 3. Page streaming (OPDS-PSE)
 
 - Namespace `http://vaemendis.net/opds-pse/ns`; stream link rel
   `http://vaemendis.net/opds-pse/stream`.
@@ -132,14 +133,3 @@ auth headers — treat the catalog URL as an opaque secret-bearing string
   to a temp file, atomically rename on completion.
 - Follow redirects on acquisition links, including cross-host (covers and
   files may live on a CDN or object store).
-
-## 6. Test plan hooks
-
-- Parse every file in `fixtures/opds/` (see its README for what each covers);
-  golden-test against `pse-feed-golden.atom.xml` byte-exactly.
-- Validate our 2.0 parser corpus against `fixtures/opds/schema/` in tests.
-- Facet handling: assert `opds:activeFacet`/`thr:count`/`opds:facetGroup`
-  survive parsing (this is the atom_syndication trap — a regression here
-  means the wrong parser is in the loop).
-- Live smoke target: any OPDS 1.2+2.0 catalog; verify version negotiation,
-  pagination walk, complete-entry follow, and a download end-to-end.

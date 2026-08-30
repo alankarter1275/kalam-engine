@@ -1,7 +1,7 @@
 //! OPDS 1.2 Atom parsing — the canonical dialect — with namespace-aware
 //! quick-xml, preserving the foreign-namespace link attributes
 //! (`opds:facetGroup`, `opds:activeFacet`, `thr:count`, `pse:*`) that lossy
-//! feed crates drop (docs/OPDS-INTEROP.md §0).
+//! feed crates drop (the crate's INTEROP.md §0).
 
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::NamespaceResolver;

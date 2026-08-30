@@ -75,8 +75,8 @@
 //!   1-based, and stream links may be lazy — behind the complete-entry
 //!   `alternate` link rather than in the feed.
 //!
-//! The full contract, with the server survey behind it, is chapbook's
-//! `docs/OPDS-INTEROP.md`.
+//! The full contract, with the server survey behind it, is this crate's
+//! `INTEROP.md`.
 
 mod atom;
 mod client;
