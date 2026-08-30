@@ -348,6 +348,21 @@ fn cb_config_free_internal(config: *mut cb_config) {
 /// Close a session and release everything it holds. Passing null is a
 /// no-op. Every handle from a `cb_session_open_*` must reach this exactly
 /// once.
+///
+/// **This blocks until the session's background work has finished.** An
+/// image book loads its pages on a worker thread, and that thread holds
+/// the publication — and therefore any host transport, and therefore the
+/// host's own `user` context. Returning before it finished would hand a
+/// host back control while its context was still live on a thread it
+/// cannot see, and a host that then freed it — which is what the
+/// ownership rule invites — would be freeing memory a page fetch is still
+/// using.
+///
+/// So the wait is the contract, not an implementation detail: when this
+/// returns, every callback the host installed has been called for the
+/// last time and `finalize` has already run. The cost is that closing
+/// during a slow fetch takes as long as that fetch, which is why a shell
+/// tearing down in a hurry should prefer `cb_session_suspend`.
 #[no_mangle]
 pub unsafe extern "C" fn cb_session_close(session: *mut cb_session) {
     guard((), || {

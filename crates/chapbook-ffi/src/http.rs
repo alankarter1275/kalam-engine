@@ -235,6 +235,11 @@ pub unsafe extern "C" fn cb_http_response_fail(
 /// (a streamed comic fetches pages while the shell fetches a cover), so
 /// what `user` points at must tolerate both.
 ///
+/// They have all finished by the time [`cb_session_close`] returns, which
+/// is what makes "forget it" safe: a host may free whatever `user` pointed
+/// at as soon as `finalize` runs, and never has to wonder whether a
+/// loader thread is still inside a callback.
+///
 /// In a build without OPDS (`cb_capabilities()` lacks `CB_CAP_OPDS`)
 /// there is nothing to fetch and this reports
 /// `CB_ERR_FORMAT_NOT_BUILT` — after running `finalize`, keeping the

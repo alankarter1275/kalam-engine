@@ -44,10 +44,14 @@ pub(crate) struct DecodedUnit {
 pub(crate) type LoadResult = (usize, Result<DecodedUnit, String>);
 
 pub(crate) struct Loader {
-    tx: mpsc::Sender<usize>,
+    /// `None` only while [`Loader::drop`] is closing the channel to tell
+    /// the worker to finish.
+    tx: Option<mpsc::Sender<usize>>,
     rx: mpsc::Receiver<LoadResult>,
     /// Units requested and not yet drained from `rx`.
     pending: HashSet<usize>,
+    /// Kept, not detached — see [`Loader::drop`].
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Loader {
@@ -56,7 +60,7 @@ impl Loader {
     pub fn spawn(source: LoadSource, waker: Arc<dyn Fn() + Send + Sync>) -> Loader {
         let (tx, work_rx) = mpsc::channel::<usize>();
         let (result_tx, rx) = mpsc::channel::<LoadResult>();
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("chapbook-loader".into())
             .spawn(move || {
                 while let Ok(spine) = work_rx.recv() {
@@ -69,16 +73,18 @@ impl Loader {
             })
             .expect("spawn loader thread");
         Loader {
-            tx,
+            tx: Some(tx),
             rx,
             pending: HashSet::new(),
+            worker: Some(worker),
         }
     }
-
     /// Queue a unit if it isn't already in flight.
     pub fn request(&mut self, spine: usize) {
         if self.pending.insert(spine) {
-            let _ = self.tx.send(spine);
+            if let Some(tx) = &self.tx {
+                let _ = tx.send(spine);
+            }
         }
     }
 
@@ -93,6 +99,40 @@ impl Loader {
             self.pending.remove(spine);
         }
         results
+    }
+}
+
+impl Drop for Loader {
+    /// Wait for the worker to finish before the session is gone.
+    ///
+    /// The handle is kept rather than detached, and this is the reason.
+    /// The worker owns the [`LoadSource`], and for a streamed comic that
+    /// owns the HTTP transport — which for a host across the C ABI owns
+    /// the host's own context and calls its `finalize` when dropped.
+    /// Detached, the sequence was: close the session, return to the host,
+    /// and only *then* run the finalizer, on a thread the host cannot see.
+    /// A host that freed its context once `cb_session_close` returned —
+    /// which is what the header's wording invites — had a use-after-free,
+    /// and a page fetch could still be in flight through a transport it
+    /// had already torn down.
+    ///
+    /// It showed up first as a test failing about one run in five, which
+    /// is the only way this class of bug ever announces itself.
+    ///
+    /// The cost is real and worth stating: dropping a session blocks until
+    /// the current fetch finishes, which on a slow network is seconds.
+    /// That is the honest meaning of "closed" — the alternative is a host
+    /// that can never know when its own context is dead.
+    fn drop(&mut self) {
+        // Hang up first: the worker is parked in `recv`, and closing the
+        // channel is what wakes it. Joining before this deadlocks.
+        self.tx.take();
+        if let Some(worker) = self.worker.take() {
+            // A panicked worker has already released everything it owned,
+            // so there is nothing left to wait for and nothing to report
+            // that the panic itself did not.
+            let _ = worker.join();
+        }
     }
 }
 
