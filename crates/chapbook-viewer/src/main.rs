@@ -202,7 +202,19 @@ impl App {
 
 impl ApplicationHandler<()> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
-        if self.session.poll_loaded() {
+        let redraw = self.session.poll_loaded();
+        // `poll_loaded` answers "repaint?"; the events answer "and is
+        // there anything to tell the reader?". A page that will never
+        // arrive is the case a placeholder cannot express on its own.
+        for event in self.session.drain_events() {
+            if let chapbook_reader::SessionEvent::UnitFailed { spine, message } = event {
+                eprintln!(
+                    "chapbook-viewer: page {} will not load: {message}",
+                    spine + 1
+                );
+            }
+        }
+        if redraw {
             self.request_redraw();
         }
     }

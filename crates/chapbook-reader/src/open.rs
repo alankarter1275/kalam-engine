@@ -596,6 +596,15 @@ impl Session {
             #[cfg(feature = "_image-book")]
             load_errors: HashMap::new(),
             waker,
+            events: Vec::new(),
+            // Seeded with where the book actually opens, so the first
+            // drain reports a move only if one happened. A restored
+            // position resolves later, in `frame`, and is a real move.
+            reported_position: crate::Position {
+                spine: start_spine,
+                page: 0,
+            },
+            reported_finished: false,
             selection: None,
             #[cfg(feature = "library")]
             library,

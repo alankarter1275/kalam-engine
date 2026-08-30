@@ -20,3 +20,9 @@ chapbook-render-tinyskia = { workspace = true }
 # 4.16, for the AccessibleText interface (4.14) and its extents/offset
 # geometry (4.16), which is what puts the page in front of a screen reader.
 gtk4 = { version = "0.11", features = ["v4_16"] }
+# The wakeup, not a new dependency: both are already in the graph under
+# glib, which is what `spawn_future_local` runs on. A `Sender` is `Send`
+# and so can go to the loader thread; the receiving half is spawned on the
+# main context, where it may touch a session that is not.
+futures-channel = { workspace = true }
+futures-util = { workspace = true }

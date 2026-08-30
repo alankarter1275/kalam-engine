@@ -417,7 +417,14 @@ let proxy = event_loop.create_proxy();
 session.set_waker(move || { let _ = proxy.send_event(()); });
 
 // When woken:
-if session.poll_loaded() {
+let redraw = session.poll_loaded();
+for event in session.drain_events() {
+    match event {
+        SessionEvent::UnitFailed { spine, message } => show_error(spine, &message),
+        _ => {}
+    }
+}
+if redraw {
     request_redraw();
 }
 ```
@@ -433,7 +440,29 @@ installing a waker; a shell that does neither shows placeholders forever.
 
 The waker is called from the loader thread, so it must be `Send + Sync`
 and must not touch the session. Post an event; do the work on your own
-thread.
+thread. Only the *sender* has to cross threads, which is what lets a
+toolkit with no `Send` session still get a real wakeup — the GTK shell
+pushes down a channel from the waker and receives on the main context,
+where touching the session is fine. It used to poll on a 100ms timer for
+want of that.
+
+**`drain_events` is the other half of being woken.** `poll_loaded` answers
+"should I repaint"; `SessionEvent` answers "is there anything to tell the
+reader". Four of them:
+
+| | |
+|---|---|
+| `UnitFailed { spine, message }` | A page that will never arrive. The reader is looking at a placeholder that is not going to resolve, and this is the only way to say so — the failure is recorded internally so it is not retried every frame, and it used to stop there. `message` is for a person and is free to change; do not match on it. |
+| `UnitLoaded { spine }` | A background unit decoded, prefetches included — which `poll_loaded` deliberately does not report, because nothing visible moved. |
+| `PositionChanged { spine, page }` | Where the reader ended up, including moves you did not make: a restored position resolving after open, a load settling the page. What a progress UI and a sync client both want. |
+| `BookFinished` | The last page of the last unit, on the transition rather than on every drain, re-arming if they leave and come back. Whether that means "mark as read" is yours to decide. |
+
+It is a queue you drain, not a callback you install, because a `Session`
+is `Send` but not `Sync` and every mutation takes `&mut self` — a handler
+fired from inside those could not call back into the session, which is a
+rule a host would break. Turning ten pages between drains reports one
+`PositionChanged`, not ten: you asked where the reader is, not for a
+transcript.
 
 ## 7. Panels
 

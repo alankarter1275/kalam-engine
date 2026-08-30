@@ -315,19 +315,53 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
     }
 
     // ---- Background loads (comic/PDF pages) ----
-    // GTK's main context has no cheap cross-thread waker for a non-Send
-    // session; a 100ms poll is only live while the app runs and is a
-    // no-op channel check when nothing is loading.
+    //
+    // This used to be a 100ms timer, on the grounds that GTK's main
+    // context has no cheap cross-thread wakeup for a session that is not
+    // `Send`. The session does not have to be: only the *sender* crosses
+    // threads. The loader pushes an empty message, the receiving half runs
+    // on the main context through `spawn_future_local`, and there — on the
+    // thread that owns everything — it is free to touch the session and
+    // the widget.
+    //
+    // So the shell now sleeps when the book does, instead of waking ten
+    // times a second to ask a channel whether anything happened.
     {
+        let (wake_tx, mut wake_rx) = futures_channel::mpsc::unbounded::<()>();
+        session.borrow_mut().set_waker(move || {
+            // Failure means the receiver is gone, which means the window
+            // is closing. Nothing to do about it and nothing to say.
+            let _ = wake_tx.unbounded_send(());
+        });
+
         let session = session.clone();
         let area_weak = area.downgrade();
-        gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-            if session.borrow_mut().poll_loaded() {
-                if let Some(area) = area_weak.upgrade() {
-                    area.queue_draw();
+        gtk::glib::spawn_future_local(async move {
+            use futures_util::StreamExt;
+            while wake_rx.next().await.is_some() {
+                let mut session = session.borrow_mut();
+                let redraw = session.poll_loaded();
+                // The engine logs this failure too, and a harness with no
+                // error UI cannot do much better than say it twice. The
+                // point is which side is speaking: the engine's line goes
+                // to whoever installed a log backend, this one is the
+                // *shell* having been told, which is what a real one needs
+                // in order to put it on the page instead of in a terminal.
+                for event in session.drain_events() {
+                    if let chapbook_reader::SessionEvent::UnitFailed { spine, message } = event {
+                        eprintln!(
+                            "chapbook-viewer-gtk: page {} will not load: {message}",
+                            spine + 1
+                        );
+                    }
+                }
+                drop(session);
+                if redraw {
+                    if let Some(area) = area_weak.upgrade() {
+                        area.queue_draw();
+                    }
                 }
             }
-            gtk::glib::ControlFlow::Continue
         });
     }
 

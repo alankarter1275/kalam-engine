@@ -713,6 +713,8 @@ dependencies = [
  "chapbook-core",
  "chapbook-reader",
  "chapbook-render-tinyskia",
+ "futures-channel",
+ "futures-util",
  "gtk4",
 ]
 
