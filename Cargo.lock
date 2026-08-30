@@ -670,6 +670,7 @@ dependencies = [
  "cosmic-text",
  "image",
  "log",
+ "unicode-segmentation",
 ]
 
 [[package]]

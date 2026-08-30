@@ -89,6 +89,9 @@ cosmic-text = "0.19"
 # version must match cosmic-text's, and `sys-locale` is how it resolves the
 # host locale.
 unicode-script = "0.5"
+# UAX #29 word boundaries for the text surface (TTS word timing,
+# dictionary word-at-tap). Already in the tree via cosmic-text.
+unicode-segmentation = "1.12"
 sys-locale = "0.3"
 hyphenation = { version = "0.8", features = ["embed_en-us"] }
 tiny-skia = "0.12"

@@ -141,6 +141,54 @@ pub struct SearchHit {
     pub match_range: (u32, u32),
 }
 
+/// One run of the current page's text with its geometry — the material an
+/// accessibility tree, TTS, or a selection loupe is built from, and
+/// deliberately not the display list, which carries glyph indices and no
+/// text.
+///
+/// Rects are page space, CSS px; a shell drawing in a rotated panel maps
+/// them with [`chapbook_core::PageMetrics::page_to_panel`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextRun {
+    /// The line's text as shaped: whitespace collapsed, soft hyphens
+    /// stripped, generated marks (list markers, break hyphens) included —
+    /// so its char count is *not* the locator span's width.
+    pub text: String,
+    /// Bounding rect of the line, in page space.
+    pub rect: Rect,
+    /// Locator range `[start, end)` in the unit's locator space — feeds
+    /// [`Session::range_rects`], [`Session::select_range`], and
+    /// [`Session::goto`].
+    pub locator_start: u32,
+    pub locator_end: u32,
+}
+
+/// One word on the current page: where it sits in the speakable string
+/// and in locator space. A TTS engine reports progress as ranges into the
+/// string it was handed; the locator range is how that progress comes
+/// back to the page — feed it to [`Session::range_rects`] for the
+/// highlight, or [`Session::select_range`] for dictionary lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WordSpan {
+    /// Char range `[start, end)` within [`SpeakablePage::text`].
+    pub text_start: u32,
+    pub text_end: u32,
+    /// Locator range `[start, end)` in the unit's locator space.
+    pub locator_start: u32,
+    pub locator_end: u32,
+}
+
+/// The current page as a TTS engine wants it: one collapsed string, plus
+/// the word table that maps speech progress back into locator space.
+/// Punctuation is spoken but is nobody's word; whitespace collapses the
+/// way [`Session::selected_text`] collapses it, so the two agree.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpeakablePage {
+    pub text: String,
+    /// Words in reading order; ranges never overlap.
+    pub words: Vec<WordSpan>,
+}
+
 // Annotations are the library's: without a place to store them there
 // is nothing for these to describe. See the `library` feature.
 #[cfg(feature = "library")]
@@ -1792,6 +1840,154 @@ impl Session {
         layout.pages.get(page)?.offset_at(Point::new(x, y))
     }
 
+    // ---- The text surface ----
+
+    /// The current page's text runs in reading order — what an
+    /// accessibility tree, TTS, or a selection loupe consumes.
+    ///
+    /// `None` until the page is laid out; `Some` but empty for a laid-out
+    /// page with nothing to speak (a comic, an image-only page). One run
+    /// per visual line, PDF hidden-text lines included; runs with no text
+    /// (a formula whose publisher shipped no alttext) are skipped, since
+    /// there is nothing to read aloud for them.
+    ///
+    /// Reads only what is already laid out — never the loader thread — so
+    /// it is safe on the UI thread.
+    pub fn page_text_runs(&self) -> Option<Vec<TextRun>> {
+        let page = self.layouts.get(&self.spine)?.pages.get(self.page)?;
+        let mut runs = Vec::new();
+        for fragment in &page.fragments {
+            use chapbook_paint::FragmentKind;
+            let (line, contiguous) = match &fragment.kind {
+                FragmentKind::Line(line) => (line, false),
+                // PDF extracted lines are contiguous in their locator
+                // space, so text length is the span's exact width.
+                FragmentKind::HiddenText(line) => (line, true),
+                _ => continue,
+            };
+            if line.text.is_empty() {
+                continue;
+            }
+            let locator_end = if contiguous {
+                line.locator_start + line.text.chars().count() as u32
+            } else {
+                // Shaped text diverges from locator text (collapse, soft
+                // hyphens, generated marks), so the end comes from the
+                // glyphs. Generated glyphs repeat a neighbor's offset,
+                // which keeps the max inside the line's real range; a
+                // formula's atomic locator degenerates to one char, which
+                // is what "atomic" means.
+                line.runs
+                    .iter()
+                    .flat_map(|run| run.glyphs.iter())
+                    .map(|glyph| glyph.locator + 1)
+                    .max()
+                    .map_or(line.locator_start, |end| end.max(line.locator_start))
+            };
+            runs.push(TextRun {
+                text: line.text.clone(),
+                rect: fragment.rect,
+                locator_start: line.locator_start,
+                locator_end,
+            });
+        }
+        Some(runs)
+    }
+
+    /// Page-space rects covering a locator range on the current page — one
+    /// per line the range touches. Empty when the page is not laid out or
+    /// the range lies elsewhere. The geometry TTS word highlighting and an
+    /// accessibility tree ask for; map with
+    /// [`chapbook_core::PageMetrics::page_to_panel`] under rotation.
+    pub fn range_rects(&self, start: u32, end: u32) -> Vec<Rect> {
+        self.layouts
+            .get(&self.spine)
+            .and_then(|layout| layout.pages.get(self.page))
+            .map(|page| page.rects_for_range(start, end))
+            .unwrap_or_default()
+    }
+
+    /// The current page as a TTS engine wants it: one collapsed string
+    /// plus the word table mapping speech progress back to locator space.
+    ///
+    /// Words are segmented in locator space — the space every offset here
+    /// already lives in — so a span's locator range feeds
+    /// [`Session::range_rects`] and [`Session::select_range`] directly.
+    /// `None` until the page is laid out; empty for a page with nothing to
+    /// speak.
+    pub fn speakable_page(&self) -> Option<SpeakablePage> {
+        let layout = self.layouts.get(&self.spine)?;
+        let current = layout.pages.get(self.page)?;
+        let mut page = SpeakablePage::default();
+        let (mut out_len, mut pending_space) = (0u32, false);
+        match self.book.publication().kind() {
+            BookKind::Epub => {
+                let unit = self.cached_unit_text(self.spine)?;
+                let start = *layout.char_map.get(self.page)? as usize;
+                let end = layout
+                    .char_map
+                    .get(self.page + 1)
+                    .map(|&e| e as usize)
+                    .unwrap_or_else(|| unit.chars().count());
+                let slice: String = unit
+                    .chars()
+                    .skip(start)
+                    .take(end.saturating_sub(start))
+                    .collect();
+                append_speakable(
+                    &slice,
+                    start as u32,
+                    &mut page,
+                    &mut out_len,
+                    &mut pending_space,
+                );
+            }
+            BookKind::Pdf => {
+                // Extracted lines are the PDF's whole text surface, and
+                // each line knows its own locator start.
+                for fragment in &current.fragments {
+                    let chapbook_paint::FragmentKind::HiddenText(line) = &fragment.kind else {
+                        continue;
+                    };
+                    if out_len > 0 {
+                        pending_space = true;
+                    }
+                    append_speakable(
+                        &line.text,
+                        line.locator_start,
+                        &mut page,
+                        &mut out_len,
+                        &mut pending_space,
+                    );
+                }
+            }
+            BookKind::Comic => {}
+        }
+        Some(page)
+    }
+
+    /// The word under a point in panel coordinates, as a locator range —
+    /// dictionary lookup's question. `None` off text, and on whitespace or
+    /// bare punctuation: a tap on a comma looks nothing up.
+    pub fn word_at(&mut self, x: f32, y: f32) -> Option<(u32, u32)> {
+        let offset = self.offset_at(x, y)?;
+        let page = self.speakable_page()?;
+        page.words
+            .iter()
+            .find(|word| word.locator_start <= offset && offset < word.locator_end)
+            .map(|word| (word.locator_start, word.locator_end))
+    }
+
+    /// Select the word under a point — the word-boundary tap a dictionary
+    /// popup starts from. Returns whether a word was there.
+    pub fn select_word_at(&mut self, x: f32, y: f32) -> bool {
+        let Some((start, end)) = self.word_at(x, y) else {
+            return false;
+        };
+        self.select_range(start, end);
+        true
+    }
+
     // ---- Highlights ----
 
     /// Persist the current selection as a highlight and return its library
@@ -3005,6 +3201,59 @@ fn push_hidden_text(
             }),
             tag: 0,
         });
+    }
+}
+
+/// Append one stretch of locator text to a speakable page under
+/// construction. The string and the word table come out of the same pass,
+/// so the whitespace collapse can never disagree with the spans: runs of
+/// ASCII whitespace become one space (a non-breaking space is content and
+/// survives, as in [`Session::selected_text`]); soft hyphens drop from
+/// the spoken text while the span keeps their locator positions; a
+/// segment carrying an alphanumeric becomes a [`WordSpan`], and bare
+/// punctuation is spoken but is nobody's word.
+///
+/// `out_len` is the running char count of `page.text` and `pending_space`
+/// the collapse state, both owned by the caller so multiple stretches (a
+/// PDF's extracted lines) build one page.
+fn append_speakable(
+    slice: &str,
+    locator_base: u32,
+    page: &mut SpeakablePage,
+    out_len: &mut u32,
+    pending_space: &mut bool,
+) {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut offset = locator_base;
+    for segment in slice.split_word_bounds() {
+        let segment_chars = segment.chars().count() as u32;
+        if segment.chars().all(|c| c.is_ascii_whitespace()) {
+            // Collapse runs, and never lead with one.
+            *pending_space = *out_len > 0;
+            offset += segment_chars;
+            continue;
+        }
+        if *pending_space {
+            page.text.push(' ');
+            *out_len += 1;
+            *pending_space = false;
+        }
+        let text_start = *out_len;
+        for c in segment.chars() {
+            if c != '\u{AD}' {
+                page.text.push(c);
+                *out_len += 1;
+            }
+        }
+        if *out_len > text_start && segment.chars().any(char::is_alphanumeric) {
+            page.words.push(WordSpan {
+                text_start,
+                text_end: *out_len,
+                locator_start: offset,
+                locator_end: offset + segment_chars,
+            });
+        }
+        offset += segment_chars;
     }
 }
 

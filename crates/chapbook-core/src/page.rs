@@ -211,6 +211,20 @@ impl PageMetrics {
         }
     }
 
+    /// Map a point from page space out to panel coordinates — the inverse
+    /// of [`PageMetrics::panel_to_page`], for handing page-space geometry
+    /// (text-run rects, highlight rects) to a shell that draws in panel
+    /// space. Identity when unrotated.
+    pub fn page_to_panel(&self, x: f32, y: f32) -> (f32, f32) {
+        let (w, h) = (self.size.w, self.size.h);
+        match self.rotation {
+            Rotation::None => (x, y),
+            Rotation::Quarter => (h - y, x),
+            Rotation::Half => (w - x, h - y),
+            Rotation::ThreeQuarter => (y, w - x),
+        }
+    }
+
     /// Whether two metrics describe the same layout, differing at most in
     /// how the result is turned for the panel. A rotation alone doesn't
     /// reflow anything.
@@ -283,5 +297,28 @@ impl ReadingSettings {
         self.publisher_styles.hash(&mut h);
         self.theme.hash(&mut h);
         h.finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_to_panel_inverts_panel_to_page() {
+        let base = PageMetrics::new(Size::new(600.0, 800.0), EdgeSizes::uniform(40.0), 1.0);
+        for rotation in [
+            Rotation::None,
+            Rotation::Quarter,
+            Rotation::Half,
+            Rotation::ThreeQuarter,
+        ] {
+            let metrics = base.with_rotation(rotation);
+            for (x, y) in [(0.0, 0.0), (600.0, 800.0), (123.5, 456.25)] {
+                let (px, py) = metrics.page_to_panel(x, y);
+                let (rx, ry) = metrics.panel_to_page(px, py);
+                assert_eq!((rx, ry), (x, y), "round trip under {rotation:?}");
+            }
+        }
     }
 }
