@@ -1,12 +1,16 @@
 # OPDS client interop requirements
 
 What this client must handle to work against real catalogs. Every behavior
-below is observed in servers in the wild (self-hosted catalog servers, comic
-servers, and library-lending stacks, surveyed Aug 2026), and each one is
-asserted by the crate's tests: `tests/fixtures.rs` parses the wire-format
+in §§0–5 is observed in servers in the wild (self-hosted catalog servers,
+comic servers, and library-lending stacks, surveyed Aug 2026), and each one
+is asserted by the crate's tests: `tests/fixtures.rs` parses the wire-format
 corpus (`fixtures/opds/` at the workspace root, one fixture per quirk),
 `tests/injected_transport.rs` drives the flows over a scripted `HttpClient`,
 and `tests/live_server.rs` is the opt-in smoke against a real catalog.
+
+§6 is the exception and says so: it is written from an unreleased draft
+rather than from a survey, which is why it is behind a feature and why its
+tests (`tests/progression.rs`) quote the draft's examples verbatim.
 
 ## 0. Crate decision: atom_syndication cannot carry OPDS
 
@@ -133,3 +137,56 @@ auth headers — treat the catalog URL as an opaque secret-bearing string
   to a temp file, atomically rename on completion.
 - Follow redirects on acquisition links, including cross-host (covers and
   files may live on a CDN or object store).
+
+## 6. Position sync (OPDS Progression 1.0) — behind a feature
+
+Everything above is observed behavior of shipping servers. This section is
+not: **Progression 1.0 is an unreleased draft**, published at
+`drafts.opds.io` and absent from `specs.opds.io`, which lists only OPDS
+2.0, 1.2, 1.1, 1.0 and 0.9 as released. So the implementation sits behind
+the non-default `progression` feature, and the gate is about *surface*, not
+size — the feature adds no dependencies. Turning it on is a caller
+accepting that these types may move when the draft does. The tests copy the
+draft's own examples verbatim, so a revision shows up as a failure rather
+than as drift.
+
+For the same reason, no server survey backs this section: it is written
+from the spec, and the first real service to speak it may well move things
+here. What the code commits to:
+
+- **The service URL is the publication's identity.** A progression service
+  is per publication, discovered from a link with
+  `rel="http://opds-spec.org/progression"` and type
+  `application/opds-progression+json` — in either dialect, on an Atom entry
+  or on an OPDS 2.0 publication document. Nothing in the document names the
+  publication, so a client that wants to sync must persist the URL it found
+  alongside the book. A book that arrived any other way — sideloaded,
+  adopted from bytes — has no service to talk to.
+- **Empty is an answer.** A successful `GET` may return 200 with an empty
+  body, meaning "nothing recorded yet". Treating that as a parse failure
+  would turn the ordinary first-sync case into an error, so
+  `fetch_progression` returns `Option`, and a whitespace-only body counts
+  as empty.
+- **`PUT` offers, the server decides.** 200/201 return the service's
+  resulting document, which is authoritative over what was sent. The four
+  documented failure codes (400, two 403s, 409) are *refusals*, not
+  errors: two devices reading one book race routinely, so they come back as
+  a value the caller must handle. Anything else non-2xx — a 404 at a dead
+  URL, a 5xx — is an error.
+- **The two 403s are only separable by RFC 7807 Problem Details.** The
+  draft gives `progression-incorrect-user` and `progression-locked` the
+  same status and distinguishes them by the `type` URI. A server that sends
+  no problem document is therefore classified `Unknown`, which is the
+  truthful answer; do not guess between "wrong user" and "stop asking".
+- **Conflict resolution is not specified.** A 409 says the service holds
+  something more recent and says nothing about who should win. That policy
+  belongs to whatever binds this to a library, not here.
+- **401 behaves like everywhere else** in this crate: the Authentication
+  Document surfaces through `OpdsError::AuthRequired`, so §4's flow covers
+  progression with no special case. The draft's `properties.authenticate`
+  link hint, which would save a round-trip, is deliberately not modelled —
+  it would mean putting draft-shaped fields on the ungated `Link`.
+- **`PUT` is the crate's only write.** It arrives as `HttpClient::put`,
+  gated on the same feature, with a default that refuses rather than
+  silently dropping the body — a write that vanishes looks to a reader
+  exactly like a position that syncs and never persists.

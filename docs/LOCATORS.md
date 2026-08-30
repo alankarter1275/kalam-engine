@@ -47,7 +47,9 @@ this design should stay compatible with, so sync later is serialization, not
 redesign:
 
 - **OPDS Progression 1.0** (draft): `progression` = book_progression;
-  `references` = `spine_href#:~:text=prefix-,exact,-suffix`.
+  `references` = `spine_href#:~:text=prefix-,exact,-suffix`. The client
+  for it is `opds_client::progression`, behind a feature while the draft
+  is unreleased; the mapping above is still the mapping, unwritten.
 - **Readium locators / Readium Annotations** (W3C Web Annotation profile;
   Thorium imports/exports it): `href`/`locations.progression`/
   `locations.totalProgression`/`text.before|highlight|after` map directly.

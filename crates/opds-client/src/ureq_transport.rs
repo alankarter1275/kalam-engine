@@ -50,20 +50,33 @@ impl HttpClient for UreqHttp {
         for (name, value) in &request.headers {
             call = call.header(name, value);
         }
-        let response = call.call().map_err(HttpError::new)?;
-        let status = response.status().as_u16();
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string);
-        // `into_body().into_reader()` rather than a borrowed reader: the
-        // body outlives this function inside `HttpResponse`.
-        let body: Box<dyn Read + Send> = Box::new(response.into_body().into_reader());
-        Ok(HttpResponse {
-            status,
-            content_type,
-            body,
-        })
+        convert(call.call().map_err(HttpError::new)?)
     }
+
+    #[cfg(feature = "progression")]
+    fn put(&self, request: HttpRequest, body: Vec<u8>) -> Result<HttpResponse, HttpError> {
+        let mut call = self.agent.put(&request.url);
+        for (name, value) in &request.headers {
+            call = call.header(name, value);
+        }
+        convert(call.send(&body[..]).map_err(HttpError::new)?)
+    }
+}
+
+/// One ureq response to the trait's shape.
+fn convert(response: ureq::http::Response<ureq::Body>) -> Result<HttpResponse, HttpError> {
+    let status = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    // `into_body().into_reader()` rather than a borrowed reader: the body
+    // outlives this function inside `HttpResponse`.
+    let body: Box<dyn Read + Send> = Box::new(response.into_body().into_reader());
+    Ok(HttpResponse {
+        status,
+        content_type,
+        body,
+    })
 }

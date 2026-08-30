@@ -19,7 +19,9 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-/// One outgoing request. GET is the only method OPDS browsing needs.
+/// One outgoing request. GET is the only method catalog browsing needs;
+/// the optional `progression` feature adds [`HttpClient::put`], which sends
+/// one of these with a body.
 ///
 /// Owned rather than borrowed on purpose: an implementation is as likely to
 /// be a thin shim over a foreign runtime — `URLSession`, OkHttp, `fetch` —
@@ -143,6 +145,27 @@ pub trait HttpClient: Send + Sync {
         })?;
         Ok(response.status)
     }
+
+    /// Send `body` with `PUT`, returning the response — added by the
+    /// `progression` feature, the only flow in this crate that writes.
+    ///
+    /// The default refuses rather than pretending to succeed. Unlike
+    /// [`download`](HttpClient::download), this cannot be built out of
+    /// [`get`](HttpClient::get), and a transport that silently dropped the
+    /// write would look to a caller exactly like a reader whose position
+    /// syncs and is never stored. Existing transports keep compiling and
+    /// report the truth: they do not do this.
+    ///
+    /// An implementation must send the headers as given — the caller has
+    /// already set `Content-Type` and `Accept` — and must return 4xx as
+    /// responses, since the whole protocol is carried in 400/403/409.
+    #[cfg(feature = "progression")]
+    fn put(&self, request: HttpRequest, body: Vec<u8>) -> Result<HttpResponse, HttpError> {
+        let _ = (request, body);
+        Err(HttpError::new(
+            "this HttpClient does not implement PUT, which OPDS progression requires",
+        ))
+    }
 }
 
 /// A shared transport is a transport.
@@ -161,5 +184,10 @@ impl<T: HttpClient + ?Sized> HttpClient for Arc<T> {
 
     fn download(&self, request: HttpRequest, dest: &Path) -> Result<u16, HttpError> {
         (**self).download(request, dest)
+    }
+
+    #[cfg(feature = "progression")]
+    fn put(&self, request: HttpRequest, body: Vec<u8>) -> Result<HttpResponse, HttpError> {
+        (**self).put(request, body)
     }
 }
