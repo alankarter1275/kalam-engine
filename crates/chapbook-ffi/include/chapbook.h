@@ -504,9 +504,110 @@ typedef struct cb_config cb_config;
 typedef struct cb_font_source cb_font_source;
 
 /**
+ * The response under construction. Opaque; the engine hands one to the
+ * callback, the callback feeds it through `cb_http_response_*`, and it
+ * is dead when the callback returns.
+ */
+typedef struct cb_http_response cb_http_response;
+
+/**
  * An open book. Opaque.
  */
 typedef struct cb_session cb_session;
+
+/**
+ * One request header, borrowed for the duration of the callback.
+ */
+typedef struct cb_http_header {
+    /**
+     * NUL-terminated, valid for the call only.
+     */
+    const char *name;
+    /**
+     * NUL-terminated, valid for the call only.
+     */
+    const char *value;
+} cb_http_header;
+
+/**
+ * One outgoing GET — the only method catalog browsing needs.
+ *
+ * Everything in it is borrowed and dies when the callback returns; a
+ * host that fetches asynchronously must copy first.
+ */
+typedef struct cb_http_request {
+    /**
+     * NUL-terminated, absolute, `http://` or `https://`.
+     */
+    const char *url;
+    /**
+     * `header_count` entries, or null when there are none. Send them
+     * exactly as given: `Accept` carries one media type and no q-value
+     * because real catalog servers negotiate by naive substring match,
+     * and a transport that rewrites or merges headers breaks them.
+     */
+    const struct cb_http_header *headers;
+    size_t header_count;
+} cb_http_request;
+
+/**
+ * Performs one blocking GET.
+ *
+ * Before returning, the callback must either report a response —
+ * [`cb_http_response_set_status`], then optionally
+ * [`cb_http_response_set_content_type`] and
+ * [`cb_http_response_append_body`] — or report that the request never
+ * produced one with [`cb_http_response_fail`]. Returning with neither is
+ * reported to the reader as a transport bug, by name.
+ *
+ * The contract is `HttpClient`'s, and each rule exists because a real
+ * catalog server depends on it:
+ *
+ * - **4xx and 5xx are responses, not failures.** A 401's body is the
+ *   OPDS Authentication Document — what lets a shell put up a native
+ *   login instead of a generic error. `cb_http_response_fail` is only
+ *   for a request that produced no response at all.
+ * - **Follow redirects, including cross-host ones** — catalogs relocate
+ *   acquisitions onto CDNs.
+ * - **Send the given headers unaltered.**
+ * - **Do not retry.** Auth retry is the engine's flow, one level up.
+ *
+ * **It may fire on any thread**, including the engine's loader thread,
+ * and must block until the transfer settles. It must not call back into
+ * this ABI — the `cb_http_response_*` builders being the stated
+ * exception, made from inside the callback on the response it was
+ * handed.
+ */
+typedef void (*cb_http_get_fn)(const struct cb_http_request *request,
+                               struct cb_http_response *response,
+                               void *user);
+
+/**
+ * Fetches straight to a file — optional, for a host that owns a download
+ * facility worth having (an iOS background `URLSession`, Android's
+ * WorkManager, both of which continue a transfer after the process is
+ * suspended). Null means the engine streams through the get callback and
+ * writes the file itself.
+ *
+ * The promise an implementation must keep: `dest` either ends up
+ * complete or is not created — no partial file under the final name. On
+ * a non-2xx status, report the status and write nothing. Report the
+ * status with [`cb_http_response_set_status`]; the body builders are
+ * ignored here, the bytes belong in `dest`.
+ */
+typedef void (*cb_http_download_fn)(const struct cb_http_request *request,
+                                    const char *dest,
+                                    struct cb_http_response *response,
+                                    void *user);
+
+/**
+ * Releases whatever `user` points at, once, when the transport is
+ * dropped — the config freed unopened, or the last session holding it
+ * closed. This is what lets a host hand over a reference-counted object
+ * (a Swift class instance, a JNI global ref) without guessing at the
+ * engine's lifetimes.
+ */
+typedef void (*cb_http_finalize_fn)(void *user);
 
 /**
  * Receives one diagnostic.
@@ -747,6 +848,62 @@ cb_status cb_config_set_cache_budget(struct cb_config *config, size_t bytes);
 void cb_config_free(struct cb_config *config);
 
 /**
+ * The status the server actually answered with, 4xx and 5xx included.
+ */
+cb_status cb_http_response_set_status(struct cb_http_response *response, uint16_t status);
+
+/**
+ * The `Content-Type` header, verbatim, parameters and all. Skip the call
+ * when the server sent none. This value is authoritative over whatever
+ * the request asked for or a catalog link advertised.
+ */
+cb_status cb_http_response_set_content_type(struct cb_http_response *response,
+                                            const char *content_type);
+
+/**
+ * Append body bytes, in order; call as many times as chunks arrive. The
+ * bytes are copied.
+ */
+cb_status cb_http_response_append_body(struct cb_http_response *response,
+                                       const uint8_t *bytes,
+                                       size_t len);
+
+/**
+ * The request never produced a response: DNS failed, the connection
+ * dropped, TLS would not verify. `message` reaches the reader through
+ * the open error, so make it a sentence — the platform error's own
+ * description is usually right.
+ *
+ * Not for 4xx or 5xx, which are responses; see [`cb_http_get_fn`].
+ */
+cb_status cb_http_response_fail(struct cb_http_response *response, const char *message);
+
+/**
+ * Fetch through the host's networking instead of the bundled transport.
+ *
+ * `get` is required; `download` and `finalize` may be null. `user` is
+ * handed back to every callback untouched. **The transport owns `user`
+ * from this call on**: `finalize` runs exactly once — when the config is
+ * freed unopened, when the last session holding the transport closes,
+ * or before this call returns a failure — so a host can hand over a
+ * retained object and forget it.
+ *
+ * The callbacks may fire on any thread and two may be in flight at once
+ * (a streamed comic fetches pages while the shell fetches a cover), so
+ * what `user` points at must tolerate both.
+ *
+ * In a build without OPDS (`cb_capabilities()` lacks `CB_CAP_OPDS`)
+ * there is nothing to fetch and this reports
+ * `CB_ERR_FORMAT_NOT_BUILT` — after running `finalize`, keeping the
+ * ownership rule true.
+ */
+cb_status cb_config_set_http_transport(struct cb_config *config,
+                                       cb_http_get_fn get,
+                                       cb_http_download_fn download,
+                                       cb_http_finalize_fn finalize,
+                                       void *user);
+
+/**
  * Which edge the open book reads from.
  */
 cb_status cb_session_reading_direction(const struct cb_session *session,
@@ -911,6 +1068,27 @@ struct cb_session *cb_session_open_bytes(const uint8_t *bytes,
  * has no analogue worth guessing at from here.
  */
 struct cb_session *cb_session_open_fd(int32_t fd, cb_format format, struct cb_config *config);
+
+/**
+ * Open an OPDS catalog URL as a streamed book. **Consumes `config`.**
+ *
+ * The URL names a catalog feed or entry whose page-streaming link
+ * (`vaemendis.net/opds-pse`) becomes the book; every page is fetched on
+ * demand and cached under the library directory, so the config **must**
+ * name one — without it there is nowhere for pages to land and the open
+ * fails saying so.
+ *
+ * Fetching goes through the config's transport: the one injected with
+ * [`cb_config_set_http_transport`](crate::cb_config_set_http_transport),
+ * or the bundled one when the build has it (`CB_CAP_BUNDLED_HTTP`). With
+ * neither, the open fails with a message naming the missing piece. A
+ * build without OPDS (`CB_CAP_OPDS`) reports `CB_ERR_FORMAT_NOT_BUILT`.
+ *
+ * A 401 surfaces as an auth failure carrying the server's Authentication
+ * Document in the error message, so a shell can put up a real login; the
+ * credential store on the config is what answers it.
+ */
+struct cb_session *cb_session_open_url(const char *url, struct cb_config *config);
 
 /**
  * Close a session and release everything it holds. Passing null is a

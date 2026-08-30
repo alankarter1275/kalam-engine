@@ -35,6 +35,14 @@ public enum BookSource {
     /// ultimately becomes. **The session takes ownership** and closes it
     /// with the session, so hand over a descriptor nothing else will use.
     case fileDescriptor(Int32, format: BookFormat = .guess)
+
+    /// An OPDS catalog URL, resolved to a page stream: every page is
+    /// fetched on demand through the configuration's [`HTTPTransport`]
+    /// and cached under its library directory — which the configuration
+    /// **must** name, or the open fails saying so. Opening one is
+    /// synchronous network, so construct catalog sessions off the main
+    /// actor.
+    case catalog(URL)
 }
 
 /// The custody flow around the document picker, as free functions the

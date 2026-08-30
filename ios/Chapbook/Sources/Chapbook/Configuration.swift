@@ -65,14 +65,21 @@ public struct SessionConfiguration: Sendable {
     /// [`Session.releaseCaches()`].
     public var cacheBudgetBytes: Int?
 
+    /// How catalogs and streamed pages are fetched. The default is
+    /// per-platform — `URLSession.shared` on iOS, the engine's bundled
+    /// transport on macOS; see [`HTTPTransport`].
+    public var transport: HTTPTransport
+
     public init(
         fonts: FontSource,
         libraryDirectory: URL? = nil,
-        cacheBudgetBytes: Int? = nil
+        cacheBudgetBytes: Int? = nil,
+        transport: HTTPTransport = .platformDefault
     ) {
         self.fonts = fonts
         self.libraryDirectory = libraryDirectory
         self.cacheBudgetBytes = cacheBudgetBytes
+        self.transport = transport
     }
 
     /// Build the C-side config, consuming a fresh font source. The result
@@ -90,6 +97,7 @@ public struct SessionConfiguration: Sendable {
             if let budget = cacheBudgetBytes {
                 try check(cb_config_set_cache_budget(config, budget))
             }
+            try transport.install(into: config)
         } catch {
             cb_config_free(config)
             throw error

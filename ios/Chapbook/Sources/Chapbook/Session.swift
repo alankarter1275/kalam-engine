@@ -37,6 +37,8 @@ public final class Session {
                 }
             case .fileDescriptor(let fd, let format):
                 cb_session_open_fd(fd, format.rawValue, config)
+            case .catalog(let url):
+                cb_session_open_url(url.absoluteString, config)
             }
         guard let session else { throw ChapbookError.openFailure() }
         raw = session
