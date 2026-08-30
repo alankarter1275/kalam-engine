@@ -2,7 +2,8 @@
 //! and the layout text-order property tests.
 //!
 //! NOT the offset space for `Locator::char_offset` — that is the raw,
-//! versioned locator text in [`super::locator_text`] (see `docs/LOCATORS.md`).
+//! versioned locator text in [`super::locator_text`] (spec:
+//! `chapbook_core::locator`'s module docs).
 //! This output collapses whitespace and adds block separators, and is free to
 //! evolve without shifting stored positions.
 

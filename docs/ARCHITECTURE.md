@@ -71,8 +71,9 @@ stays that way.
   format-neutral book model (`Publication`, `BookMetadata`, `SpineItem`,
   `TocEntry`), and `Locator { spine_index, char_offset }` plus the layered,
   versioned persistence record (`LayeredLocator`: quote context, spine
-  fraction, whole-book progression) and its resolve chain — see
-  `docs/LOCATORS.md`. `char_offset` indexes the *raw locator text*
+  fraction, whole-book progression) and its resolve chain — spec in
+  `chapbook_core::locator`'s module docs, rationale in `docs/LOCATORS.md`.
+  `char_offset` indexes the *raw locator text*
   (`chapbook_layout::dom::locator_text`, versioned by `LOCATOR_VERSION`),
   not the
   collapsed display text. Also the panel update seam: the `Panel` trait

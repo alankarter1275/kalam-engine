@@ -2,7 +2,7 @@
 //! behind every persisted reading position and annotation.
 //!
 //! If a snapshot here changes, stored offsets shift for every user: per
-//! `docs/LOCATORS.md` and `chapbook_core::locator`, that requires bumping
+//! `chapbook_core::locator`'s module docs, that requires bumping
 //! `chapbook_core::LOCATOR_VERSION` in the same change. Do not casually
 //! `cargo insta accept` this file.
 
