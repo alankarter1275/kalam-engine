@@ -292,6 +292,50 @@ pub unsafe extern "C" fn cb_session_open_fd(
     })
 }
 
+/// Open an OPDS catalog URL as a streamed book. **Consumes `config`.**
+///
+/// The URL names a catalog feed or entry whose page-streaming link
+/// (`vaemendis.net/opds-pse`) becomes the book; every page is fetched on
+/// demand and cached under the library directory, so the config **must**
+/// name one — without it there is nowhere for pages to land and the open
+/// fails saying so.
+///
+/// Fetching goes through the config's transport: the one injected with
+/// [`cb_config_set_http_transport`](crate::cb_config_set_http_transport),
+/// or the bundled one when the build has it (`CB_CAP_BUNDLED_HTTP`). With
+/// neither, the open fails with a message naming the missing piece. A
+/// build without OPDS (`CB_CAP_OPDS`) reports `CB_ERR_FORMAT_NOT_BUILT`.
+///
+/// A 401 surfaces as an auth failure carrying the server's Authentication
+/// Document in the error message, so a shell can put up a real login; the
+/// credential store on the config is what answers it.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_open_url(
+    url: *const c_char,
+    config: *mut cb_config,
+) -> *mut cb_session {
+    guard(std::ptr::null_mut(), || {
+        // SAFETY: the header's contract.
+        let Some(url) = (unsafe { str_in(url, "url") }) else {
+            cb_config_free_internal(config);
+            return std::ptr::null_mut();
+        };
+        // `Source` sniffs the scheme itself, but a session opened from a
+        // typo would fall back to "no such file", which points the caller
+        // at the wrong problem.
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            fail(
+                cb_status::CB_ERR_INVALID_ARGUMENT,
+                "url must be http:// or https://; local books open through \
+                 cb_session_open_path",
+            );
+            cb_config_free_internal(config);
+            return std::ptr::null_mut();
+        }
+        open_with(Source::Url(url.into()), config)
+    })
+}
+
 /// Free a config the caller handed us on a path that failed before
 /// `open_with` could consume it. Keeps "consumes `config` either way" true.
 fn cb_config_free_internal(config: *mut cb_config) {

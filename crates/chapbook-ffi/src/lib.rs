@@ -99,6 +99,7 @@
 mod abi;
 mod config;
 mod error;
+mod http;
 mod input;
 mod logging;
 mod session;
@@ -110,6 +111,11 @@ pub use config::{
     cb_font_source_host, cb_font_source_set_generics,
 };
 pub use error::cb_status;
+pub use http::{
+    cb_config_set_http_transport, cb_http_download_fn, cb_http_finalize_fn, cb_http_get_fn,
+    cb_http_header, cb_http_request, cb_http_response, cb_http_response_append_body,
+    cb_http_response_fail, cb_http_response_set_content_type, cb_http_response_set_status,
+};
 pub use input::{
     cb_action, cb_action_outcome, cb_char_default_action, cb_key, cb_key_default_action,
     cb_reading_direction, cb_session_apply, cb_session_reading_direction, cb_session_set_tap_zones,
