@@ -81,6 +81,7 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
     {
         let session = session.clone();
         let window = window.downgrade();
+        let page_weak = area.downgrade();
         area.set_draw_func(move |area, ctx, width, height| {
             if width <= 0 || height <= 0 {
                 return;
@@ -128,6 +129,17 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             ctx.scale(1.0 / scale as f64, 1.0 / scale as f64);
             let _ = ctx.set_source_surface(&surface, 0.0, 0.0);
             let _ = ctx.paint();
+
+            // Every content change funnels through a draw, so this is the
+            // one place assistive technology needs to be told — from an
+            // idle rather than inside the draw vfunc, and page_changed
+            // itself no-ops unless the page's text actually moved.
+            let page = page_weak.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(page) = page.upgrade() {
+                    page.page_changed();
+                }
+            });
         });
     }
 
@@ -188,9 +200,6 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             if outcome.needs_redraw() {
                 if let Some(area) = area.upgrade() {
                     area.queue_draw();
-                    // A turn or a reflow replaced the page's text; the
-                    // screen reader only knows if it is told.
-                    area.page_changed();
                 }
             }
             // The other half. GTK's propagation flag is the same bit
@@ -238,7 +247,6 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                         drop(s);
                         if let Some(area) = area_weak.upgrade() {
                             area.queue_draw();
-                            area.page_changed();
                         }
                         return;
                     }
@@ -299,7 +307,6 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                 if outcome.needs_redraw() {
                     if let Some(area) = area_weak.upgrade() {
                         area.queue_draw();
-                        area.page_changed();
                     }
                 }
             });
@@ -318,7 +325,6 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             if session.borrow_mut().poll_loaded() {
                 if let Some(area) = area_weak.upgrade() {
                     area.queue_draw();
-                    area.page_changed();
                 }
             }
             gtk::glib::ControlFlow::Continue
@@ -335,6 +341,9 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
     }
 
     window.present();
+    // Focus the page, not the window shell around it: a screen reader
+    // speaks the focused object, and the page is the object with text.
+    area.grab_focus();
 }
 
 /// A GDK keyval name in the engine's key vocabulary, or `None` for a key

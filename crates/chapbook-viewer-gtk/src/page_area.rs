@@ -15,7 +15,7 @@
 //! widget coordinates; this shell paints at 1/scale and never rotates, so
 //! page space and logical widget space are the same thing.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::glib;
@@ -35,26 +35,44 @@ impl PageArea {
     pub fn new(session: Rc<RefCell<Session>>) -> Self {
         let area: Self = glib::Object::builder()
             .property("accessible-role", gtk::AccessibleRole::Paragraph)
+            // Focusable, so the screen reader's locus of focus is the
+            // text object and not the empty window around it — Orca
+            // speaks what is focused, and an unfocusable canvas is
+            // silence no matter what its Text interface says.
+            .property("focusable", true)
             .build();
         area.imp().session.replace(Some(session));
         area
     }
 
-    /// Tell assistive technology the page's text changed wholesale — a
-    /// page turn, a relayout, a background load landing. AT has no other
-    /// way to know: it caches what `contents` last said.
+    /// Tell assistive technology when the page's text has actually
+    /// changed — a page turn, a relayout, a background load landing.
+    /// Compares against the last announced text, so it is safe (and
+    /// intended) to call after every draw: a selection repaint no-ops,
+    /// a turn retracts the old page, reports the new one, and speaks it.
+    /// The announcement is what makes a page turn *audible*; the content
+    /// update is what keeps review commands reading the right page.
     pub fn page_changed(&self) {
         let imp = self.imp();
         let now = imp
             .speakable()
-            .map(|page| page.text.chars().count() as u32)
+            .map(|page| page.text)
+            .filter(|text| !text.is_empty());
+        if *imp.announced.borrow() == now {
+            return;
+        }
+        let before = imp
+            .announced
+            .replace(now.clone())
+            .map(|text| text.chars().count() as u32)
             .unwrap_or(0);
-        let before = imp.announced.replace(now);
         if before > 0 {
             self.update_contents(gtk::AccessibleTextContentChange::Remove, 0, before);
         }
-        if now > 0 {
-            self.update_contents(gtk::AccessibleTextContentChange::Insert, 0, now);
+        if let Some(text) = now {
+            let count = text.chars().count() as u32;
+            self.update_contents(gtk::AccessibleTextContentChange::Insert, 0, count);
+            self.announce(&text, gtk::AccessibleAnnouncementPriority::Medium);
         }
     }
 }
@@ -97,8 +115,9 @@ mod imp {
     #[derive(Default)]
     pub struct PageArea {
         pub session: RefCell<Option<Rc<RefCell<Session>>>>,
-        /// Chars last announced to AT, so a page turn can retract them.
-        pub announced: Cell<u32>,
+        /// Text last announced to AT — the change detector that lets
+        /// `page_changed` run after every draw and speak only on turns.
+        pub announced: RefCell<Option<String>>,
     }
 
     impl PageArea {
@@ -133,7 +152,24 @@ mod imp {
         }
 
         fn default_attributes(&self) -> Vec<(glib::GString, glib::GString)> {
-            Vec::new()
+            // Never empty: gtk4-rs 0.11 turns an empty list into NULL
+            // arrays here, and GTK's AT-SPI bridge walks them to their
+            // zero terminator without a NULL check — Orca's very first
+            // GetDefaultAttributes call was a segfault. One honest
+            // attribute keeps the arrays real. (The per-offset
+            // `attributes` path returns a checked boolean and is safe
+            // empty.)
+            let direction = {
+                let session = self.session.borrow();
+                match session.as_ref() {
+                    Some(session) => match session.borrow().reading_direction() {
+                        chapbook_reader::chapbook_core::ReadingDirection::Rtl => "rtl",
+                        _ => "ltr",
+                    },
+                    None => "ltr",
+                }
+            };
+            vec![("direction".into(), direction.into())]
         }
 
         fn caret_position(&self) -> u32 {
