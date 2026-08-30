@@ -575,9 +575,13 @@ them itself. Hyphenation is the proof the category is real: dictionary-based
 - **Accessibility** — the engine's half is built: `Session::page_text_runs`
   is the text-runs-and-rects accessor §7 called for, and the GTK viewer
   wraps it in GTK's `AccessibleText`, verified against AT-SPI end to end.
-  What remains is each platform's tree (`UIAccessibilityElement`,
-  `AccessibilityNodeInfo`), which wraps the same accessor. §7 has the
-  history, including the FFI claim it corrects.
+  Android's tree exists too: the AAR's `PageAccessibility` is a raw
+  `AccessibilityNodeProvider` over the same runs — one virtual node per
+  line, explore-by-touch, page-turn announcements — verified on an
+  emulator against uiautomator's node walk and TalkBack's speech
+  dispatch. What remains is iOS's tree (`UIAccessibilityElement`), which
+  wraps the same accessor. §7 has the history, including the FFI claim
+  it corrects.
 
 ## 5. Breadth and sync
 

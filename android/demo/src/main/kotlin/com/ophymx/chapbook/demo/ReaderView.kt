@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.MotionEvent
 import android.view.View
+import android.view.accessibility.AccessibilityNodeProvider
+import com.ophymx.chapbook.PageAccessibility
 import com.ophymx.chapbook.Session
 
 /**
@@ -31,13 +33,23 @@ class ReaderView(context: Context, private val session: Session) : View(context)
     var lastAction: String? = null
         private set
 
+    // The page's text runs as TalkBack's virtual tree; see the class docs
+    // for the three delegations this view owes it.
+    private val a11y = PageAccessibility(this, session)
+
     init {
         // Thirds, with the middle cycling the theme instead of opening a
         // menu this demo does not have. Sepia is the only colour on screen
         // whose red and blue channels differ, so it is the one thing that
         // can tell premultiplied RGBA from BGRA — worth keeping a band for.
         session.setTapZones(1f / 3f, 1f / 3f, "cycle-theme")
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
     }
+
+    override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y
+
+    override fun dispatchHoverEvent(event: MotionEvent): Boolean =
+        a11y.dispatchHoverEvent(event) || super.dispatchHoverEvent(event)
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         if (w <= 0 || h <= 0) return
@@ -66,6 +78,11 @@ class ReaderView(context: Context, private val session: Session) : View(context)
         // ARGB_8888 holds, so nothing converts and nothing is copied.
         lastRender = session.renderInto(target)
         if (lastRender == 0) canvas.drawBitmap(target, 0f, 0f, null)
+        // Every content change funnels through a draw — including the very
+        // first page, which no input handler ever sees — so this is the one
+        // place accessibility needs telling. From a post, not mid-draw, and
+        // pageChanged itself no-ops unless the page's text actually moved.
+        post { a11y.pageChanged() }
     }
 
     /**
