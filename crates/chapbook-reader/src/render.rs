@@ -144,31 +144,21 @@ impl Session {
     /// `None` under the same conditions as a frame.
     pub fn render(&mut self) -> Option<tiny_skia::Pixmap> {
         let metrics = self.metrics?;
-        let dl = self.frame()?.list;
-        let spine = self.spine;
-        let scale = metrics.dpi_scale;
-        let mut pixmap =
-            tiny_skia::Pixmap::new((dl.size.w * scale) as u32, (dl.size.h * scale) as u32)?;
-        let images = self.images.get(&spine).unwrap_or(&self.empty_images);
-        self.renderer
-            .render(&dl, &mut self.fonts, images, scale, &mut pixmap.as_mut());
-        // Panel policy is backend-neutral: the same conversion a GPU shell
-        // would apply to its own pixels. Dithering is scoped to where the
-        // page has images, because diffusing error through body text
-        // stipples every glyph's edge and not diffusing it through a
-        // photograph flattens the photograph.
-        let (w, h) = (pixmap.width(), pixmap.height());
-        let dithered = dl.dither_regions(scale);
-        chapbook_paint::quantize_regions(pixmap.data_mut(), w, h, self.pixel_format, &dithered);
-        if metrics.rotation == Rotation::None {
-            return Some(pixmap);
-        }
-        let turned = chapbook_paint::rotate(pixmap.data(), w, h, metrics.rotation);
-        let (tw, th) = if metrics.rotation.swaps_axes() {
+        // Allocate the unrotated shape and let the shared path fill it —
+        // one rasterize-and-quantize path, however the pixels leave.
+        // `render_size` is panel-oriented, so undo the axis swap here.
+        let (w, h) = self.render_size()?;
+        let (uw, uh) = if metrics.rotation.swaps_axes() {
             (h, w)
         } else {
             (w, h)
         };
-        tiny_skia::Pixmap::from_vec(turned.into_owned(), tiny_skia::IntSize::from_wh(tw, th)?)
+        let mut pixmap = tiny_skia::Pixmap::new(uw, uh)?;
+        self.render_page_into(&mut pixmap.as_mut())?;
+        if metrics.rotation == Rotation::None {
+            return Some(pixmap);
+        }
+        let turned = chapbook_paint::rotate(pixmap.data(), uw, uh, metrics.rotation);
+        tiny_skia::Pixmap::from_vec(turned.into_owned(), tiny_skia::IntSize::from_wh(w, h)?)
     }
 }
