@@ -84,6 +84,14 @@ one right and the others wrong: which faces exist, what the five CSS
 generics mean, and what to try when a glyph is missing. `chapbook_core::font`
 documents each.
 
+For the middle one, `Generics::Platform` is usually what you want. It
+takes chapbook's own table for the target you built for — Android and iOS
+have one, and everywhere else it means the same as `Generics::Host`,
+because fontconfig or fontdb already answered correctly there. The
+alternative is spelling five families out per platform in your shell,
+which works and which every shell was otherwise going to do separately.
+`Generics::Explicit` still overrides it when you know better.
+
 Two things to read back after opening. `session.font_report()` says how
 many faces loaded and names any generic that resolved to a family nothing
 carries — worth printing once at startup on a platform you have not run on,
@@ -249,9 +257,34 @@ Selection, links and text:
   a worker — and `search(query, limit)` for the whole spine, which blocks.
 
 Settings and annotations round it out: `set_settings` with a
-`SettingsScope` of `Global` or `ThisBook`, the `adjust_font` / `cycle_theme`
-conveniences over it, and `add_highlight` / `add_note` / `add_bookmark` /
-`annotations` / `goto_annotation` / `remove_annotation`.
+`SettingsScope` of `Global` or `ThisBook`, the `adjust_font` /
+`cycle_theme` / `set_font_family` conveniences over it, and
+`add_highlight` / `add_note` / `add_bookmark` / `annotations` /
+`goto_annotation` / `remove_annotation`.
+
+`set_font_family(Some(name), scope)` is the reader choosing a typeface;
+`None` returns the book to the publisher's. Offer names from
+`font_families()` — a picker cannot offer what it cannot enumerate, and
+that list grows as chapters load, because a book's own `@font-face`
+families join it when their unit lays out. A name nothing matches is not
+an error; the cascade falls through to the next family, exactly as it
+would for an unknown family in a publisher's stylesheet.
+
+The choice **beats** the publisher's `font-family`, unlike `base_font_px`
+and `line_height`, which lose to a publisher that specifies. That is
+deliberate: nearly every real EPUB sets `body { font-family }`, so a
+polite rule would do nothing on nearly every book. Monospace elements and
+their contents keep their font, because a code listing reflowed into the
+reader's serif is a bug people report rather than a preference they
+expressed. `publisher_styles: false` remains the blunter instrument.
+
+Across the C ABI the family travels on its own calls —
+`cb_session_font_family_count` / `_at` to enumerate,
+`cb_session_font_family` to read, `cb_session_set_font_family` to set —
+because `cb_settings` is plain data a host holds by value and a string
+cannot live there. `cb_session_set_settings` **preserves** the family
+rather than clearing it, so changing the font size does not silently
+discard the typeface.
 
 Hit-testing takes page coordinates. If your panel is rotated, put the
 event through `PageMetrics::panel_to_page` first — the engine does not see

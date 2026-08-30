@@ -35,9 +35,30 @@
 //! The evidence was gathered on real devices during the Android and iOS
 //! bring-up; the rules it bought live in these types — no `Default` on
 //! [`Generics`] or [`Fallbacks`], zero faces an error, nothing loading
-//! host fonts implicitly. The open per-platform questions (who ships an
-//! embedded source, who owns the generic-family tables) are tracked in
-//! the task backlog.
+//! host fonts implicitly.
+//!
+//! # Two settled questions
+//!
+//! **Who owns the per-platform generic tables.** chapbook does, in
+//! `chapbook_layout::platform_generics`, reached through
+//! [`Generics::Platform`]. The alternative was every shell spelling out
+//! five families per platform, which works and which every shell was going
+//! to do anyway — separately, each rediscovering that `sans-serif` means
+//! Roboto. A shell that knows better still overrides with
+//! [`Generics::Explicit`].
+//!
+//! **Whether an embedded font source ships in a shell binary.** No. The
+//! vendored faces under `fixtures/fonts` exist to make goldens mean the
+//! same thing on every machine, which is a test need and not a runtime
+//! one; Android and iOS both have real system fonts, and a device build
+//! that genuinely has none should say so through [`Faces::Bytes`] with its
+//! own face rather than inherit a serif nobody chose. The one font
+//! compiled into the binary is the math face of last resort, which is a
+//! rendering resource rather than a reading typeface and is excluded from
+//! family enumeration for exactly that reason.
+//!
+//! Neither of those weakens the standing rule: a shell must **name** a
+//! source, and nothing anywhere falls back to one serif silently.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -81,6 +102,15 @@ pub enum Faces {
     /// caller chose and a reviewer can grep for. Empty on Android, iOS and
     /// wasm, where realizing the source is an error rather than an empty
     /// database.
+    ///
+    /// iOS is empty for a duller reason than the others: fontdb has no
+    /// `target_os = "ios"` branch at all, so iOS takes the *Linux* one and
+    /// probes `/usr/share/fonts` and `/etc/fonts/fonts.conf` on a system
+    /// that has neither — while `/System/Library/Fonts` sits there holding
+    /// 265 faces, findable by a recursive scan. Six lines upstream would
+    /// fix it for every fontdb consumer, and sending them is worth doing;
+    /// until someone does, an iOS host names that directory itself with
+    /// [`Faces::Dir`], which is what the Swift package does.
     Host,
 }
 
@@ -100,6 +130,27 @@ pub enum Generics {
     /// (see [`FontReport`]) rather than letting them fail as missing
     /// glyphs.
     Host,
+    /// chapbook's own table for the target this was built for.
+    ///
+    /// The middle option, and the one most shells want. [`Self::Host`] is
+    /// right on a Linux desktop, where fontconfig has already answered the
+    /// question properly, and a coin toss on Android and iOS, where
+    /// fontdb's Microsoft family names stand unchallenged and whether they
+    /// resolve is luck. Spelling all five out per platform in every shell
+    /// works and is what every shell was otherwise going to do — separately,
+    /// and each of them rediscovering that `sans-serif` means Roboto.
+    ///
+    /// So the tables live in one place, `chapbook_layout::platform_generics`,
+    /// beside the code that realizes them; this variant asks for them. On a
+    /// target whose own answer is already right the table is empty and this
+    /// means the same thing as `Host`, deliberately — a shell says
+    /// "chapbook's best answer here" without also having to know which
+    /// targets need one.
+    ///
+    /// A shell that knows better than the table overrides it with
+    /// [`Self::Explicit`], which is still the only option that means the
+    /// same thing on every machine.
+    Platform,
     /// Spell all five out. The only option that means the same thing on
     /// every machine.
     Explicit(GenericFamilies),
@@ -232,16 +283,14 @@ impl FontSource {
     /// fails by accident. Verified against an emulator image: 214 faces,
     /// `Noto Serif` and `Roboto` present, `Comic Sans MS` and friends
     /// nowhere.
+    ///
+    /// The generic table it used to spell out here is
+    /// [`Generics::Platform`] now — the same five families, in the one
+    /// place that holds them for every target rather than for this one.
     pub fn android_system() -> FontSource {
         FontSource {
             faces: vec![Faces::Dir(PathBuf::from("/system/fonts"))],
-            generics: Generics::Explicit(GenericFamilies {
-                serif: "Noto Serif".into(),
-                sans_serif: "Roboto".into(),
-                monospace: "Droid Sans Mono".into(),
-                cursive: "Dancing Script".into(),
-                fantasy: "Roboto".into(),
-            }),
+            generics: Generics::Platform,
             fallback: Fallbacks::Explicit(FallbackFamilies {
                 common: vec![
                     "Noto Sans".into(),
@@ -340,22 +389,15 @@ mod tests {
     }
 
     #[test]
-    fn the_android_preset_names_no_microsoft_family() {
-        let Generics::Explicit(g) = FontSource::android_system().generics else {
-            panic!("android preset must not defer to the host");
-        };
-        for name in [g.serif, g.sans_serif, g.monospace, g.cursive, g.fantasy] {
-            assert!(
-                ![
-                    "Times New Roman",
-                    "Arial",
-                    "Courier New",
-                    "Comic Sans MS",
-                    "Impact"
-                ]
-                .contains(&name.as_str()),
-                "{name} is a fontdb default, not an Android family"
-            );
-        }
+    fn the_android_preset_asks_for_chapbooks_table_not_the_hosts() {
+        // The families themselves moved to `chapbook_layout::generics_for`,
+        // where every target's table compiles on every host and can be
+        // checked — including the rule this test used to carry, that none
+        // of them is a fontdb Microsoft default.
+        assert_eq!(
+            FontSource::android_system().generics,
+            Generics::Platform,
+            "the Android preset must not defer to the host"
+        );
     }
 }

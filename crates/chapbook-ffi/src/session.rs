@@ -603,6 +603,11 @@ pub unsafe extern "C" fn cb_session_book_kind(
 // ---- Settings ----
 
 /// The settings in force for the open book.
+///
+/// The chosen font family is **not** here: it is a string, and this struct
+/// is plain data a host can hold by value. Read it with
+/// [`cb_session_font_family`] and set it with
+/// [`cb_session_set_font_family`].
 #[no_mangle]
 pub unsafe extern "C" fn cb_session_settings(
     session: *const cb_session,
@@ -631,6 +636,10 @@ pub unsafe extern "C" fn cb_session_settings(
 }
 
 /// Apply settings, keeping the reader's place across the reflow.
+///
+/// The chosen font family is preserved, not cleared — it does not travel
+/// in `cb_settings` and is changed only by
+/// [`cb_session_set_font_family`].
 #[no_mangle]
 pub unsafe extern "C" fn cb_session_set_settings(
     session: *mut cb_session,
@@ -641,6 +650,7 @@ pub unsafe extern "C" fn cb_session_set_settings(
         use chapbook_reader::chapbook_core::ReadingSettings;
         use chapbook_reader::SettingsScope;
         let session = session_mut!(session);
+        let current_family = session.inner.settings().font_family.clone();
         if !usable(settings.base_font_px) {
             return fail(
                 cb_status::CB_ERR_INVALID_ARGUMENT,
@@ -667,7 +677,130 @@ pub unsafe extern "C" fn cb_session_set_settings(
                     cb_theme::CB_THEME_SEPIA => Theme::Sepia,
                     cb_theme::CB_THEME_DARK => Theme::Dark,
                 },
+                // Carried over, not reset. `cb_settings` is a plain
+                // `#[repr(C)]` struct and the family is a string, so it
+                // travels through its own calls; a host that never touches
+                // the font must not clear it by setting the font size.
+                font_family: current_family,
             },
+            match scope {
+                cb_settings_scope::CB_SCOPE_GLOBAL => SettingsScope::Global,
+                cb_settings_scope::CB_SCOPE_THIS_BOOK => SettingsScope::ThisBook,
+            },
+        );
+        cb_status::CB_OK
+    })
+}
+
+/// How many font families this session can match.
+///
+/// The read-back half of the font source, and what a picker needs: a host
+/// cannot offer a choice it cannot enumerate. Grows as chapters load,
+/// because a book's own `@font-face` families join the database when their
+/// unit lays out — so a host that caches this should refresh it after a
+/// unit change rather than once at open.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_font_family_count(
+    session: *const cb_session,
+    count: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        out!(count, session.inner.font_families().len(), "count");
+        cb_status::CB_OK
+    })
+}
+
+/// One available font family by index, sorted and deduplicated.
+/// `CB_ERR_INVALID_ARGUMENT` past the count.
+///
+/// Caller-allocates; see [`cb_last_error_message`] for the two-call idiom.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_font_family_at(
+    session: *const cb_session,
+    index: usize,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let families = session.inner.font_families();
+        let Some(name) = families.get(index) else {
+            return fail(
+                cb_status::CB_ERR_INVALID_ARGUMENT,
+                "font family index past the end",
+            );
+        };
+        // SAFETY: the header's contract for the buffer triple.
+        unsafe { str_out(name, buf, cap, needed) }
+    })
+}
+
+/// The reader's chosen font family, or empty for the publisher's.
+///
+/// Caller-allocates; see [`cb_last_error_message`] for the two-call idiom.
+/// Empty and unset are the same answer on purpose: a host that wants to
+/// show "Publisher's font" in a picker tests for an empty string, which is
+/// one branch rather than a sentinel it has to remember.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_font_family(
+    session: *const cb_session,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let family = session
+            .inner
+            .settings()
+            .font_family
+            .clone()
+            .unwrap_or_default();
+        // SAFETY: the header's contract for the buffer triple.
+        unsafe { str_out(&family, buf, cap, needed) }
+    })
+}
+
+/// Choose the typeface the reader sees, keeping their place across the
+/// reflow.
+///
+/// `family` is a family name as [`cb_session_font_family_at`] reports them.
+/// Null or empty returns the book to the publisher's own font. A name
+/// nothing in the font database answers to is not an error — the cascade
+/// moves on to the next family, exactly as it would for an unknown family
+/// in a publisher's stylesheet — so a host that wants certainty should
+/// offer only names it enumerated.
+///
+/// This beats the publisher's `font-family`, which is the point: nearly
+/// every real EPUB sets one. Monospace is left alone, so code listings
+/// stay legible.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_set_font_family(
+    session: *mut cb_session,
+    family: *const c_char,
+    scope: cb_settings_scope,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        use chapbook_reader::SettingsScope;
+        let session = session_mut!(session);
+        let chosen = if family.is_null() {
+            None
+        } else {
+            // SAFETY: the header's contract for a `const char *`.
+            match unsafe { str_in(family, "family") } {
+                Some(name) if !name.trim().is_empty() => Some(name.to_string()),
+                Some(_) => None,
+                None => return cb_status::CB_ERR_INVALID_UTF8,
+            }
+        };
+        let settings = chapbook_reader::chapbook_core::ReadingSettings {
+            font_family: chosen,
+            ..session.inner.settings().clone()
+        };
+        session.inner.set_settings(
+            settings,
             match scope {
                 cb_settings_scope::CB_SCOPE_GLOBAL => SettingsScope::Global,
                 cb_settings_scope::CB_SCOPE_THIS_BOOK => SettingsScope::ThisBook,

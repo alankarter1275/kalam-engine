@@ -143,6 +143,32 @@ pub unsafe extern "C" fn cb_font_source_set_generics(
     })
 }
 
+/// Use chapbook's own table of the five CSS generic families for the
+/// platform this library was built for.
+///
+/// The middle option between asking the host, which is right on a Linux
+/// desktop and a coin toss on a phone, and
+/// [`cb_font_source_set_generics`], which is right everywhere and which
+/// every host was otherwise going to spell out separately.
+///
+/// On a platform whose own answer is already correct this changes nothing,
+/// deliberately: a host asks for chapbook's best answer without also having
+/// to know which platforms need one. `cb_session_font_report` still names
+/// any generic that resolves to nothing, whichever way it was set.
+#[no_mangle]
+pub unsafe extern "C" fn cb_font_source_use_platform_generics(
+    fonts: *mut cb_font_source,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        // SAFETY: a handle from this module, not yet freed.
+        let Some(fonts) = (unsafe { fonts.as_mut() }) else {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "font source is null");
+        };
+        fonts.inner.generics = Generics::Platform;
+        cb_status::CB_OK
+    })
+}
+
 /// Release a font source that was never handed to [`cb_config_new`].
 ///
 /// Passing null is a no-op, so a host can free unconditionally on an error

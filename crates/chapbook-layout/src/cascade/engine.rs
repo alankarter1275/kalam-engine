@@ -96,6 +96,9 @@ impl StyleEngine {
             // publisher declarations is per-theme (see `theme_css`).
             engine.append_sheet(&css, Origin::User);
         }
+        if let Some(css) = font_family_css(settings) {
+            engine.append_sheet(&css, Origin::User);
+        }
         engine
     }
 
@@ -224,6 +227,46 @@ fn settings_css(settings: &ReadingSettings) -> String {
         css.push_str("body { text-align: justify; }\n");
     }
     css
+}
+
+/// The reader's chosen typeface, as a user-origin sheet.
+///
+/// User origin *and* `!important`, which together are the only way to beat
+/// an author declaration — and beating it is the point. Nearly every real
+/// EPUB sets `body { font-family }`, so the polite version of this rule
+/// would do nothing on nearly every book, which is worse than not offering
+/// the setting. This is the same instrument [`theme_css`] uses for Dark
+/// and for the same reason.
+///
+/// `*` and not `:root`, which is the trap. `!important` at user origin
+/// beats an author declaration *for the same element and property* — it
+/// does not stop the author styling a different element further down. A
+/// rule on `:root` sets `html`, and then `body { font-family }` — which is
+/// where publishers actually put it — wins on `body` and inherits from
+/// there, so the reader's choice would lose on almost every real book
+/// while passing any test whose fixture styled `html`. Same instrument
+/// [`theme_css`] reaches for, and the same reason.
+///
+/// Monospace is exempt, descendants included: `pre *` and friends carry
+/// one type selector where `*` carries none, so they win on specificity
+/// whatever the order. Without the descendant half, a `<span>` inside a
+/// `<pre>` would take the reader's serif and the listing would come apart
+/// mid-line.
+fn font_family_css(settings: &ReadingSettings) -> Option<String> {
+    let family = settings.font_family.as_deref()?.trim();
+    if family.is_empty() {
+        return None;
+    }
+    // A family name is author-controlled data reaching a parser: a name
+    // carrying a brace or a semicolon would otherwise close this rule and
+    // open whatever came next. Quoting and escaping per CSS string rules
+    // keeps it one value.
+    let quoted = format!("\"{}\"", family.replace('\\', "\\\\").replace('"', "\\\""));
+    Some(format!(
+        "* {{ font-family: {quoted} !important; }}\n\
+         pre, pre *, code, code *, kbd, kbd *, samp, samp *, tt, tt * \
+         {{ font-family: monospace !important; }}\n"
+    ))
 }
 
 struct NoPainters;

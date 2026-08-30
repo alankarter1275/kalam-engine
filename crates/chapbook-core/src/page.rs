@@ -230,6 +230,22 @@ pub struct ReadingSettings {
     pub justify: bool,
     /// Honor publisher (author-origin) stylesheets; off = UA + user sheets only.
     pub publisher_styles: bool,
+    /// The reader's chosen typeface, or `None` for the publisher's.
+    ///
+    /// A family name, matched against the session's own font database —
+    /// `Session::font_families` is the list a picker offers, and a name
+    /// nothing answers to leaves the page in whatever the cascade resolves
+    /// next, exactly as an unknown family in a publisher's stylesheet
+    /// would.
+    ///
+    /// Unlike [`Self::base_font_px`] and [`Self::line_height`], which are
+    /// UA-origin and so lose to a publisher that specifies, this one wins:
+    /// nearly every real EPUB sets `body { font-family }`, and a font
+    /// choice that silently did nothing on nearly every book would not be
+    /// a font choice. Monospace is left alone — a code listing in the
+    /// reader's serif is a bug people report. `publisher_styles: false`
+    /// remains the blunter instrument.
+    pub font_family: Option<String>,
     /// Color theme: page ground, default text/link colors, and the
     /// `prefers-color-scheme` the cascade sees.
     pub theme: Theme,
@@ -242,6 +258,7 @@ impl Default for ReadingSettings {
             line_height: 1.5,
             justify: false,
             publisher_styles: true,
+            font_family: None,
             theme: Theme::default(),
         }
     }
@@ -256,6 +273,7 @@ impl ReadingSettings {
         self.line_height.to_bits().hash(&mut h);
         self.justify.hash(&mut h);
         self.publisher_styles.hash(&mut h);
+        self.font_family.hash(&mut h);
         self.theme.hash(&mut h);
         h.finish()
     }

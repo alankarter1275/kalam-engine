@@ -91,3 +91,104 @@ fn a_settings_change_relayouts_and_keeps_the_place() {
     );
     assert_eq!(s.spine(), 0, "and the reader stayed put");
 }
+
+// ---- The reader's chosen typeface ----
+
+/// The read-back half of the choice. A picker cannot offer what it cannot
+/// enumerate, and this is the list it offers.
+#[test]
+fn the_session_enumerates_the_families_it_can_match() {
+    let mut s = open_isolated("epub-font-list", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+
+    let families = s.font_families();
+    assert!(
+        families.contains(&"Crimson Text".to_string()),
+        "the vendored fixture face should be offered: {families:?}"
+    );
+    assert!(
+        families.windows(2).all(|w| w[0] <= w[1]),
+        "families come back sorted: {families:?}"
+    );
+    // A picker must never offer the math face: it is a rendering resource,
+    // not something anyone reads a novel in.
+    assert!(
+        !families.contains(&"STIX Two Math".to_string()),
+        "the math face leaked into the picker: {families:?}"
+    );
+}
+
+/// The setting travels the same road as every other one: persisted per
+/// scope, restored on reopen, cleared with the rest of a book's override.
+#[test]
+fn a_chosen_font_survives_a_restart_and_scopes_per_book() {
+    use chapbook_reader::SettingsScope;
+
+    let source = fixture("epub/minimal.epub");
+    {
+        let mut s = open_isolated("epub-font-choice", &source);
+        s.set_metrics(metrics());
+        s.render().expect("page renders");
+        assert_eq!(
+            s.settings().font_family,
+            None,
+            "the built-in default is the publisher's font"
+        );
+
+        let chosen = chapbook_core::ReadingSettings {
+            font_family: Some("Crimson Text".into()),
+            ..s.settings().clone()
+        };
+        s.set_settings(chosen, SettingsScope::ThisBook);
+        assert_eq!(s.settings().font_family.as_deref(), Some("Crimson Text"));
+    }
+
+    let mut s = reopen_isolated("epub-font-choice", &source);
+    s.set_metrics(metrics());
+    assert_eq!(
+        s.settings().font_family.as_deref(),
+        Some("Crimson Text"),
+        "the choice did not come back from the database"
+    );
+
+    s.clear_book_settings();
+    assert_eq!(
+        s.settings().font_family,
+        None,
+        "clearing the override returns the book to the publisher's font"
+    );
+}
+
+/// Changing the typeface reflows the book, so it has to be part of what
+/// keys a layout cache — otherwise the reader picks a font and the page
+/// does not move.
+#[test]
+fn choosing_a_font_relayouts_and_keeps_the_place() {
+    let mut s = open_isolated("epub-font-reflow", &fixture("epub/long.epub"));
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+    for _ in 0..3 {
+        s.next_page();
+    }
+    let before = s.position();
+
+    let plain = s.settings().clone();
+    let chosen = chapbook_core::ReadingSettings {
+        font_family: Some("Crimson Text".into()),
+        ..plain.clone()
+    };
+    assert_ne!(
+        plain.cache_key(),
+        chosen.cache_key(),
+        "a font change that does not move the cache key cannot reflow"
+    );
+
+    s.set_settings(chosen, chapbook_reader::SettingsScope::Global);
+    s.render().expect("page renders after the change");
+    assert_eq!(
+        s.position().spine,
+        before.spine,
+        "the reader should still be in the same unit"
+    );
+}

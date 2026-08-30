@@ -135,6 +135,21 @@ const MIGRATIONS: &[&str] = &[
     -- copy under `covers/`.
     ALTER TABLE books ADD COLUMN cover_path TEXT;
     ",
+    // v5
+    "
+    -- The reader's chosen typeface. NULL means the publisher's, which is
+    -- what every existing row means and why this needs no backfill: the
+    -- column defaults to NULL and an untouched settings row keeps behaving
+    -- exactly as it did.
+    --
+    -- A family *name*, not a path or an id. What resolves it is the
+    -- session's own font database, which differs per device and per book —
+    -- a book's `@font-face` families join it as chapters load — so a name
+    -- that resolves on one device and not another is normal, and is
+    -- handled the same way an unknown family in a publisher's stylesheet
+    -- is: the cascade moves on to the next one.
+    ALTER TABLE reading_settings ADD COLUMN font_family TEXT;
+    ",
 ];
 
 pub(crate) fn open_and_migrate(path: &std::path::Path) -> Result<Connection> {
@@ -251,5 +266,46 @@ mod tests {
             "the old plaintext password is still in the database file"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A settings row written before the typeface could be chosen has to
+    /// keep meaning what it meant. NULL is the publisher's font, so the
+    /// column needs no backfill — but "needs no backfill" is a claim about
+    /// a real file, not about the DDL.
+    #[test]
+    fn a_settings_row_written_before_v5_still_means_the_publishers_font() {
+        let dir = scratch("font-upgrade");
+        let path = dir.join("library.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let upto_v4 = MIGRATIONS[..4].join("\n");
+            conn.execute_batch(&format!(
+                "BEGIN;\n{upto_v4}\nPRAGMA user_version = 4;\nCOMMIT;"
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO reading_settings
+                    (book_id, base_font_px, line_height, justify, publisher_styles,
+                     theme, updated_at)
+                 VALUES (0, 21.0, 1.4, 1, 1, 'sepia', 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_and_migrate(&path).unwrap();
+        let names = columns(&conn, "reading_settings");
+        assert!(names.iter().any(|c| c == "font_family"), "{names:?}");
+
+        let (size, theme, family): (f64, String, Option<String>) = conn
+            .query_row(
+                "SELECT base_font_px, theme, font_family FROM reading_settings WHERE book_id = 0",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(size, 21.0, "the old row survived the migration");
+        assert_eq!(theme, "sepia");
+        assert_eq!(family, None, "an untouched row still means the publisher's");
     }
 }

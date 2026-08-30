@@ -131,3 +131,173 @@ fn one_engine_styles_many_documents() {
         );
     }
 }
+
+// ---- The reader's chosen typeface ----
+
+/// A helper that styles one document against settings of the caller's
+/// choosing, so the font-family tests can vary the one field.
+fn styled_with(
+    html: &str,
+    author_css: &[&str],
+    settings: &ReadingSettings,
+) -> chapbook_layout::dom::Document {
+    let mut doc = parse_xhtml(html.as_bytes(), "test.xhtml").unwrap();
+    let mut engine = StyleEngine::new(&PageMetrics::default(), settings);
+    let css: Vec<String> = author_css.iter().map(|s| s.to_string()).collect();
+    engine.set_author_sheets(&css);
+    engine.style_document(&mut doc);
+    doc
+}
+
+fn line_for<'a>(dump: &'a str, tag: &str) -> &'a str {
+    dump.lines()
+        .find(|l| l.trim_start().starts_with(tag))
+        .unwrap_or_else(|| panic!("no {tag} in dump:\n{dump}"))
+}
+
+/// The whole point of the setting. Nearly every real EPUB sets
+/// `body { font-family }`, so a polite user-origin rule would be ignored
+/// on nearly every book and the reader's choice would do nothing.
+#[test]
+fn a_chosen_font_family_beats_the_publishers() {
+    let settings = ReadingSettings {
+        font_family: Some("Chosen Serif".into()),
+        ..Default::default()
+    };
+    let doc = styled_with(
+        "<html><body><p>hi</p></body></html>",
+        &["body { font-family: 'Publisher Sans'; }"],
+        &settings,
+    );
+    let dump = dump_of(&doc);
+    let p = line_for(&dump, "<p>");
+    assert!(p.contains("Chosen Serif"), "{p}");
+    assert!(!p.contains("Publisher Sans"), "{p}");
+}
+
+/// A code listing reflowed into the reader's serif is a bug people report,
+/// not a preference they expressed. The UA sheet already gives these the
+/// monospace generic and the choice must not take it away.
+#[test]
+fn monospace_elements_keep_their_font() {
+    let settings = ReadingSettings {
+        font_family: Some("Chosen Serif".into()),
+        ..Default::default()
+    };
+    let doc = styled_with(
+        "<html><body><p>hi</p><pre>x</pre><code>y</code></body></html>",
+        &[],
+        &settings,
+    );
+    let dump = dump_of(&doc);
+    for tag in ["<pre>", "<code>"] {
+        let line = line_for(&dump, tag);
+        assert!(
+            !line.contains("Chosen Serif"),
+            "{tag} took the reader's body font: {line}"
+        );
+    }
+    assert!(line_for(&dump, "<p>").contains("Chosen Serif"));
+}
+
+/// `None` is the publisher's font, and it has to be genuinely inert —
+/// this is the default every existing book and every pre-v5 settings row
+/// carries.
+#[test]
+fn no_chosen_family_leaves_the_publisher_alone() {
+    let doc = styled_with(
+        "<html><body><p>hi</p></body></html>",
+        &["body { font-family: 'Publisher Sans'; }"],
+        &ReadingSettings::default(),
+    );
+    let dump = dump_of(&doc);
+    assert!(line_for(&dump, "<p>").contains("Publisher Sans"));
+}
+
+/// A family name is data, and it reaches a CSS parser. A name carrying a
+/// quote or a brace would otherwise close the rule and open whatever came
+/// after it — so it is quoted and escaped, and the worst case is a family
+/// nothing matches rather than a stylesheet the reader wrote by accident.
+///
+/// The payload sets `color`, because that is a property this rule has no
+/// business touching: if it lands, the escaping failed. Asserting on the
+/// family text itself would not work — the payload *is* family text, so it
+/// appears in the computed value either way.
+#[test]
+fn a_family_name_cannot_escape_its_own_rule() {
+    let settings = ReadingSettings {
+        font_family: Some(r#"Evil"; } * { color: rgb(9, 9, 9); } x { font-family: "z"#.into()),
+        ..Default::default()
+    };
+    let doc = styled_with("<html><body><p>hi</p></body></html>", &[], &settings);
+    let dump = dump_of(&doc);
+    let p = line_for(&dump, "<p>");
+    assert!(
+        p.contains("color: rgb(0, 0, 0)"),
+        "the family name injected a declaration: {p}"
+    );
+}
+
+/// The `:root`-versus-`*` trap, kept honest by a fixture that styles the
+/// element publishers actually style. A rule on `:root` passes a test
+/// whose author sheet targets `html` and loses on every real book.
+#[test]
+fn a_chosen_family_reaches_elements_the_publisher_styled_directly() {
+    let settings = ReadingSettings {
+        font_family: Some("Chosen Serif".into()),
+        ..Default::default()
+    };
+    let doc = styled_with(
+        "<html><body><div><p>hi</p></div></body></html>",
+        &[
+            "body { font-family: 'Publisher Sans'; }",
+            "div { font-family: 'Publisher Display'; }",
+            "p { font-family: 'Publisher Text'; }",
+        ],
+        &settings,
+    );
+    let dump = dump_of(&doc);
+    for tag in ["<div>", "<p>"] {
+        let line = line_for(&dump, tag);
+        assert!(
+            line.contains("Chosen Serif"),
+            "{tag} kept a publisher font: {line}"
+        );
+    }
+}
+
+/// A `<span>` inside a `<pre>` is still code. Without the descendant half
+/// of the monospace exemption, `*` would claim it and the listing would
+/// come apart mid-line.
+#[test]
+fn markup_inside_a_code_block_stays_monospace() {
+    let settings = ReadingSettings {
+        font_family: Some("Chosen Serif".into()),
+        ..Default::default()
+    };
+    let doc = styled_with(
+        "<html><body><pre><span>x</span></pre></body></html>",
+        &[],
+        &settings,
+    );
+    let dump = dump_of(&doc);
+    let span = line_for(&dump, "<span>");
+    assert!(!span.contains("Chosen Serif"), "{span}");
+}
+
+/// An all-whitespace name is not a choice. Treated as `None` rather than
+/// emitted, so it cannot produce a rule naming nothing.
+#[test]
+fn a_blank_family_name_is_not_a_choice() {
+    let settings = ReadingSettings {
+        font_family: Some("   ".into()),
+        ..Default::default()
+    };
+    let doc = styled_with(
+        "<html><body><p>hi</p></body></html>",
+        &["body { font-family: 'Publisher Sans'; }"],
+        &settings,
+    );
+    let dump = dump_of(&doc);
+    assert!(line_for(&dump, "<p>").contains("Publisher Sans"));
+}

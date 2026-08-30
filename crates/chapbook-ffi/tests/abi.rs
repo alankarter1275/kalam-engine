@@ -1196,3 +1196,122 @@ fn word_at_answers_under_text() {
 
     unsafe { cb_session_close(session) };
 }
+
+/// The font family crosses this ABI on its own calls, because it is a
+/// string and `cb_settings` is plain data a host holds by value.
+///
+/// The trap that shape creates, and the reason this test exists: a host
+/// that reads the settings, changes the font *size*, and writes them back
+/// must not silently lose the typeface on the way through. There is no
+/// field for it in the struct, so it has to be carried across.
+#[test]
+fn a_chosen_font_survives_a_settings_round_trip() {
+    let session = open("font-family", "epub/illustrated.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+
+    // Nothing chosen reads back as empty, not as an error — one branch for
+    // a host showing "Publisher's font" in a picker.
+    let initial = read_string(|buf, cap, needed| unsafe {
+        cb_session_font_family(session, buf, cap, needed)
+    })
+    .expect("font family");
+    assert_eq!(initial, "");
+
+    // Offer what the session can actually match, then choose one.
+    let mut count = 0usize;
+    assert_eq!(
+        unsafe { cb_session_font_family_count(session, &mut count) },
+        cb_status::CB_OK
+    );
+    assert!(count > 0, "a picker needs something to offer");
+    let first = read_string(|buf, cap, needed| unsafe {
+        cb_session_font_family_at(session, 0, buf, cap, needed)
+    })
+    .expect("a family name");
+    assert!(!first.is_empty());
+
+    let chosen = std::ffi::CString::new(first.clone()).unwrap();
+    assert_eq!(
+        unsafe {
+            cb_session_set_font_family(
+                session,
+                chosen.as_ptr(),
+                cb_settings_scope::CB_SCOPE_THIS_BOOK,
+            )
+        },
+        cb_status::CB_OK
+    );
+    let now = read_string(|buf, cap, needed| unsafe {
+        cb_session_font_family(session, buf, cap, needed)
+    })
+    .expect("font family");
+    assert_eq!(now, first);
+
+    // Now the trap: an unrelated settings write.
+    let mut settings = unsafe {
+        let mut out = std::mem::zeroed::<cb_settings>();
+        assert_eq!(cb_session_settings(session, &mut out), cb_status::CB_OK);
+        out
+    };
+    settings.base_font_px += 2.0;
+    assert_eq!(
+        unsafe {
+            cb_session_set_settings(session, settings, cb_settings_scope::CB_SCOPE_THIS_BOOK)
+        },
+        cb_status::CB_OK
+    );
+    let after = read_string(|buf, cap, needed| unsafe {
+        cb_session_font_family(session, buf, cap, needed)
+    })
+    .expect("font family");
+    assert_eq!(
+        after, first,
+        "changing the font size cleared the chosen typeface"
+    );
+
+    // Null returns the book to the publisher's font.
+    assert_eq!(
+        unsafe {
+            cb_session_set_font_family(
+                session,
+                std::ptr::null(),
+                cb_settings_scope::CB_SCOPE_THIS_BOOK,
+            )
+        },
+        cb_status::CB_OK
+    );
+    let cleared = read_string(|buf, cap, needed| unsafe {
+        cb_session_font_family(session, buf, cap, needed)
+    })
+    .expect("font family");
+    assert_eq!(cleared, "");
+
+    // Past the end is an argument error, not a crash. The count is read
+    // again first, deliberately: a book's own `@font-face` families join
+    // the database as units lay out, so the number captured before the
+    // relayout above is already stale. That is documented behaviour and
+    // this is what it looks like from a host.
+    let mut grown = 0usize;
+    assert_eq!(
+        unsafe { cb_session_font_family_count(session, &mut grown) },
+        cb_status::CB_OK
+    );
+    assert!(grown >= count, "the family list should only grow");
+    assert_eq!(
+        unsafe {
+            cb_session_font_family_at(
+                session,
+                grown,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            )
+        },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+
+    unsafe { cb_session_close(session) };
+}

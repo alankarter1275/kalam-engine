@@ -115,6 +115,26 @@ impl Session {
         self.set_settings(settings, SettingsScope::Global);
     }
 
+    /// Choose the typeface the reader sees, or `None` for the publisher's.
+    ///
+    /// A convenience over [`Session::set_settings`], and the companion to
+    /// [`Session::font_families`], which is the list a picker offers. The
+    /// name is matched by the cascade against the session's own font
+    /// database; one nothing answers to is not an error, it just falls
+    /// through to the next family the way an unknown family in a
+    /// publisher's stylesheet does.
+    ///
+    /// This beats the publisher's own `font-family` — nearly every EPUB
+    /// sets one, so a choice that lost to it would not be a choice.
+    /// Monospace is left alone, so code listings stay legible.
+    pub fn set_font_family(&mut self, family: Option<String>, scope: SettingsScope) {
+        let settings = crate::chapbook_core::ReadingSettings {
+            font_family: family.filter(|name| !name.trim().is_empty()),
+            ..self.settings.clone()
+        };
+        self.set_settings(settings, scope);
+    }
+
     /// Cycle light → sepia → dark. A convenience over
     /// [`Session::set_settings`]; persists globally.
     pub fn cycle_theme(&mut self) {

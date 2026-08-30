@@ -108,7 +108,7 @@ pub use config::{
     cb_config, cb_config_free, cb_config_new, cb_config_set_cache_budget,
     cb_config_set_library_dir, cb_font_source, cb_font_source_add_dir,
     cb_font_source_android_system, cb_font_source_embedded, cb_font_source_free,
-    cb_font_source_host, cb_font_source_set_generics,
+    cb_font_source_host, cb_font_source_set_generics, cb_font_source_use_platform_generics,
 };
 pub use error::cb_status;
 pub use http::{
