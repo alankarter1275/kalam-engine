@@ -146,6 +146,19 @@ th       { font-weight: bold; text-align: center; }
 colgroup { display: table-column-group; }
 col      { display: table-column; }
 
+/* Direction. `dir` is an attribute, not a style, so nothing maps it to the
+ * `direction` property unless a stylesheet does — and until this existed,
+ * a Hebrew or Arabic chapter that said `dir="rtl"` was styled as LTR and
+ * came out flush against the wrong margin. HTML defines these as
+ * presentational hints; here they are ordinary UA rules, so an author
+ * stylesheet still outranks them.
+ *
+ * `dir="auto"` is deliberately absent: it means "decide from the first
+ * strong character", which is what cosmic-text does anyway when nothing
+ * says otherwise. A rule here could only guess worse. */
+[dir="ltr"] { direction: ltr; }
+[dir="rtl"] { direction: rtl; }
+
 /* Replaced and misc */
 img, object, video, audio {
   display: inline-block;

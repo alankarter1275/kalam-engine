@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Each paragraph isolates one question, and each is a SINGLE LINE of source
+  with no leading whitespace inside the element: locator offsets index the
+  raw text, so a wrapped source line would put newlines and indentation into
+  the very offsets these tests assert on.
+
+  - #latin   a control. Same code path, no bidi, so a failure here is not
+             about direction.
+  - #hebrew  pure RTL. Visual order must run right to left while locator
+             offsets keep running forward.
+  - #arabic  RTL that also SHAPES: Arabic letters take initial/medial/final
+             forms and join, so a run of it must not come out as one glyph
+             per character.
+  - #island  RTL base with an LTR island. The case where one logically
+             contiguous range is two visually separate pieces — a selection
+             from the start through the middle of EPUB leaves "UB" between
+             the two selected parts, unselected.
+  - #declared  declared RTL, but its first strong character is Latin. The
+             one case where the declaration and the text disagree, which is
+             how the shaper's base-level guess becomes visible.
+-->
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="he" lang="he">
+<head>
+  <title>Bidirectional Text</title>
+  <link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+  <section class="chapter" id="ch1">
+    <h1>Bidirectional Text</h1>
+<p id="latin" dir="ltr" lang="en">Hello world. This is a small book.</p>
+<p id="hebrew" dir="rtl" lang="he">שלום עולם. זהו ספר קטן.</p>
+<p id="arabic" dir="rtl" lang="ar">مرحبا بالعالم. هذا كتاب صغير.</p>
+<p id="island" dir="rtl" lang="he">שלום EPUB עולם</p>
+<p id="declared" dir="rtl" lang="he">EPUB הוא תקן</p>
+  </section>
+</body>
+</html>

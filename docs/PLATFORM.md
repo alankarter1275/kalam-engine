@@ -238,11 +238,20 @@ that.
 These are choices, not oversights — but a platform should make them
 explicitly rather than by default:
 
-- **Vertical writing and RTL flow** are currently out of scope. This is
-  the one gap that is genuinely *hard* rather than merely unbuilt: it
-  reaches into the layout crate, the largest in the workspace. It is
-  also a hard ceiling for any CJK or manga-oriented app built on
-  chapbook. Decide whether that ceiling is acceptable.
+- **Vertical writing** is out of scope. This is the one gap that is
+  genuinely *hard* rather than merely unbuilt: it reaches into the layout
+  crate, the largest in the workspace. It is a hard ceiling for any CJK
+  or manga-oriented app built on chapbook. Decide whether that ceiling is
+  acceptable.
+- **Bidirectional text works and is now tested** — Hebrew and Arabic
+  shape, join, reorder, align, hit-test and select, against a real
+  fixture in `crates/chapbook-reader/tests/bidi.rs`. It is listed here
+  because it used to sit under the line above, untested, and three
+  defects were waiting in it. One limitation remains and is pinned by a
+  test: cosmic-text resolves the bidi base level per line from the first
+  strong character, so a paragraph declaring `dir="rtl"` whose first word
+  is Latin reorders as LTR. It aligns right regardless. Fixing that needs
+  an upstream change or a different shaper.
 - **Fixed-layout EPUB** stays rejected. Reasonable for one app; a bigger
   deal for a platform, since comics-as-FXL-EPUB is common in the wild
   and the profile in practice is narrow (one full-bleed image per page).

@@ -150,6 +150,17 @@ Things that fail quietly rather than loudly.
   `ENV_LOCK` and use per-test directories. Follow the existing
   `open_isolated` / `reopen_isolated` helpers in
   `chapbook-reader/tests/session.rs`.
+- **A missing font falls back to nothing, and nothing looks like text.**
+  The embedded fixture source has `Fallbacks::None`, so a script with no
+  per-script mapping still lays out, still has locator offsets and still
+  hit-tests — as tofu, passing every assertion that is not about the
+  glyphs. Scripts beyond Latin go in their own directory named as a second
+  `Faces::Dir`, never into `fixtures/fonts`: that one is scanned
+  recursively, pinned at four faces by a test, and is what every other
+  fixture falls back to.
+- **`fixtures/epub/build.sh` rebuilds everything by default,** and zip
+  stamps a timestamp per entry, so fixtures nobody touched come back with
+  new bytes. Name the one you changed: `./build.sh bidi`.
 
 ## Licensing
 

@@ -111,6 +111,17 @@ pub struct Glyph {
     /// what selection hit-testing and highlight geometry key on. Generated
     /// glyphs (markers, hyphens) repeat a neighbor's offset.
     pub locator: u32,
+    /// Whether this glyph sits in a right-to-left bidi run.
+    ///
+    /// Nothing paints differently for it — the shaper already placed the
+    /// glyph. It is here because *hit-testing* cannot be done without it:
+    /// glyphs are stored in logical order while `x` is visual, and in an
+    /// RTL run those disagree, so "which side of this glyph did the finger
+    /// land on, and does that mean the offset before it or after it" has
+    /// the opposite answer. Carried from the shaper's own bidi level
+    /// rather than guessed from x ordering, which a one-glyph run cannot
+    /// tell you.
+    pub rtl: bool,
 }
 
 impl Page {
@@ -199,64 +210,143 @@ impl Page {
     }
 
     /// Highlight rects (page space) covering the locator range
-    /// `[start, end)`: one rect per line the range touches.
+    /// `[start, end)`: one rect per *visually contiguous* piece of it.
+    ///
+    /// Usually that is one rect per line, and for text in a single
+    /// direction it always is. Bidi is the exception, and the reason this
+    /// does not simply take the leftmost and rightmost selected glyph on
+    /// each line: a logically contiguous range need not be visually
+    /// contiguous. Select from the start of an RTL line through the middle
+    /// of a Latin word embedded in it and the two selected pieces sit at
+    /// opposite ends with unselected letters *between* them — one spanning
+    /// rect would paint over those, telling the reader they had selected
+    /// text they had not.
+    ///
+    /// Pieces that merely touch are merged, so an ordinary selection still
+    /// comes back as one rect per line and a shell can keep drawing them
+    /// naively.
     pub fn rects_for_range(&self, start: u32, end: u32) -> Vec<Rect> {
         let mut rects = Vec::new();
-        if end <= start {
-            return rects;
-        }
+        let mut spans = Vec::new();
         for fragment in &self.fragments {
             let (FragmentKind::Line(line) | FragmentKind::HiddenText(line)) = &fragment.kind else {
                 continue;
             };
-            let mut min_x = f32::INFINITY;
-            let mut max_x = f32::NEG_INFINITY;
-            for run in &line.runs {
-                for glyph in &run.glyphs {
-                    if glyph.locator >= start && glyph.locator < end {
-                        min_x = min_x.min(glyph.x);
-                        max_x = max_x.max(glyph.x + glyph.advance);
-                    }
-                }
-            }
-            if max_x > min_x {
-                let r = fragment.rect;
-                rects.push(Rect {
-                    origin: Point::new(r.origin.x + min_x, r.origin.y),
-                    size: Size::new(max_x - min_x, r.size.h),
-                });
-            }
+            line.selected_spans(start, end, &mut spans);
+            let r = fragment.rect;
+            rects.extend(spans.iter().map(|&(from, to)| Rect {
+                origin: Point::new(r.origin.x + from, r.origin.y),
+                size: Size::new(to - from, r.size.h),
+            }));
         }
         rects
     }
 }
 
 impl LineFragment {
+    /// The visually contiguous pieces of the locator range `[start, end)`
+    /// on this line, as fragment-local x spans, left to right. Written
+    /// into `out`, which is cleared first — this runs per line per drag
+    /// event, so the caller keeps the buffer.
+    ///
+    /// Usually one span, and for text in a single direction always one.
+    /// Bidi is the exception, and the reason this is not just the leftmost
+    /// and rightmost selected glyph: a logically contiguous range need not
+    /// be visually contiguous. Select from the start of an RTL line
+    /// through the middle of a Latin word embedded in it and the two
+    /// selected pieces sit at opposite ends with unselected letters
+    /// *between* them. One spanning rect would paint over those, telling
+    /// the reader they had selected text they had not.
+    ///
+    /// Pieces that merely touch are merged, so an ordinary selection comes
+    /// back as one span and nothing downstream has to care.
+    pub(crate) fn selected_spans(&self, start: u32, end: u32, out: &mut Vec<(f32, f32)>) {
+        out.clear();
+        if end <= start {
+            return;
+        }
+        for run in &self.runs {
+            for glyph in &run.glyphs {
+                if glyph.locator >= start && glyph.locator < end {
+                    out.push((glyph.x, glyph.x + glyph.advance));
+                }
+            }
+        }
+        if out.is_empty() {
+            return;
+        }
+        // Into visual order: glyphs arrive logically, which inside an RTL
+        // run is right to left.
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Adjacent glyphs mostly share an edge exactly, but a glyph's
+        // advance and the next one's position are computed separately and
+        // disagree in the last hundredth of a pixel. Splitting there would
+        // put a hairline seam between letters, which is exactly the artifact
+        // this is supposed to avoid, so absorb it. Half a pixel is two
+        // orders of magnitude above that jitter and two below any real gap
+        // — the unselected middle of a split bidi range is tens of pixels.
+        const TOUCHING: f32 = 0.5;
+        let mut write = 0;
+        for read in 1..out.len() {
+            let (from, to) = out[read];
+            if from <= out[write].1 + TOUCHING {
+                out[write].1 = out[write].1.max(to);
+            } else {
+                write += 1;
+                out[write] = (from, to);
+            }
+        }
+        out.truncate(write + 1);
+    }
+
     /// Caret offset for a fragment-local x: the nearest glyph boundary.
     ///
     /// Streams the glyphs with one-element lookahead — this runs per line
     /// per drag *event* during selection, so it must not allocate.
+    ///
+    /// # Why this cannot just walk the list
+    ///
+    /// Glyphs are stored in **logical** order and positioned in **visual**
+    /// order, and bidi is where those stop agreeing. Picking "the last
+    /// glyph whose `x` the point is past" reads the list as if later meant
+    /// further right; in an RTL run `x` *descends*, so every point on a
+    /// Hebrew or Arabic line satisfied that for every glyph and the answer
+    /// was always the end of the line. Selecting RTL text was impossible
+    /// and a tap reported the wrong word.
+    ///
+    /// So the glyph is chosen by geometry — whose horizontal span contains
+    /// the point, else whichever is nearest — and only then does direction
+    /// decide which side of it the caret falls on. In an LTR run the
+    /// *right* half means the following offset; in an RTL run the right
+    /// half is the *preceding* character, so it is the left half that
+    /// advances.
     fn offset_at_x(&self, x: f32) -> Option<u32> {
-        let mut result: Option<u32> = None;
-        let mut first: Option<(f32, u32)> = None;
+        let mut best: Option<(f32, u32)> = None;
         let mut glyphs = self.runs.iter().flat_map(|run| &run.glyphs).peekable();
         while let Some(glyph) = glyphs.next() {
-            if first.is_none_or(|(fx, _)| glyph.x < fx) {
-                first = Some((glyph.x, glyph.locator));
+            // Zero past the span it covers, otherwise how far outside.
+            let distance = (glyph.x - x).max(x - (glyph.x + glyph.advance)).max(0.0);
+            if best.is_some_and(|(d, _)| d <= distance) {
+                continue;
             }
-            if x >= glyph.x {
-                result = Some(if x > glyph.x + glyph.advance / 2.0 {
-                    // Right half: the next boundary.
-                    glyphs
-                        .peek()
-                        .map(|next| next.locator.max(glyph.locator))
-                        .unwrap_or(glyph.locator + 1)
-                } else {
-                    glyph.locator
-                });
-            }
+            let past_midpoint = if glyph.rtl {
+                x < glyph.x + glyph.advance / 2.0
+            } else {
+                x > glyph.x + glyph.advance / 2.0
+            };
+            let offset = if past_midpoint {
+                // The next boundary in *logical* order, which is the next
+                // glyph in the list whichever way the run runs.
+                glyphs
+                    .peek()
+                    .map(|next| next.locator.max(glyph.locator))
+                    .unwrap_or(glyph.locator + 1)
+            } else {
+                glyph.locator
+            };
+            best = Some((distance, offset));
         }
-        result.or(first.map(|(_, locator)| locator))
+        best.map(|(_, offset)| offset)
     }
 }
 
