@@ -2,13 +2,50 @@
 
 Core components for a lightweight ereader, in Rust.
 
-No webview. No full HTML5 browser. Chapbook implements just the EPUB 3
-standards — XHTML content documents and the EPUB 3 CSS profile — on top of
-strong upstream crates: [stylo] (the CSS engine behind Firefox and Servo) for
-the cascade, [cosmic-text] for shaping and line layout, [tiny-skia] for CPU
-rasterization, and [rbook] for EPUB container handling. The layout engine is
-pagination-first: pages, break rules, and widows/orphans are the core model,
-not an afterthought bolted onto a scrolling browser.
+A reader turns a book into pages, remembers where you are, and gets those
+pages onto a screen. Chapbook treats each of those three as a seam with a
+contract, not as an implementation detail:
+
+- **Pagination is the model, not a cut applied afterwards.** Pages, break
+  rules, and widows/orphans are what the layout engine computes; there is no
+  scrolling document underneath being sliced up. The CSS fragmentation
+  properties servo-mode stylo does not carry — `break-*`, `page-break-*`,
+  `widows`, `orphans`, `hyphens` — run through chapbook-layout's own sidecar
+  cascade, so a book's break rules are honoured rather than approximated.
+- **A reading position is a versioned locator, not an offset into a
+  layout.** `LayeredLocator` records quote context, spine fraction, and
+  whole-book progression, and resolves through those layers in order, so a
+  place survives relayout, a font-size change, a move to a screen of another
+  size, and — via the quote layer — a replaced edition of the same book. Highlights are
+  stored the same way and re-anchor exactly as a position does; positions
+  exchange with other readers as EPUB CFIs.
+- **A page leaves the engine as a paint-neutral display list.**
+  `Session::frame()` plus `paint_resources()` is the entire backend
+  contract: glyph runs, rects and image ops, and the font database and image
+  store they name. tiny-skia on the CPU and vello on the GPU are two
+  implementations of it, held to each other by a parity test; a Linux
+  framebuffer is a third consumer. Frames carry damage and intent, so a
+  screen that must be *asked* to change — e-ink, with update classes and a
+  ghosting budget — is a first-class target rather than a later port.
+
+One `Session` drives all of it: a Rust binary, Android over JNI, iOS over a
+hand-written C ABI, a browser over `wasm-bindgen`. Fonts, HTTP, credentials,
+and storage arrive by injection, because a stack bundled into the engine is
+precisely the one a host cannot substitute.
+
+Underneath is no webview and no full HTML5 browser — just the EPUB 3
+standards (XHTML content documents and the EPUB 3 CSS profile) on strong
+upstream crates: [stylo] (the CSS engine behind Firefox and Servo) for the
+cascade, [cosmic-text] for shaping and line layout, [tiny-skia] for CPU
+rasterization, [rbook] for EPUB container handling. That is a deliberate
+trade rather than a purity claim: a web view gets the long tail — ruby,
+broken markup — for free, and chapbook's layout is a real subset of what
+publishers ship. What a web view cannot give back is the first two bullets
+above, because its notion of where you are is a function of its own line
+breaking, which moves under you when the OS updates. Chapbook is the right
+shape for a controlled-typography reader and the wrong one for an app whose
+job is rendering arbitrary publisher EPUBs faithfully;
+[docs/PLATFORM.md](docs/PLATFORM.md) makes that argument in full.
 
 [stylo]: https://crates.io/crates/stylo
 [cosmic-text]: https://crates.io/crates/cosmic-text
@@ -145,10 +182,10 @@ cargo test --workspace
 
 The core pipeline works end-to-end: open (or download via OPDS) an EPUB,
 cascade its styles through stylo, paginate with cosmic-text, render pages
-with tiny-skia, and read it in the reference viewer with positions that
-survive relayout, font-size changes, and even replaced editions (see
-[docs/LOCATORS.md](docs/LOCATORS.md)) — and exchange them as EPUB CFIs
-(`chapbook cfi`). Embedded fonts (including obfuscated ones), images, and
+with tiny-skia, and read it in the reference viewer — with the layered
+positions above persisted per book (rationale in
+[docs/LOCATORS.md](docs/LOCATORS.md), interchange via `chapbook cfi`).
+Embedded fonts (including obfuscated ones), images, and
 text decorations render, with light/sepia/dark themes (sepia recolors
 defaults; dark forces readability), and press-drag text selection that
 copies to the clipboard (`c`) or becomes a stored highlight (`h`), kept in
