@@ -1,9 +1,13 @@
 # chapbook as an ereader platform
 
-Chapbook started as an ereader and turned into the engine an ereader is built
-on. This document takes that seriously: what "platform" has to mean here, what
-already works, and what stands between the current workspace and someone
-building a Kobo app, an Android app, and a desktop app against the same core.
+Chapbook started as an ereader and turned into the engine an ereader is
+built on. This document takes that seriously: what "platform" has to mean
+here, and the state of each seam a downstream app builds against.
+
+It is a contract statement, not a journal. How each seam got here — the
+spikes, the measurements, the corrections — lives in git; open work lives
+in the task backlog. What belongs here is the test the platform must keep
+passing and what is true of each axis today.
 
 ## The test
 
@@ -18,291 +22,164 @@ forking**. Five axes matter:
 | Content | EPUB, comics, PDF, remote streams — and formats not yet supported |
 | Backend | Local library, remote catalogs, position/annotation sync services |
 
-Everything below is organized by which substitution is currently blocked.
-
-## What already works
-
-This isn't aspirational; the seams have been tested twice by accident.
-
-- **The shell/session split holds.** `chapbook-viewer` (winit) is ~310 lines
-  and `chapbook-viewer-gtk` is ~220, against ~1,200 lines of
-  `chapbook-reader`. Two shells, two windowing stacks, no duplicated reading
-  logic — and the split absorbed clipboard copy and highlighting without
-  either shell growing reading logic of its own. A third shell is already
-  cheap.
-- **`Publication` predicted its own future.** The format-neutral book model
-  went in ahead of need; CBZ and then PDF — a format with a completely
-  different rasterization story — landed through it without disturbing core,
-  layout, or the locator design.
-- **The paint/layout inversion is load-bearing.** It was done so non-text
-  producers could emit pages; comic units now fabricate a one-page
-  `ChapterLayout` around a scaled image fragment, so navigation, the char
-  map, and position persistence stay one code path.
-- **Locators generalize.** Per-format progression units (chars for
-  reflowable, pages for image books) absorbed comics with no schema change.
-- **The layered record earns its complexity.** Highlights capture both
-  endpoints as layered locators and re-anchor through the same chain
-  positions use, so a stored highlight survives relayout, font-size changes,
-  and a replaced edition. The design was speculative until something other
-  than the reading position used it.
-- **No native ball-and-chain.** Pure Rust, no webview, no MuPDF FFI. This is
-  the precondition for every device target below; it is already paid for.
-
-The gap list is therefore almost entirely **additive** — missing APIs and
-unproven targets, not decisions to undo. The exceptions are called out.
-
-## 1. The render seam (closed)
-
-This was the gap with a clock on it, and it was paid at two in-tree shells
-rather than at five across an FFI boundary.
+## Display
 
 `Session::frame()` returns the paint-neutral ops — the documented backend
 contract — and `paint_resources()` hands back the font database its glyph
 runs name faces in plus the image store its image ops key into, which is
-everything a shell needs to rasterize for itself: a GPU backend, a platform
-canvas, an e-ink panel, an exporter. A test reproduces `render()` through
-that public API and asserts the pixels match, which is what makes it a seam
-rather than an accessor. `render()` remains the convenience path.
+everything a shell needs to rasterize for itself: a GPU backend, a
+platform canvas, an e-ink panel, an exporter. A test reproduces `render()`
+through that public API and asserts the pixels match, which is what makes
+it a seam rather than an accessor; `render()` remains the convenience
+path. Two rasterizers implement the contract — tiny-skia on the CPU,
+vello on the GPU — and a parity test aligns their output by row and
+column ink profiles, the measure that catches a 2px displacement while
+tolerating the antialiasing differences that centroid and per-cell
+coverage both mistake for movement. A second implementation is what
+keeps a seam a contract rather than a data structure.
 
-A frame also carries its own provenance. `FrameIntent` — repaint,
-selection, annotation, content arrived, page turn, unit change, reflow —
-tells a panel whether it is looking at a full flash or a fast partial
-refresh, and only the engine can know which. The intents are ordered by how
-much of the page they disturb, so several changes before a frame collapse
-to the strongest, and a backend that only distinguishes "small" from
-"everything" can compare rather than match every variant.
+A frame carries its own provenance. `FrameIntent` names the kind of
+change, ordered by how much of the page it disturbs, and
+`FrameIntent::update_class` joins it to the vendor-neutral
+`UpdateClass` vocabulary; damage accumulates independently of that
+ordering, so a highlight does not discard the region a live selection
+already named. Changes that can state their region do (selections,
+highlights, landed page images); the three that replace the page — a
+turn, a unit change, a reflow — report `None`, the whole page, always
+correct. Deriving damage by diffing display lists is deliberately not
+done: a `GlyphRun` carries advances, not ink bounds, so a diffed rect
+could under-cover and leave stale pixels on a panel, the one failure
+mode damage must not have. A prefetched unit landing silently is the
+other half of the same discipline: `poll_loaded` answers "did the page
+on screen change", so background loads spend no refresh at all.
 
-Damage accumulates *independently* of that ordering. Intent answers how
-disturbing a change is; damage answers where it is; and tying the second to
-the first meant a highlight discarded the region a live selection had
-already named, repainting the whole page to add a mark to two lines.
-Selections, highlights and landed page images all state their region now,
-the frame reports the union, and `None` — the whole page, always correct
-and sometimes pessimistic — is reserved for changes that genuinely cannot
-say where they went. Three of them can't: a page turn, a unit change and a
-reflow each replace the page. The footer case this section used to
-imagine — a turn that moves only the running head — does not arise,
-because the engine paints no page furniture at all; there is no header,
-no footer and no page number in a `DisplayList`, so nothing survives a
-turn to be damaged around.
+Panel colour and orientation are pipeline policy, applied in
+chapbook-paint over plain RGBA rows so every backend agrees:
+`PixelFormat::Grey { levels, dither }` quantizes luminance (floored at
+two levels, no ceiling — a cap would be a claim about which panels
+exist), `DisplayList::dither_regions` scopes error diffusion to where
+the page has images so body text is not stippled, and
+`PageMetrics::rotation` turns output on its way to the buffer with
+`panel_to_page` as its inverse for input. Packing into a device's buffer
+layout belongs one step lower, to `Panel::blit`.
 
-The general answer would be to diff consecutive display lists and damage
-only the ops that differ. It is deliberately not taken: glyph ink extents
-are not in the list — a `GlyphRun` carries advances, not bounds — so a
-diff-derived rect could under-cover and leave stale pixels on a panel,
-which is the one failure mode damage must not have.
+The update seam is `chapbook_core::panel`, and its module docs are the
+contract: `UpdateClass` as the vendor-neutral half of a waveform choice,
+`RefreshPolicy` for ghosting debt, `PanelDriver` enforcing the rules
+that work on a desk and fail on a device, `RecordingPanel` so all of it
+asserts on a build machine with no panel attached.
+`chapbook-panel-fbdev` is the in-tree implementor — a plain Linux
+framebuffer with no EPDC, its packing checked against pixel formats a
+kernel chose (a QEMU harness, `scripts/fbdev-vm.sh`, plus read-back
+selftests on real hardware), including 1bpp packed mono with
+kernel-declared polarity. A real e-ink backend cannot be written without
+the device — `mxcfb` is one vendor's SoC interface, not a standard —
+and waits in the backlog with the rest of the display increments.
 
-The larger win was the opposite of stating a region: *not* reporting a
-change. A prefetched unit landing used to raise `ContentArrived`, which
-on e-ink spent a full-page Quality update to show a page that had not
-moved. `poll_loaded` now answers "did the page on screen change", and
-prefetches land silently.
+## Input
 
-Panel colour is pipeline policy rather than per-shell improvisation:
-`PixelFormat::Grey { levels, dither }` quantizes luminance to a panel's
-steps — floored at two, with no upper bound, since a cap there is a claim
-about which panels exist rather than a property of the arithmetic —
-diffusing the error Floyd–Steinberg when asked. It is orthogonal to
-`UpdateClass`: e-ink does not imply greyscale, and a colour e-ink panel
-takes `Rgba` alongside a full set of waveforms. Orientation
-is a page metric: `PageMetrics::rotation` turns the output on its way to
-the buffer without touching layout, and `panel_to_page` is its inverse for
-input, so a rotated shell hands the session panel coordinates and the
-session untwists them. Both live in chapbook-paint over plain RGBA rows, so
-every backend applies the same policy — they belong to the target, not to
-the rasterizer. Packing grey levels into a device's buffer layout belongs
-one step lower still, to whoever addresses the hardware: `Panel::blit`.
+`chapbook_core::input` is the model: an `Action` vocabulary, `TapZones`
+that read the book's direction so a shell cannot default every platform
+to LTR, and a `KeyMap` that knows Kobo and PocketBook page-turn buttons —
+applied through `Session::apply`, whose `ActionOutcome` distinguishes
+*repaint* from *consumed* because Android's volume slider is what
+happens when a shell cannot. Navigation, annotations, in-book search,
+and settings (persisted, scoped per-book or default) are session API;
+`SHELLS.md` is the contract for driving all of it, enforced by
+`chapbook_reader::conformance` and demonstrated by
+`chapbook-viewer/examples/minimal.rs`.
 
-**The update seam.** A panel is not presented to; it is *asked* to change,
-and how it is asked decides how the change looks. `UpdateClass` — none,
-monochrome, fast, quality, flash — is the vocabulary for that ask, and
-`FrameIntent::update_class` is the join: chapbook names the kind of change,
-a device names the waveform it calls that. Nothing device-specific appears
-above the `Panel` trait and nothing about books appears below it.
-`RefreshPolicy` tracks ghosting debt separately, because "what does this
-change need" and "is the screen due for a clean" are different questions,
-and only the second has a knob a user might want. Fast and monochrome
-updates accrue debt but never trigger the flash themselves: flashing the
-screen under a moving finger is worse than any amount of ghosting.
+## Host
 
-`PanelDriver` owns the rules a shell would otherwise have to remember,
-and each is the kind that works on a desk and fails on a device. It never
-writes under a live update, waiting only when the regions actually
-overlap so an unrelated corner does not pay for a slow refresh elsewhere.
-It repaints what a monochrome update degraded, on a `settle` call, because
-the session cannot see the moment a gesture ends — it has no way to tell a
-mid-drag `select_range` from the last one, and only the shell knows the
-pointer came up. And it rations the flash through `RefreshPolicy`. All of
-it is asserted against `RecordingPanel` on a build machine.
+The portability boundary is built and proven from outside the workspace
+at every level it names:
 
-`Panel` splits `blit` from `submit` because a real controller does — a
-memcpy into mapped memory, then an ioctl — and an update takes 100ms to a
-second, so folding the wait into the submit would make page turns feel
-broken. `submit` returns a token; the caller decides when it needs to know
-the pixels landed. `PanelRect` rounds outward, once, for everybody: a
-region trimmed by half a pixel leaves a stale sliver, and on e-ink a stale
-sliver stays until something else disturbs it. `RecordingPanel` keeps a log
-instead of a screen, so "a drag issued one update per pixel of travel" is
-an ordinary assertion on a build machine with no panel attached.
+- **The C ABI** is `crates/chapbook-ffi` with `include/chapbook.h`
+  checked in beside it: hand-written, Contract tier, golden-tested
+  against the crate, every entry point wrapped in `catch_unwind`,
+  nothing crossing owned. `cb_capabilities()` exists because a header
+  cannot say which artifact a host actually loaded.
+- **Typed sources**: a path, bytes, a seekable handle, or a catalog URL,
+  format sniffed from the bytes; every capability the constructor needs —
+  fonts, credentials, transport, the library directory, a cache budget —
+  arrives through `SessionConfig`.
+- **Lifecycle and power**: `suspend()` closes the database rather than
+  merely flushing (an iOS app holding a POSIX lock in a shared container
+  when it suspends is killed by the watchdog), plus `set_cache_budget`
+  and `release_caches`.
+- **Android** is `crates/chapbook-jni` plus the `android/` Gradle pair —
+  a direct Rust binding, deliberately not a consumer of the header;
+  `docs/STABILITY.md` has that argument, `android/README.md` the
+  platform notes.
+- **iOS** is the Swift package in `ios/` over the header — the consumer
+  that cannot route around it, which is what keeps a C ABI honest.
+  `ios/README.md` has the platform notes.
+- **WASM stays a demo, deliberately**: `wasm-bindgen` wraps Rust, not C,
+  so a browser build is a sibling exporter over the same shape. The
+  EPUB-only profile it forces (`--no-default-features`: no SQLite, no
+  loader thread, fonts embedded, opened from bytes) is the same profile
+  a stripped e-ink build wants, and is held open by a CI `cargo check`
+  for `wasm32-unknown-unknown`.
+- **Cross-compilation**: CI checks `chapbook-core` and
+  `chapbook-panel-fbdev` on armv7 and aarch64 (const-evaluated
+  kernel-struct assertions, no linker needed), and everything except
+  `chapbook-viewer-gtk` cross-builds and links for
+  `aarch64-unknown-linux-gnu`; the linked binary needs `libc`, `libm`
+  and `libgcc_s` and nothing else. GTK is a packaging exception
+  (`gobject-sys` wants a pkg-config sysroot), not a code one.
 
-The trait deliberately carries no rotation. `PageMetrics::rotation` is
-already the one place a turn is decided and applied; a panel reporting its
-own would be a second field meaning nearly the same thing with nothing to
-say which wins.
+## Content
 
-**A second backend exists, and it earned its keep.**
-`chapbook-render-vello` rasterizes the same display list on the GPU through
-vello and wgpu. The translation is a transcription: vello's glyph API takes
-pre-positioned glyph ids, so nothing is re-shaped on the way, and device
-scale is a scene transform rather than scaled coordinates. A parity test
-compares the backends by normalizing total ink away and finding the shift
-that best aligns each page's row and column profiles — displacement is what
-can actually go wrong across a seam, and that measure catches a 2px error
-while tolerating the antialiasing difference that centroid and per-cell
-coverage both mistake for movement.
+The `Publication` trait in core is the format seam, and four producers
+stand on it: EPUB, CBZ, PDF, and OPDS-PSE streams — the streamed one is
+what the `unit_bytes` blocking contract exists for. Comic units
+fabricate a one-page layout around an image fragment, so navigation,
+the char map, and position persistence stay one code path; locators
+count per-format progression units (chars for reflowable text, pages
+for image books). `ARCHITECTURE.md` has the design. The formats beyond
+EPUB are features (`cbz`, `pdf`, `opds`, on by default), so a device
+build drops what its hardware will never open — the savings are the
+TLS and PDF stacks — and CI checks the narrow configurations so they
+cannot rot. Formats app builders will ask for and chapbook does not
+read: MOBI/AZW3, CBR (blocked on pure-Rust RAR5 extraction, which does
+not exist), FB2.
 
-`chapbook-viewer --gpu` is a shell over it: a wgpu surface on the window
-instead of softbuffer, `Session::frame` instead of `Session::render`, and
-the session unchanged and unaware. Panel policy (grey quantization,
-rotation) is not wired on that path — those are e-ink properties, and
-applying them to a swapchain means a compute pass rather than the row
-operations in chapbook-paint. Worth doing when a GPU e-ink shell exists.
+## Backend
 
-It found a real bug on its first honest comparison: every line of text was
-rendering up to 1.6px above the baseline layout computed, because swash
-applies cosmic-text's vertical sub-pixel bin in the opposite direction. One
-backend could not see it — the pages looked fine and the goldens encoded
-the error. That is the argument for a second implementation, stated better
-than any amount of design review could.
+The library is SQLite, bundled, and stays SQLite everywhere — replacing
+it per-platform would make the storage layer unshareable, which is the
+point of having one. The schema is already sync-shaped (`updated_at` on
+positions, soft deletes on the user tables), so a shell can mirror it
+into a sync service with no migration; the sync clients themselves
+(OPDS Progression 1.0, kosync, annotation interchange) are backlog.
 
-Two smaller findings came with it: reading a face out of the session's font
-database copies its bytes, so every backend ends up caching blobs by
-`fontdb::ID` and the seam could hand out font data directly; and the ops
-list is exactly three variants (`FillRect`, `GlyphRun`, `Image`) rather
-than the six this document's sibling once claimed, because borders, rules,
-and decorations all lower to fills first.
+Three conclusions here are load-bearing for every host and worth
+restating wherever a shell author looks:
 
-Increments left, in the order they will hurt:
+- **Transport belongs to the host.** A bundled networking stack costs an
+  iOS app background transfer, system trust and ATS, costs Android
+  `WorkManager`, and is unavailable in WASM. So `opds-client` opens no
+  sockets: the caller injects a blocking `HttpClient` (`UreqHttp` is the
+  default impl behind a feature), and `HttpClient::download` exists to
+  be overridden by a host that owns a background download facility.
+- **Credentials belong to the platform's store.** A
+  `chapbook_core::CredentialStore` is injected through `SessionConfig`;
+  the value is an opaque `Authorization` header, the key is a stable
+  non-secret, lookups never prompt (the loader thread cannot host a
+  biometric dialog), and nothing in the library database holds a secret.
+- **Custody: bookmarks, not copies.** A path-opened book is imported;
+  bytes and descriptors are *adopted* — recorded under an edition
+  fingerprint, never copied — so positions and annotations key on the
+  book's identity while the file stays the platform's. Holding the way
+  back to the file (a security-scoped bookmark, a URI grant) is the
+  shell's half, re-resolved on every cold launch before the session is
+  constructed.
 
-- **A device implementation, which cannot be written from here.** `mxcfb`
-  is not a generic e-ink API — it is NXP's i.MX driver, and the EPDC is a
-  block in the SoC rather than anything the panel knows about. It looks
-  universal only because one vendor's chip won a decade of the market.
-  KOReader's `framebuffer_mxcfb.lua` carries eleven device-specific
-  refresh functions, several `mxcfb_update_data` struct versions, and
-  waveform constants that differ per vendor for the same logical update;
-  Allwinner Kobos reach it through a shim and need their own backend,
-  MediaTek is a third path, reMarkable 2 has no framebuffer at all.
-  `chapbook-panel-fbdev` is the stand-in: a plain Linux framebuffer, no
-  EPDC, `UpdateClass` accepted and ignored, which gives the trait a second
-  implementor the way vello did for the display list and runs on hardware
-  that exists. Everything above `Panel` is exercised by it end to end. The
-  ioctl layer waits for a device, because code that runs is not evidence
-  that it is right.
+## The targets the display seam has to survive
 
-  Its packing is checked against pixel formats a kernel chose, not ones we
-  typed: `scripts/fbdev-vm.sh` boots vesafb under QEMU at RGB565, at
-  24bpp, and at 8bpp palette, and `--example selftest` writes known
-  colours and reads them back. That found a real defect: an 8bpp palette
-  framebuffer reports all three channels at offset 0 with length 8, which
-  is not a layout at all, and packing to it collapsed every colour onto
-  one value. Classification now comes from `fb_fix_screeninfo.visual`
-  rather than from the shape of the bitfields, and palette and monochrome
-  visuals are refused with a reason instead of drawn wrong. The harness is
-  x86_64 only — the ARM targets are compiled, never run.
-
-  It has a hole, and it is the one that matters most: vesafb offers
-  *palette* at 8bpp, not greyscale, so `Encoding::Grey` — the path a real
-  Kobo or Kindle is most likely to take, since KOReader forces 8bpp grey
-  on devices that do not default to it — is still covered only by unit
-  tests against constants we typed.
-- **Damage beyond selections and highlights.** A page turn that only moves
-  a footer, or an image landing in a fixed rect, could both state their
-  region and don't.
-- **RGBA end-to-end is the expensive assumption**, and now partly
-  measured. `cargo run -p chapbook-cli --example timings` breaks the
-  pipeline down; `-p chapbook-paint --example quantbench` isolates the
-  panel conversion. On x86 at Clara geometry, per page turn: render
-  1.17ms, quantize 6.45ms, rotate 0. `rotate` no longer allocates — an
-  unrotated page borrows — so that half of the churn is gone, but
-  `quantize` is now essentially the whole cost, and it is at its serial
-  floor (see the note in the function: three micro-optimizations tried,
-  the two that helped were not bit-exact).
-
-  **Possible later, deliberately not done now:** `quantize` runs over the
-  whole page while `present` blits only the damage rect, so a selection
-  drag converts ~1.5M pixels to update perhaps 50k. Scoping it to damage
-  would cut that roughly by the damage ratio. The catch is that error
-  diffusion is not local — a scoped pass starts from zero error at its
-  edges, leaving a faint dither seam at the boundary — so it would want
-  restricting to `dither: false`, or to the provisional classes that a
-  later Quality update corrects anyway.
-
-  This is probably premature. The numbers above are x86; on a Clara they
-  would be several times larger, but the e-ink refresh they feed is
-  ~450ms, so quantize is plausibly a tenth of perceived latency rather
-  than the 80% of CPU time it looks like here. Trading a visible seam
-  against that is not a judgement to make without the hardware in hand —
-  and on an EPDC the right answer is likely the bullet below instead: hand
-  over undithered grey and let the controller do it.
-- **`dither` was page-global.** Its own doc said images need it and body
-  text does not, but one flag covered the whole page, so it could not be
-  both — and the display list, which knows which ops are images, was
-  having that discarded at the seam. `DisplayList::dither_regions` now
-  hands those rects to `chapbook_paint::quantize_regions`, which diffuses
-  inside them and quantizes plainly everywhere else; `Session::render`
-  and the fbdev example both go through it.
-
-  The seam objection above applies here too and is answered by *where*
-  the seam falls. Error diffusion scoped to a region starts from zero at
-  its edges, which is a discontinuity — but an image's boundary is
-  already a hard content edge, so a discontinuity there is invisible in a
-  way the same one mid-paragraph would not be. That is the difference
-  between this and scoping to a damage rect, whose edges fall wherever
-  the last glyph happened to move.
-
-  Mostly harmless at 16 levels, decisive at 2 — which is no longer
-  hypothetical now that a 1bpp panel can be opened at all.
-- **Quantizing above the panel is redundant on the hardware that matters,
-  and the level count is attached to the wrong thing.** An EPDC quantizes
-  and dithers itself — passthrough, Floyd–Steinberg, Atkinson, ordered,
-  quant-only, with `quant_bit` setting the depth — so a CPU pass over a
-  multi-megabyte buffer buys nothing on exactly the device where it costs
-  most. Worse, the correct depth is a property of the *update*, not the
-  session: A2 is two levels, GC4 four, GC16 sixteen. Quantize the buffer
-  to sixteen and an A2 update re-quantizes it anyway; quantize to two and
-  the next page turn is ruined. On an EPDC the right move is to hand over
-  8-bit grey undithered and let the controller decide per update, which
-  means `PixelFormat` wants to become a request a panel can decline rather
-  than a decision made above it. That inverts part of the current design,
-  so it is written down rather than acted on.
-- **Sub-byte pixels** were foreclosed — `FbdevPanel::open` rejected any
-  depth that was not a whole number of bytes, so a 1bpp framebuffer was
-  turned away before anything else ran, and 1-bit packed is the *normal*
-  case for a bare SPI panel as well as what `PixelFormat::Grey { levels: 2 }`
-  exists to serve. It is now supported: `Encoding::Mono` packs eight
-  pixels to a byte MSB-first, and a partial byte at either end of a damage
-  rect is read-modified-written rather than overwritten, because damage
-  rects come from glyph geometry and are aligned to nothing.
-
-  Two details are load-bearing. Polarity comes from the kernel's visual
-  (`FB_VISUAL_MONO10` versus `MONO01`) rather than from a convention,
-  because guessing wrong produces a flawless negative and no error to
-  notice it by. And depth is classified before `grayscale`, because a mono
-  framebuffer may well set that flag and `Encoding::Grey` writes a whole
-  byte per pixel — eight pixels' worth of memory for every one.
-
-  A mono panel is also the one case where a non-`Rgba` default is honest:
-  it asks for `Grey { levels: 2, dither: true }`, so the reduction happens
-  where the error can be diffused rather than one pixel at a time in the
-  blit's threshold. 2bpp and 4bpp are still out, and for a reason rather
-  than an oversight: nothing in `fb_var_screeninfo` or `fb_fix_screeninfo`
-  says which end of the byte their pixels start at.
-
-### The targets the seam has to survive
-
-Not a roadmap — a set of shapes to check designs against, because each one
-pulls in a different direction and any two of them agreeing proves nothing.
+Not a roadmap — a set of shapes to check designs against, because each
+pulls in a different direction and any two of them agreeing proves
+nothing:
 
 | Target | Surface | Pixels | Update model |
 |---|---|---|---|
@@ -312,693 +189,57 @@ pulls in a different direction and any two of them agreeing proves nothing.
 | Android | JNI to a `Surface`; Onyx adds `EpdController` | ARGB_8888 | none, or Onyx's own DU/GC/A2/REGAL |
 | Pi + Waveshare SPI | SPI transfer plus a BUSY pin | 1bpp packed; some panels 2 or 4 levels | whole-panel or window refresh commands |
 
-The encouraging result is that `Panel` survives all five. A file
-descriptor and an mmap, a JNI call, and an SPI transaction are the same
-three operations — stage the pixels, ask for a change, find out when it
-landed — and `blit`/`submit`/`wait` is that, with the token making the
-asynchrony explicit rather than assumed.
-
-Two of the gaps it exposed were contract wording rather than design, and
-are settled. `blit` no longer says "into the panel's own memory" — true
-for a mapped framebuffer and a locked platform surface, false for a panel
-on the far end of a bus, where `blit` stages and `submit` transmits; the
-obligation is only that the pixels are taken before it returns. And
-`submit` now states that a panel may refresh **more** than it was asked to
-and never less, since controllers impose alignment and bus-attached panels
-refresh byte-aligned windows or the whole screen. Widening costs time;
-narrowing leaves the screen showing something untrue, which on e-ink
-persists. A panel that widens owns the consequence: the no-write-under-a-
-live-update rule is enforced above against the region *requested*, because
-that is all a caller knows, so a panel that went further must make its own
-`blit` safe — which on a bus falls out for free, since it cannot transmit
-while the controller is busy.
-
-E-ink implying greyscale was a third, and is settled: a colour e-ink panel
-sends RGB through a filter array, so `Rgba` with a full set of waveforms is
-an ordinary combination, and `PixelFormat` says so rather than leaving it
-to be inferred. The `2..=16` cap that contradicted it is gone — floored at
-two, which is arithmetic, with no ceiling, which was policy.
-
-The remaining two turned out to be the same question, and the seam could
-already answer it — nothing said so.
-
-**Who reduces is the panel's call, not the session's.** An EPDC quantizes
-and dithers in hardware; a bus-attached panel needs the host to do it and
-to pack to one bit; a desktop needs none of it. `PanelInfo::format` is now
-stated as a *request* rather than a description of the hardware, and it is
-the only thing a caller consults. `Rgba` therefore does not mean "colour
-screen" — it means **do not reduce, I will**, which is the right answer
-for a controller with hardware dithering, for a greyscale framebuffer
-whose `blit` takes luminance anyway, and for the awkward case below.
-
-**Depth belongs to the update, not the session.** Two levels for a fast
-waveform, four for a shallow one, sixteen for a full one. No single
-`PixelFormat` expresses that, and pre-reducing to any one of them is wrong
-in both directions. The resolution needs no new API: such a panel asks for
-`Rgba`, keeps what `blit` staged, and reduces in `submit`, which is the
-first point where the `UpdateClass` is known — legitimate because `blit`
-is defined as *taking* the pixels rather than copying them into a mapping,
-so panel-owned storage is a valid destination. That is also exactly the
-shape Android wants (lock, write, unlock) and the only shape SPI allows,
-so the three converge. A test panel does it, resolving one staged ramp to
-2, 4 and 16 levels by class, so the arrangement is demonstrated rather
-than asserted.
-
-What stays open is narrower than it looked: whether a panel should be able
-to hand *out* its staging buffer so a shell renders straight into it and
-skips a copy. That is a throughput change, it belongs with the RGBA
-end-to-end item above, and it wants a real backend and a measurement
-rather than a guess.
-
-## 2. The reading model above the page
-
-The session could turn pages and change fonts; everything else here was a
-gap a shell would have had to reinvent. Most of it has since landed —
-what's left is called out per item, and the one structural piece is the
-session's own shape, which §3 forces anyway.
-
-**Navigation (landed).** `goto`, `goto_anchor`, `goto_toc`, `link_at`,
-`follow_link`, and a capped back-stack: jumps remember where they came from,
-ordinary page turns don't, so a footnote returns to the sentence that sent
-you. Fragments resolve through the `anchors: id→page` map layout already
-computed, and a fragment the unit turns out not to have lands at its start
-rather than failing. Links ride the locator offset space rather than the
-fragment tree — paint carries no DOM types — which also means a link hit
-test survives relayout for free, and that a tap in the margin beside a link
-is not a tap on the link.
-
-**Annotations (landed, minus export).** Highlights, notes, and bookmarks all
-have callers; `highlight_at` finds the mark under a tap so a reader can
-recolor or delete one by touching it rather than by id; `annotations()`
-lists every mark in the book without resolving any of them, since the
-stored record already carries its quote and progression; `goto_annotation`
-jumps to one. Bookmarks are points and paint nothing. Colors are stored as
-written and fall back to the theme when absent or unparseable. What's left
-is interchange — serializing the W3C EPUB Annotations 1.0 / Readium profile
-(§5), not more model.
-
-**Search (in-book landed).** `search_unit` is the building block — a shell
-wanting the whole book without blocking drives it unit by unit on a worker —
-and `search` walks the spine for the impatient, with the same blocking
-contract as `unit_bytes`. Hits are locators, so they feed straight into
-`goto`, and `select_range` puts one on the page. Each carries a
-whitespace-collapsed context snippet with the match's range inside it, since
-locator text is raw source text and a results list can't show that. Matching
-folds case one character at a time, which keeps every hit on an exact
-offset; full case folding and diacritic folding would not.
-Library-level search across books is a second, separate want.
-
-**Settings (landed, minus font family).** `set_settings` takes the whole
-`ReadingSettings` — including `line_height`, `justify`, and
-`publisher_styles`, which no shell could reach before — and persists it to
-the library, so font size survives a restart. `SettingsScope` picks whether
-a change is the reader's default or this book's override; an override
-outlives later changes to the default, and `clear_book_settings` hands the
-book back. `cycle_theme` and `adjust_font` remain as conveniences over it.
-Still missing: font-family selection — but no longer blocked. The
-font-enumeration story it was waiting on is `Session::font_families()`,
-which arrived with `FontSource`, so what remains is a field in
-`ReadingSettings` and a family name reaching the cascade. (Margins are
-fine: they live in `PageMetrics`, supplied by the shell.)
-
-**Session lifecycle.** `open(source: &str, fonts: FontSource)` sniffs a
-string. A platform wants
-typed sources plus injectable I/O — Android content URIs, iOS
-security-scoped bookmarks, in-memory books, and encrypted stores all fail the
-string-path assumption. An observer/event model (layout invalidated, position
-changed, book finished) should replace polling where shells need to react.
-
-## 3. The portability layer
-
-**Built, and proven from outside the workspace at every level it names.**
-This section used to be the statement of a missing boundary; two spikes — an
-Android ladder driven to a real device and an iOS ladder driven to a
-simulator app — shaped the API, their findings were fixed in safe Rust, and
-the boundary froze only after both had walked it.
-
-- **The C ABI** is `crates/chapbook-ffi`, with `include/chapbook.h` checked
-  in beside it: hand-written, Contract tier, golden-tested against the
-  crate, compiled as C99/C11/C17 in the gate, every entry point wrapped in
-  `catch_unwind`, nothing crossing owned. The crate docs state the rules
-  and the rejected alternative (UniFFI); `cb_capabilities()` exists because
-  a header cannot say which artifact a host actually loaded, and a build
-  without the library reads perfectly and remembers nothing.
-- **Typed sources** close the string-sniffing constructor: a path, bytes,
-  a seekable handle, or a catalog URL, with the format sniffed from the
-  bytes. Every capability the constructor used to reach for behind the
-  caller's back — fonts, credentials, transport, the library directory, a
-  cache budget — arrives through `SessionConfig`.
-- **The input model** is `chapbook_core::input`: an `Action` vocabulary,
-  `TapZones` that read the book's direction so a shell cannot default every
-  platform to LTR, and a `KeyMap` that already knows Kobo and PocketBook
-  page-turn buttons — applied through `Session::apply`, whose
-  `ActionOutcome` distinguishes *repaint* from *consumed* because Android's
-  volume slider is what happens when a shell cannot. Settled on a
-  touchscreen before it crossed the header.
-- **Lifecycle and power** are `suspend()`, `set_cache_budget` and
-  `release_caches`. Suspend closes the database rather than merely
-  flushing: an iOS app holding a POSIX advisory lock in a shared container
-  when it suspends is killed by the watchdog (`0xdead10cc`), which makes
-  lock release a design constraint rather than a bug found later.
-- **Android** is `crates/chapbook-jni` plus the `android/` Gradle pair
-  (library AAR and demo) — a direct Rust binding, deliberately not a
-  consumer of the header; `docs/STABILITY.md` has that argument and
-  `android/README.md` the platform notes.
-- **iOS** is the Swift package in `ios/` over the header — the consumer
-  that cannot route around it, which is what keeps a C ABI honest. An
-  XCFramework by necessity: the device and simulator slices are both
-  arm64 and `lipo` refuses to put them in one file. `ios/README.md` has
-  the platform notes.
-
-**What is still open here, none of it structural:**
-
-- **Device-only questions.** The iOS rungs ran on a simulator, which is not
-  App Sandbox confinement: still owed to a physical device are bundled
-  SQLite in a real container, whether `/System/Library/Fonts` is readable
-  from inside the sandbox (the simulator says yes and proves nothing),
-  bookmark revocation, and iCloud placeholder files — legal, named, not
-  yet downloaded. Android's rungs ran on an x86_64 emulator plus one
-  device; iOS closed the arm64 half for Apple only.
-- **Fonts.** Three decisions, recorded when the font source landed:
-  whether an embedded source ships in every shell binary or only in tests
-  (four Crimson Text faces is not nothing; the standing rule is that
-  shells must *name* a source, so nobody falls back to one serif
-  silently); who owns the per-target generic-family tables
-  (recommendation: `chapbook-layout` ships known-good mappings per
-  platform with a shell override, rather than every shell rediscovering
-  that `sans-serif` means Roboto); and whether to send fontdb its missing
-  six-line iOS branch upstream. Related and also unapplied: cosmic-text's
-  `fontconfig` feature still compiles into every unix target, including
-  the two (iOS, Android) where `/etc/fonts/fonts.conf` cannot exist — it
-  wants a per-target dependency declaration.
-- **WASM stays a demo, deliberately.** `wasm-bindgen` wraps Rust, not C,
-  so a browser build is a sibling exporter over the same shape, never a
-  header consumer. The EPUB-only profile it forces
-  (`--no-default-features`: no SQLite, no loader thread, fonts embedded,
-  opened from bytes) is the same profile a stripped e-ink build wants, is
-  measured at 6.0 MB / 2.08 MB gzipped for the whole reading path, and is
-  held open by a `cargo check --target wasm32-unknown-unknown` in CI —
-  check it in CI, do not ship it from CI. A session in that profile reads
-  and remembers nothing, which are the honest consequences of having
-  nowhere to write. stylo styles single-threaded by construction
-  (`chapbook-layout/tests/sequential.rs` pins it), so no
-  `SharedArrayBuffer` gymnastics are owed.
-
-**The boundary is not the only thing that assumed a desktop.** Designing it
-surfaced the same assumption in the OPDS transport, the credential store and
-the library's file custody. Those are §7.
-
-**Cross-compilation is proven, except GTK.** CI checks `chapbook-core` and
-`chapbook-panel-fbdev` against armv7 and aarch64, which is what makes the
-panel backend's kernel-struct assertions worth having: `fb_fix_screeninfo`
-embeds two `unsigned long`, so its field offsets move with word size, and
-a drifted transcription reads plausible garbage rather than failing. Those
-are const-evaluated, so the check needs no linker, device, or emulator.
-
-Beyond `check`, everything except `chapbook-viewer-gtk` now cross-*builds
-and links* for `aarch64-unknown-linux-gnu` — the CLI, the winit viewer,
-and the panel examples, `ring` and bundled SQLite and hayro included. The
-linked binary needs `libc`, `libm` and `libgcc_s` and nothing else.
-
-Two worries recorded here were simply wrong. SQLite is `bundled`, so it
-compiles from source with the cross toolchain instead of wanting a target
-sysroot. And "fontconfig" is `fontconfig-parser`, a pure-Rust reader of
-fontconfig's *config files* — libfontconfig is never linked, and never
-was. GTK is the real exception, and it is a packaging problem rather than
-a code one: `gobject-sys` wants a pkg-config sysroot for the target.
-
-**It has been run.** The fbdev backend has been exercised on a Raspberry
-Pi 4 with an 800x480 RGB565 DSI panel, cross-built as above: `probe`
-reports what the kernel reports, `selftest` passes all seven packing cases
-against read-back, and `show` renders and turns pages. What that did and
-did not settle:
-
-- The panel is `vc4drmfb` — **fbdev via DRM emulation, not a native fbdev
-  driver**. That is how most modern ARM boards and a good few readers
-  expose a framebuffer at all, so it is the more important case to have
-  working, and it does.
-- The struct assertions matching is reassuring but not news: aarch64
-  shares pointer width and endianness with x86-64, so const-eval there
-  already implied it. What was untested until now is the surrounding
-  code — the ioctls, and classifying a real driver's `visual` and
-  bitfields rather than QEMU's.
-- Binary size is a real budget, as recorded: the all-formats `show` is
-  18.8 MB. That is what §6's feature flags are for.
-- Font provisioning did not bite, because a general-purpose distro ships
-  dozens of fonts. The concern is narrower than written here: it applies
-  to a stripped device rootfs, not to any Linux with a desktop lineage.
-- **The refresh policy is still unproven.** That hardware is an LCD: no
-  EPDC, no waveforms. `UpdateClass` resolves and the plumbing is
-  exercised, but `RefreshPolicy`'s whole reason for existing — rationing
-  the ghosting flash, refusing to flash under a moving finger — needs an
-  e-ink panel and still has none.
-
-The glibc worry also stands only for readers, not for boards: a current
-distro is current, a Kobo is not.
-
-## 4. Features shells cannot add from outside
-
-These belong to the engine by construction; a downstream app cannot implement
-them itself. Hyphenation is the proof the category is real: dictionary-based
-`hyphens: auto` had to go in the line breaker, and did.
-
-- **TTS** — the engine primitives exist: `Session::speakable_page` hands a
-  TTS engine the page as one string plus the word table that maps its
-  progress reports back to locator space, and `range_rects` turns a word's
-  range into the highlight. What remains is per-platform plumbing
-  (`AVSpeechSynthesizer`, Android TTS), which is shell work.
-- **Dictionary lookup** — `Session::word_at` answers the word under a tap
-  as a locator range; `select_word_at` selects it. The popup is the
-  shell's.
-- **Bidi correctness** for Arabic/Hebrew — cosmic-text can do it; confirm it
-  is exercised and tested rather than assumed. Still open.
-- **Accessibility** — the engine's half is built: `Session::page_text_runs`
-  is the text-runs-and-rects accessor §7 called for, and the GTK viewer
-  wraps it in GTK's `AccessibleText`, verified against AT-SPI end to end.
-  Android's tree exists too: the AAR's `PageAccessibility` is a raw
-  `AccessibilityNodeProvider` over the same runs — one virtual node per
-  line, explore-by-touch, page-turn announcements — verified on an
-  emulator against uiautomator's node walk and TalkBack's speech
-  dispatch. The Apple trees are the Swift package's `PageAccessibility`,
-  one name with two platform-shaped halves: on iOS a
-  `UIAccessibilityElement` per line for VoiceOver's swipe order, on
-  macOS one `NSAccessibility` static-text element answering the same
-  range-and-extent questions the GTK surface answers Orca — and the
-  macOS half runs under `swift test`, so VoiceOver's questions are
-  asserted on every build machine. §7 has the history, including the
-  FFI claim it corrects.
-
-## 5. Breadth and sync
-
-Formats today: EPUB, CBZ, PDF, and OPDS-PSE streams. App builders will ask
-for MOBI/AZW3 (large existing libraries), CBR (blocked on pure-Rust RAR5
-extraction, which does not exist), and FB2.
-
-**Sync compounds at platform scale.** There is no reading-position sync
-client and no annotation sync: comics resume via `pse:lastRead`, but text
-positions never leave the device. Every app built on chapbook would otherwise
-implement this separately, so it belongs in the platform. Two targets, both
-cheap given the existing locator design:
-
-- **OPDS Progression 1.0** — `progression` maps from `book_progression`;
-  `references` from the quote layer as text fragments. The layered record was
-  designed to serialize directly into this.
-- **kosync** — four endpoints, the de-facto self-hosted standard; grants
-  interop with third-party servers immediately. Its identity model is weak
-  (file hash), so treat percentage as the reliable field and let the layered
-  locator degrade over it.
-
-For annotation interchange, serialize the W3C EPUB Annotations 1.0 /
-Readium profile (import/export); no sync transport is standardized yet.
-
-The local half is already built, which is easy to miss: `positions` carries
-`updated_at` and the other user tables carry `deleted` soft-delete flags, so
-the schema can answer "what changed since" without migration. See §7.
-
-## 6. Platform hygiene (closed)
-
-The unglamorous half, and the real distance between "modular codebase" and
-"platform someone else can build on". All five bullets below are now done;
-they are kept rather than deleted because each records a decision, and the
-last two record a failure that motivated one.
-
-- **API stability policy** — done: `STABILITY.md` sorts all seventeen
-  workspace members into six tiers. The proposal here was public
-  (`core`, `reader`, `library`, `opds`, `paint`) versus internal
-  (`dom`, `style`, `layout`), leaving the render backends, the panel
-  backends and the viewers unplaced. What settled them was asking about
-  blast radius rather than call frequency: `core` and `paint` are
-  *Contract*, because a change to either breaks every shell and every
-  backend at once, including ones outside this repository; the backends
-  are stable in the direction that matters, which is the trait they
-  implement and not the crate implementing it. A test in the CLI crate
-  keeps the document from silently omitting a member.
-- **Feature flags.** Mostly done. `chapbook-reader` now gates `cbz`, `pdf`
-  and `opds`, all on by default; a device build turns off what its hardware
-  will never open. Measured on the `chapbook-panel-fbdev` `show` example,
-  which is the device-shaped binary: **20.4 MB with all three, 12.5 MB with
-  none — 39% smaller**, and 237 third-party crates down to 196. What leaves
-  is the whole TLS stack (rustls, ring, webpki) and the whole PDF stack
-  (hayro with its JBIG2, JPEG2000, CCITT and PostScript decoders). CBZ
-  costs nothing on its own — its `zip` is already in the graph for EPUB.
-  GTK was never the problem: it is a separate crate you simply do not
-  depend on. Every shell in this workspace asks for all three, so CI checks
-  the narrow configurations directly (`reader-features`) — otherwise they
-  rot unnoticed.
-
-  Knobs deliberately left alone, each wanting a device to justify it:
-  cosmic-text's `fontconfig` default (fontdb falls back to scanning the
-  usual font dirs without it, which is what a device has anyway);
-  `rusqlite`'s `bundled`, which compiles SQLite from C and so needs a cross
-  C toolchain; `hayro`'s `embed-fonts`/`embed-cmaps`, which are correctness
-  for PDF; and wgpu's backend set behind `chapbook-render-vello`, which no
-  device build links at all.
-- **Docs for shell authors** — was the missing genre; now `SHELLS.md`.
-  `ARCHITECTURE.md` explains the pipeline, this explains how to sit on top
-  of it: the five-step shape of a shell, metrics in reading orientation,
-  what `frame()` carries and the fact that taking one consumes the change
-  record, the loader rule, position, panel policy, and what to depend on.
-- **A shell conformance harness** — done: `chapbook_reader::conformance`.
-  Given a session factory it asserts eleven rules a shell relies on, with
-  `Skipped` a first-class outcome so a comic's missing text layer cannot
-  masquerade as a pass; `examples/conform.rs` is the same thing from a
-  terminal.
-
-  The concrete instance behind it: the first end-to-end run of the fbdev
-  example on real hardware turned exactly one page and stopped, and the
-  defect was in the *shell*, not the engine — it compared `session.page()`
-  across a turn, but `next_page` crosses into the next spine item by
-  resetting the page to 0, so a unit change read as "did not move". Every
-  book that opens on a single-page cover hit it. Nothing in the test suite
-  could have caught it, because it is not about what `Session` computes but
-  about how a shell drives it.
-
-  The harness proves the rule; the API now also makes it hard to get
-  wrong. `next_page`/`prev_page`/`next_unit`/`prev_unit` return whether the
-  position moved, and `Session::position()` returns the `(spine, page)`
-  pair as one value, so the broken comparison is no longer the obvious one
-  to write.
-- **A reference minimal shell** — done:
-  `chapbook-viewer/examples/minimal.rs` — 185 lines against the viewer's
-  389, and a good share of those are commentary. Selection, links,
-  clipboard, touch and the GPU backend are all stripped out, so what is
-  left is only what every shell must get right. Its six numbered comments
-  are `SHELLS.md`'s five steps plus the loader rule.
-
-## 7. The edges assume a desktop
-
-The iOS assessment asked a larger question than the FFI: is this engine the
-right shape to build an Apple app on, or should an iOS app lean on Apple's
-frameworks instead? The answer splits cleanly, and the split is the same
-one §2 found in the constructor.
-
-**The engine is right. The edges are wrong.** Keep the pipeline, the locator
-design, the schema and the format parsers. Push transport, credentials, file
-custody, fonts and accessibility metadata out to the platform. Every item
-below is the same defect §2 named — an environment assumption baked into a
-constructor — and the list there is two entries short.
-
-### The render pipeline earns its place, measured
-
-The obvious substitution is a `WKWebView`, which is what most iOS readers
-are. It loses on the numbers, and it loses worse on locators.
-
-A synthetic twelve-chapter book of dense body text, release build, Apple M2:
-
-| target | device px | first page | repaint | page turn | bitmap |
-|---|---|---|---|---|---|
-| e-ink 800×480 @1x | 800×480 | 56 ms | 0.26 ms | 0.28 ms | 1.5 MB |
-| iPhone 393×852 @2x | 786×1704 | 38 ms | 0.83 ms | 0.84 ms | 5.1 MB |
-| iPhone 393×852 @3x | 1179×2556 | 39 ms | 1.76 ms | 1.79 ms | 11.5 MB |
-| iPad 834×1194 @2x | 1668×2388 | 40 ms | 2.51 ms | 4.33 ms | 15.2 MB |
-
-"First page" is open, parse, cascade, paginate and rasterize together. A page
-turn inside an already-paginated chapter is under 2 ms at iPhone @3x. Assume
-a phone core is three times slower than this one and it is still ~5 ms, for
-work that happens once per gesture rather than once per frame. CPU
-rasterization is not the constraint, and no performance argument for a web
-view survives contact with these numbers.
-
-The argument that actually matters is `LayeredLocator`. A web view's notion
-of where you are is a function of its own line breaking, which moves under
-you when the OS updates. The quote-context, spine-fraction and progression
-record — versioned by `LOCATOR_VERSION`, and the reason §5's sync targets
-are cheap — is what makes a position survive a font change, a rotation and a
-different device. It cannot be rebuilt above a web view; a reader built that
-way spends its life fighting one.
-
-**The honest counterweight,** because this is a ceiling and belongs with the
-others: `chapbook-layout` is 3,873 lines of layout over 421 lines of
-cascade driver over stylo. That is a real subset of what publishers ship,
-and a web view gets the long tail — MathML, ruby, broken markup — for free.
-The pipeline is right *for a controlled-typography reader*. It is the wrong
-tool for an app whose job is rendering arbitrary publisher EPUBs faithfully,
-and no amount of FFI work changes that.
-
-### Transport belongs to the host — split done, plumbing open
-
-**Status: the crate split is done; passing a transport in through
-`Session::open` is not.** This section is kept because the argument still
-explains the shape, and because the credential half below is still open.
-
-The problem was that OPDS reached the network through `ureq` with its own
-rustls stack and `webpki-roots`. On iOS that means bypassing `URLSession`,
-and the losses are not cosmetic:
-
-- **Background transfer.** A large download dies when the app suspends. A
-  background `URLSession` is the only thing that finishes it, and there is no
-  Rust equivalent — the OS continues the transfer, not the process.
-- **System trust.** A bundled root store ignores MDM-installed roots and
-  Apple's revocation policy.
-- **App Transport Security, proxies, per-app VPN, Wi-Fi-only and the
-  cellular-data toggle.** ATS governs `NSURLSession` and CFNetwork, not raw
-  sockets, so the app's declared network posture silently does not cover this
-  traffic.
-
-The same argument gives Android background downloads through WorkManager and
-gives WASM `fetch`, which it has no choice about.
-
-The fix was the one this section predicted, and it came in at the size it
-predicted. `chapbook-opds` split in two: `opds-client` holds the format and
-protocol knowledge — Atom, OPDS 2.0, hrefs, auth flows, search, PSE
-templating — and `chapbook-opds` keeps only the ~200 lines that could not
-travel, the `Publication` impl and the error seam. `opds-client` opens no
-sockets: the caller injects an `HttpClient`, a blocking trait over an owned
-`HttpRequest`/`HttpResponse` pair chosen to survive a trip through a foreign
-runtime. `UreqHttp` is one implementation behind a default feature;
-`--no-default-features` leaves a dependency tree with no ureq, no rustls and
-no `ring` in it — which also removes the second of the two C dependencies
-that made the NDK an Android prerequisite (bundled SQLite is the other, and
-that one stays).
-
-`HttpClient::download` is the part worth noting for iOS specifically: it has
-a default that streams to a temp file and renames, and it exists to be
-overridden, so a host that owns a background download facility takes the
-whole operation rather than handing back a stream that dies on suspend.
-
-**The level up is now done too.** `Session::open_with` takes the transport
-through `SessionConfig`, and `chapbook-reader` grew a `ureq` feature so the
-bundled one can actually be dropped: `--no-default-features --features opds`
-keeps every byte of OPDS parsing and takes ureq, rustls, ring and webpki out
-of the graph — 313 dependency edges to 264. That is the device shape, and
-CI checks it. A build that drops the transport and forgets to supply one
-gets a sentence naming `with_transport`, not a compile error.
-
-Two smaller things fell out of it. `HttpClient` is now implemented for
-`Arc<T>`, because a host owns *one* transport — a single background
-`URLSession` whose whole value is that transfers outlive the process — while
-the session builds a client per authentication attempt. And the credential
-retry finally has a test: a fake transport that rejects the cached token and
-accepts the renewed one drives cached-rejected → `Freshness::Renewed` → one
-retry → success with no socket open, in the no-TLS configuration.
-
-**Credentials have now gone with it — done.** They were the worse half of
-the problem: `opds_sources.auth_secret` was plaintext in SQLite, and
-`Session::open` read `CHAPBOOK_OPDS_USER` and `CHAPBOOK_OPDS_PASSWORD` from
-environment variables that do not exist on a phone. Both are gone. A
-`chapbook_core::CredentialStore` is injected through `SessionConfig`
-(Keychain, Keystore, Secret Service, `EnvCredentials` for the CLI and a
-headless box, `NoCredentials` in a browser), and the schema's secret column
-is dropped by migration v3 rather than merely left unread, so a future
-writer cannot quietly reintroduce a plaintext store.
-
-Three decisions in that seam were made for the C ABI's sake rather than for
-today's, because they are the expensive ones to change once a Contract-tier
-header exists:
-
-- **The value is an opaque `Authorization` header**, not a username and a
-  password. `opds-client` already stored a precomputed header string, so
-  `set_authorization` is the primitive and `set_basic_auth` a convenience
-  over it. HTTP Basic today; an OAuth bearer token is the same field and
-  reaches the engine without touching engine code. What genuinely cannot be
-  one constant header — per-request signing, cookie sessions — belongs to
-  the injected `HttpClient`, which sees the whole request; that division is
-  written into `http.rs`.
-- **The key is stable and not a secret.** A catalog URL may carry a
-  per-user API key in its path, so `CredentialKey` is an origin or a
-  library row id. This is the highest-risk item and the one that looks
-  lowest: a key change orphans entries already written to a device's
-  Keychain, and no compiler catches it.
-- **Lookups repeat, and say why they failed.** `Freshness::Renewed` is how
-  a caller reports that the last value was rejected, which is the whole
-  difference between a constant secret and an expiring one;
-  `CredentialLookup` separates *nothing stored* from *locked right now*, so
-  a shell does not re-prompt for a password the user already gave a
-  Keychain that has not been unlocked yet.
-
-Prompting stays in the shell, deliberately and as a hard rule. Android's
-user-authentication-bound keys prompt on the UI thread and chapbook reaches
-credentials from the loader thread, so a store that can block on a person is
-a deadlock. `opds-client` already declines to retry and hands back the
-server's Authentication Document, which is what a native login dialog is
-built from. That keeps OAuth's browser round-trip entirely outside the
-boundary.
-
-### Custody: bookmarks, not copies
-
-A private directory owning copies of books is a desktop idea. iOS users
-expect books to live in Files or iCloud Drive, reached through the document
-browser and security-scoped bookmarks — visible to them, not sealed inside
-a container, and not duplicated. Android's storage access framework is the
-same shape with a `content://` URI where the bookmark would be.
-
-**The engine's half is done.** The library keys identity by edition
-fingerprint — a streaming hash of the bytes, no longer a whole-file read —
-and a book that arrives as bytes or a descriptor is *adopted*: recorded
-with metadata, cover and an empty `file_path`, never copied. Positions,
-annotations and per-book settings key on the record, so a descriptor-opened
-book comes back where the reader left it, and the same file imported by
-path on a desktop resolves to the same shelf row.
-
-**The shell's half is holding the way back to the file.** A security-scoped
-bookmark or a persistable URI grant is the platform's object, revocable and
-meaningless to the engine, so the shell persists it and re-resolves it *on
-every cold launch, before the session is constructed* — scoped access does
-not survive relaunch, and the engine must not be handed a descriptor whose
-access has lapsed. The remaining design question is the shelf: a browsing
-UI over adopted books needs the shell to map its stored bookmarks to
-library records (the fingerprint is the natural key), and a book whose
-bookmark has been revoked — moved, deleted, or an iCloud placeholder — is a
-row the shell must degrade gracefully rather than a case the engine can
-see.
-
-### Storage stays SQLite, and is already sync-shaped
-
-Bundled SQLite compiles and links for `aarch64-apple-ios`. Replacing it with
-Core Data or SwiftData would make the storage layer unshareable with Linux
-and Android, which is the whole point of having one. Keep it.
-
-Three adjustments, all shell-visible rather than schema-visible: the database
-belongs in `Library/Application Support` rather than the `$HOME` fallback it
-used to land in by accident (`default_dir()` now has a per-platform arm and
-refuses to guess where there is no convention), it needs an explicit backup-exclusion decision, and it
-must not hold file locks across suspension once a share extension or widget
-puts it in a shared container.
-
-Worth recording as a thing that went right: `positions` carries `updated_at`,
-and `books`, `annotations` and `opds_sources` all carry `deleted` soft-delete
-flags. That is the local half of §5's sync story already in place — an iOS
-shell can mirror those tables into CloudKit with no schema change, and sync
-stays a shell concern rather than an engine one.
-
-### Accessibility is built, and was never an FFI question
-
-§4 lists accessibility as a feature shells cannot add from outside, and that
-is still true. A rasterized page is opaque to VoiceOver: a reader that is a
-*picture* of text is unusable with a screen reader, and a web view would
-have given that away for free.
-
-**This section used to say the display list was the material an
-accessibility tree is built from, and that keeping it out of the first C ABI
-therefore decided v1 could have no screen-reader path. Both halves were
-wrong.**
-
-The display list carries no text. `DisplayOp::GlyphRun` holds a face, a
-size, a weight, a colour, an origin, and `Vec<Glyph>`, where a `Glyph` is
-`{ id, x, y, advance, locator }` and `id` is a *font glyph index*. There is
-no string anywhere in `chapbook-paint/src/display.rs`. The text lives one
-level up, on `LineFragment`, which carries `text: String` and
-`locator_start` — and `build_display_list` drops it on the way down, quite
-correctly, because a rasterizer has no use for it.
-
-Recovering characters from glyph indices would mean reversing the font's
-cmap, which is lossy in exactly the cases that matter: an `fi` ligature is
-one glyph for two characters, contextual Arabic forms collapse several
-glyphs to one letter, and small-caps or oldstyle variants alias. A screen
-reader fed that reads the *wrong* text, which is worse than reading none.
-
-So accessibility never wanted `frame()`. It wants the page's text runs with
-their rects and locator ranges — `LineFragment` material — which is a much
-smaller thing to hold still than the paint vocabulary: no font ids, no
-colours, no glyph arrays, and no `cosmic_text::fontdb::ID` dragged into a
-Contract-tier header. The selection loupe and the edit menu want the same
-runs, and `Page::rects_for_range` already turns a locator range into rects
-internally.
-
-**Two consequences.** Keeping the display list out of the first C ABI costs
-accessibility nothing, so that recommendation is now a cheap yes rather than
-a reluctant trade. And the accessor is *additive* — adding a function to a C
-header breaks no one — so none of this has to happen before a header exists.
-
-**The real gap was a level below the boundary.** `Session` exposed no page
-text with geometry at all: `selected_text` needed a selection to already
-exist, and `search_unit` answered a query. Nothing answered "what text is
-on this page, and where" — so this was never an FFI scheduling constraint;
-it was a missing accessor, and it was fixed in safe Rust and tested in the
-workspace, as predicted.
-
-**Status: built and proven.** `Session::page_text_runs` is that accessor —
-one `{ text, rect, locator_start, locator_end }` per visual line — and it
-came with the word layer TTS and dictionary lookup wanted from the same
-material: `speakable_page` (the page as one collapsed string plus a
-`WordSpan` table, segmented in locator space so spans feed `range_rects`
-and `select_range` directly) and `word_at`. The GTK viewer's `PageArea`
-subclass wraps the accessor in GTK's `AccessibleText`, and the proof ran
-in the predicted place: read back over the live AT-SPI bus — page text,
-word granularity, and range extents all answering — before the C ABI
-froze the struct layouts. The surface crossed every boundary the same
-week: `cb_session_page_text_run*`, `cb_session_page_word*`,
-`cb_session_range_rects` and `cb_session_word_at` in the header, with
-JNI and Swift wrappers over the same shapes. The trees over those
-wrappers exist on all four platforms now — GTK proven on the live
-AT-SPI bus, Android on an emulator, the Swift package's two
-`PageAccessibility` halves (UIKit element list, AppKit static text)
-with the macOS half asserted by `swift test` and the iOS half still
-owed a VoiceOver session on a real device. What remains beyond that is
-speech plumbing (`AVSpeechSynthesizer`, Android TTS), which is shell
-work by construction.
-
-**Text identity, two smaller ones.** Nothing reads `UIContentSizeCategory`,
-so Dynamic Type — the accessibility setting Apple users actually change —
-does not reach `adjust_font`. And if the sandbox turns out to block
-`/System/Library/Fonts`, note that the bundled-faces fallback cannot include
-San Francisco: it is licensed for use *on* Apple platforms through the
-system, not for redistribution in an app bundle. The reader would ship an OFL
-face and would not look like an Apple app. That is a product decision, not a
-bug.
-
-## Priorities
-
-1. **FFI boundary (§3)** — done: the C ABI, the input model, lifecycle,
-   and both platform bindings exist and are tested from outside; what §3
-   still lists is device-only verification and font policy, not structure.
-2. **The edges (§7)** — the engine's side is done end to end: credential
-   store, transport, typed sources, library directory, and now custody —
-   a descriptor-opened book is adopted by fingerprint and keeps its
-   place. What remains lives in shells: persisting bookmarks and URI
-   grants, and the shelf-over-adopted-books mapping.
-3. **Sync clients (§5)** — belongs to the platform, not to each app, and
-   annotation interchange rides along.
-4. **Hygiene (§6)** — continuous, never urgent, decides whether any of this
-   is usable by anyone else.
-
-The render seam (§1) came first and is closed, including the damage
-increment that was its last remainder; §2 followed and is closed apart
-from session lifecycle and font-family selection.
-
-§6 is now closed too, which was the cheapest of the three to underrate:
-feature flags, the stability policy, the shell-author docs, the reference
-minimal shell, and the conformance harness. The harness is the one worth
-singling out — it exists because a shell defect got all the way to real
-hardware past a green suite, and it is the only test here that watches
-the seam from the outside.
+`Panel` survives all five because a file descriptor and an mmap, a JNI
+call, and an SPI transaction are the same three operations — stage the
+pixels, ask for a change, find out when it landed — and
+`blit`/`submit`/`wait` is that, with the token making the asynchrony
+explicit. The contract wording the table forced: `blit` obliges the
+panel only to *take* the pixels before returning (staging, not "the
+panel's own memory"); `submit` may refresh **more** than asked and never
+less, and a panel that widens owns making its own `blit` safe under it;
+`PanelInfo::format` is a *request*, so `Rgba` means "do not reduce, I
+will" — the right answer for an EPDC with hardware dithering, and the
+shape that lets a panel reduce per-update in `submit`, where the
+`UpdateClass` is finally known. E-ink does not imply greyscale: a colour
+e-ink panel takes `Rgba` alongside a full set of waveforms.
+
+## Why not a web view
+
+The obvious iOS substitution is a `WKWebView`, which is what most iOS
+readers are. Measured on a synthetic dense-text book, CPU rasterization
+is not the constraint — a page turn inside a paginated chapter is
+single-digit milliseconds at phone resolutions, work that happens once
+per gesture rather than once per frame. The argument that actually
+matters is `LayeredLocator`: a web view's notion of where you are is a
+function of its own line breaking, which moves under you when the OS
+updates, and the quote-context, fraction and progression record cannot
+be rebuilt above one — a reader built that way spends its life fighting
+it.
+
+The honest counterweight: chapbook's layout is a real subset of what
+publishers ship, and a web view gets the long tail — ruby, broken
+markup — for free. The pipeline is right *for a controlled-typography
+reader*. It is the wrong tool for an app whose job is rendering
+arbitrary publisher EPUBs faithfully, and no amount of FFI work changes
+that.
 
 ## Ceilings to decide deliberately
 
 These are choices, not oversights — but a platform should make them
 explicitly rather than by default:
 
-- **Vertical writing and RTL flow** are currently out of scope. This is the
-  one gap that is genuinely *hard* rather than merely unbuilt: it reaches
-  into the layout crate, the largest in the workspace. It is also a hard
-  ceiling for any CJK or manga-oriented app built on chapbook. Decide
-  whether that ceiling is acceptable.
+- **Vertical writing and RTL flow** are currently out of scope. This is
+  the one gap that is genuinely *hard* rather than merely unbuilt: it
+  reaches into the layout crate, the largest in the workspace. It is
+  also a hard ceiling for any CJK or manga-oriented app built on
+  chapbook. Decide whether that ceiling is acceptable.
 - **Fixed-layout EPUB** stays rejected. Reasonable for one app; a bigger
-  deal for a platform, since comics-as-FXL-EPUB is common in the wild and
-  the profile in practice is narrow (one full-bleed image per page). A
-  special-cased image-book path could accept exactly that profile while
-  still rejecting general FXL.
-- **Scope discipline.** Velocity has gone into breadth — another format,
+  deal for a platform, since comics-as-FXL-EPUB is common in the wild
+  and the profile in practice is narrow (one full-bleed image per page).
+  A special-cased image-book path could accept exactly that profile
+  while still rejecting general FXL.
+- **Scope discipline.** Velocity goes into breadth — another format,
   another surface — because that work is more fun than hygiene. Breadth
-  without §6 produces an excellent personal ereader whose code merely looks
-  modular.
+  without the hygiene half (stability policy, conformance harness,
+  shell docs, feature flags) produces an excellent personal ereader
+  whose code merely looks modular.

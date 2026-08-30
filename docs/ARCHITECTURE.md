@@ -208,7 +208,7 @@ stays that way.
   Document login.
   **It opens no sockets.** The caller injects an `HttpClient` — a blocking
   three-method trait over `HttpRequest`/`HttpResponse` — because a bundled
-  networking stack is what PLATFORM §7 found costs an iOS app background
+  networking stack is what `docs/PLATFORM.md` found costs an iOS app background
   transfer, system trust and ATS, costs Android `WorkManager`, and is
   simply unavailable in WASM. `UreqHttp` (blocking `ureq` + rustls, no
   async runtime) is one implementation behind the default `ureq` feature;
@@ -323,7 +323,8 @@ collapsed string plus a `WordSpan` table mapping speech progress back to
 locator space (segmented in locator space, so spans feed `range_rects`
 and `select_range` directly); `word_at` answers a dictionary tap. Built
 over `LineFragment` text and per-glyph locators — deliberately *not* the
-display list, which carries glyph indices and no text; `PLATFORM.md` §7
-has that argument. Each platform wraps the runs in its own tree
+display list, which carries glyph indices and no text; chapbook-reader's
+`text_surface` module docs have that argument. Each platform wraps the
+runs in its own tree
 (`UIAccessibilityElement`, `AccessibilityNodeInfo`, AT-SPI); the GTK
 viewer's `PageArea` is the reference, verified against AT-SPI end to end.

@@ -1,6 +1,17 @@
 //! The text surface: search, selection, and the page's text with
 //! geometry — text runs, the speakable page, words under a point. See
-//! the module doc in `lib.rs` and `docs/PLATFORM.md` §7.
+//! the module doc in `lib.rs`.
+//!
+//! Built over `LineFragment` text and per-glyph locators, deliberately
+//! *not* the display list. The display list carries no text: a
+//! `GlyphRun` holds font glyph indices, and recovering characters from
+//! those means reversing the font's cmap, which is lossy in exactly the
+//! cases that matter — an `fi` ligature is one glyph for two characters,
+//! contextual Arabic forms collapse several glyphs to one letter, and
+//! small-caps or oldstyle variants alias. A screen reader fed that reads
+//! the *wrong* text, which is worse than reading none. The runs are also
+//! a much smaller thing to hold still across the C ABI than the paint
+//! vocabulary: no font ids, no colours, no glyph arrays.
 
 use chapbook_core::{BookKind, Locator, Point, Publication, Rect};
 use chapbook_layout::dom;
