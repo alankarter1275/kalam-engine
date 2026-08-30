@@ -120,3 +120,37 @@ private func metrics() -> PageMetrics {
     #expect(Capabilities.current().contains(.library))
     #expect(engineABIVersion() > 0)
 }
+
+@Test func thePageSpeaksItsText() throws {
+    let library = try scratchLibrary("text-surface")
+    defer { try? FileManager.default.removeItem(at: library) }
+
+    let session = try Session(
+        source: .path(fixtures.appendingPathComponent("epub/minimal.epub")),
+        configuration: SessionConfiguration(fonts: fonts(), libraryDirectory: library))
+
+    // Nothing laid out yet: nil, not empty.
+    #expect(try session.pageTextRuns() == nil)
+    #expect(try session.speakablePage() == nil)
+
+    try session.setMetrics(metrics())
+    _ = try session.pageCount()  // forces the layout
+
+    let runs = try #require(session.pageTextRuns())
+    #expect(!runs.isEmpty)
+    for run in runs {
+        #expect(!run.text.isEmpty)
+        #expect(run.rect.width > 0 && run.rect.height > 0)
+    }
+
+    let page = try #require(session.speakablePage())
+    #expect(!page.text.isEmpty)
+    #expect(!page.words.isEmpty)
+    for word in page.words {
+        #expect(word.textRange.upperBound <= UInt32(page.text.count))
+    }
+
+    // The first word has geometry a highlight can paint.
+    let first = try #require(page.words.first)
+    #expect(try !session.rects(for: first.locators).isEmpty)
+}

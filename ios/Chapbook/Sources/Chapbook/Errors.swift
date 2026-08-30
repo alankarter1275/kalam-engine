@@ -36,6 +36,7 @@ public struct ChapbookError: Error, CustomStringConvertible, Sendable {
 enum C {
     static let ok = Int32(CB_OK.rawValue)
     static let bufferTooSmall = Int32(CB_ERR_BUFFER_TOO_SMALL.rawValue)
+    static let unavailable = Int32(CB_ERR_UNAVAILABLE.rawValue)
 
     static let actionNone = UInt32(CB_ACTION_NONE.rawValue)
     static let formatGuess = UInt32(CB_FORMAT_GUESS.rawValue)

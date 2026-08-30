@@ -753,6 +753,334 @@ pub unsafe extern "C" fn cb_session_render_into(
     })
 }
 
+// ---- The text surface ----
+//
+// The current page's text with geometry — what an accessibility tree, a
+// TTS engine, or a dictionary popup consumes. Deliberately not the
+// display list, which carries glyph indices and no text. Everything here
+// reads what is already laid out; indexes are stable only until the
+// session mutates (a turn, a reflow, a settings change), so re-ask after
+// anything that redraws.
+
+/// A rectangle in page space: CSS px, origin at the page's top-left.
+/// Rotation is a property of the output, so a host painting a rotated
+/// panel maps these itself — the same transform it applies to the pixels.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct cb_rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl From<chapbook_reader::chapbook_core::Rect> for cb_rect {
+    fn from(rect: chapbook_reader::chapbook_core::Rect) -> cb_rect {
+        cb_rect {
+            x: rect.origin.x,
+            y: rect.origin.y,
+            w: rect.size.w,
+            h: rect.size.h,
+        }
+    }
+}
+
+/// One run of the current page's text: one visual line's geometry and
+/// locator range. The text itself comes from
+/// [`cb_session_page_text_run_text`] — split from the struct so nothing
+/// here crosses owned. The run's char count is *not* `locator_end -
+/// locator_start`: shaped text collapses whitespace, drops soft hyphens
+/// and may add generated marks.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct cb_text_run {
+    pub rect: cb_rect,
+    /// Locator range `[start, end)` in the unit's locator space — the
+    /// same offsets positions, selections and annotations use.
+    pub locator_start: u32,
+    pub locator_end: u32,
+}
+
+/// One word on the current page: where it sits in the speakable string
+/// ([`cb_session_page_speakable_text`], char offsets) and in locator
+/// space. A TTS engine reports progress as ranges into the string it was
+/// handed; the locator range is how that progress becomes a highlight —
+/// feed it to [`cb_session_range_rects`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct cb_word_span {
+    /// Char range `[start, end)` within the speakable text.
+    pub text_start: u32,
+    pub text_end: u32,
+    /// Locator range `[start, end)` in the unit's locator space.
+    pub locator_start: u32,
+    pub locator_end: u32,
+}
+
+/// Write a slice into a caller array, `str_out`'s two-call idiom for
+/// fixed-size items: `needed` is set on every path, a zero-capacity call
+/// sizes, and nothing crosses owned.
+unsafe fn slice_out<T: Copy>(
+    items: &[T],
+    buf: *mut T,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    if !needed.is_null() {
+        // SAFETY: caller-provided out-pointer, checked non-null.
+        unsafe { *needed = items.len() };
+    }
+    if cap < items.len() {
+        return if cap == 0 && buf.is_null() {
+            // The sizing call. Not an error worth a message.
+            cb_status::CB_ERR_BUFFER_TOO_SMALL
+        } else {
+            fail(
+                cb_status::CB_ERR_BUFFER_TOO_SMALL,
+                format!("buffer holds {cap} items, {} needed", items.len()),
+            )
+        };
+    }
+    if items.is_empty() {
+        return cb_status::CB_OK;
+    }
+    if buf.is_null() {
+        return fail(
+            cb_status::CB_ERR_NULL_ARGUMENT,
+            "buffer is null but capacity is not zero",
+        );
+    }
+    // SAFETY: `cap >= items.len()` was just checked, and the regions
+    // cannot overlap — `items` is this crate's, `buf` the caller's.
+    unsafe { std::ptr::copy_nonoverlapping(items.as_ptr(), buf, items.len()) };
+    cb_status::CB_OK
+}
+
+/// How many text runs the current page holds. `CB_ERR_UNAVAILABLE` until
+/// the page is laid out; zero for a laid-out page with nothing to speak
+/// (a comic), which is a different answer on purpose.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_text_run_count(
+    session: *const cb_session,
+    count: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let Some(runs) = session.inner.page_text_runs() else {
+            return fail(
+                cb_status::CB_ERR_UNAVAILABLE,
+                "no text surface yet: the page is not laid out",
+            );
+        };
+        out!(count, runs.len(), "count");
+        cb_status::CB_OK
+    })
+}
+
+/// One text run's geometry and locator range, by index in reading order.
+/// `CB_ERR_INVALID_ARGUMENT` past the count.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_text_run(
+    session: *const cb_session,
+    index: usize,
+    run: *mut cb_text_run,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let Some(runs) = session.inner.page_text_runs() else {
+            return fail(
+                cb_status::CB_ERR_UNAVAILABLE,
+                "no text surface yet: the page is not laid out",
+            );
+        };
+        let Some(found) = runs.get(index) else {
+            return fail(
+                cb_status::CB_ERR_INVALID_ARGUMENT,
+                format!(
+                    "run index {index} out of range: the page has {}",
+                    runs.len()
+                ),
+            );
+        };
+        out!(
+            run,
+            cb_text_run {
+                rect: found.rect.into(),
+                locator_start: found.locator_start,
+                locator_end: found.locator_end,
+            },
+            "run"
+        );
+        cb_status::CB_OK
+    })
+}
+
+/// One text run's text, by the same index. Caller-allocates; see
+/// [`cb_last_error_message`] for the two-call idiom.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_text_run_text(
+    session: *const cb_session,
+    index: usize,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let Some(runs) = session.inner.page_text_runs() else {
+            return fail(
+                cb_status::CB_ERR_UNAVAILABLE,
+                "no text surface yet: the page is not laid out",
+            );
+        };
+        let Some(found) = runs.get(index) else {
+            return fail(
+                cb_status::CB_ERR_INVALID_ARGUMENT,
+                format!(
+                    "run index {index} out of range: the page has {}",
+                    runs.len()
+                ),
+            );
+        };
+        // SAFETY: the header's contract for the buffer triple.
+        unsafe { str_out(&found.text, buf, cap, needed) }
+    })
+}
+
+/// Page-space rects covering a locator range on the current page — one
+/// per line the range touches; the geometry a word highlight or an
+/// accessibility extent asks for. The two-call idiom: `needed` is always
+/// the full count, a zero-capacity call sizes. Empty when the page is not
+/// laid out or the range lies elsewhere.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_range_rects(
+    session: *const cb_session,
+    start: u32,
+    end: u32,
+    rects: *mut cb_rect,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let found: Vec<cb_rect> = session
+            .inner
+            .range_rects(start, end)
+            .into_iter()
+            .map(cb_rect::from)
+            .collect();
+        // SAFETY: the header's contract for the buffer triple.
+        unsafe { slice_out(&found, rects, cap, needed) }
+    })
+}
+
+/// The current page as one speakable string — hand it to a TTS engine
+/// whole, then map its progress reports back through the word table.
+/// Whitespace is collapsed and soft hyphens dropped, so its offsets are
+/// the word table's `text_*` fields and nothing else. Caller-allocates;
+/// two-call idiom. `CB_ERR_UNAVAILABLE` until the page is laid out.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_speakable_text(
+    session: *const cb_session,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let Some(page) = session.inner.speakable_page() else {
+            return fail(
+                cb_status::CB_ERR_UNAVAILABLE,
+                "no text surface yet: the page is not laid out",
+            );
+        };
+        // SAFETY: the header's contract for the buffer triple.
+        unsafe { str_out(&page.text, buf, cap, needed) }
+    })
+}
+
+/// How many words the speakable page holds. Same availability rule as
+/// [`cb_session_page_speakable_text`].
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_word_count(
+    session: *const cb_session,
+    count: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let Some(page) = session.inner.speakable_page() else {
+            return fail(
+                cb_status::CB_ERR_UNAVAILABLE,
+                "no text surface yet: the page is not laid out",
+            );
+        };
+        out!(count, page.words.len(), "count");
+        cb_status::CB_OK
+    })
+}
+
+/// One word span, by index in reading order. `CB_ERR_INVALID_ARGUMENT`
+/// past the count.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_word(
+    session: *const cb_session,
+    index: usize,
+    span: *mut cb_word_span,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_ref!(session);
+        let Some(page) = session.inner.speakable_page() else {
+            return fail(
+                cb_status::CB_ERR_UNAVAILABLE,
+                "no text surface yet: the page is not laid out",
+            );
+        };
+        let Some(word) = page.words.get(index) else {
+            return fail(
+                cb_status::CB_ERR_INVALID_ARGUMENT,
+                format!(
+                    "word index {index} out of range: the page has {}",
+                    page.words.len()
+                ),
+            );
+        };
+        out!(
+            span,
+            cb_word_span {
+                text_start: word.text_start,
+                text_end: word.text_end,
+                locator_start: word.locator_start,
+                locator_end: word.locator_end,
+            },
+            "span"
+        );
+        cb_status::CB_OK
+    })
+}
+
+/// The word under a point in panel coordinates, as a locator range —
+/// dictionary lookup's question. `CB_ERR_UNAVAILABLE` when no word is
+/// there: off text, on whitespace, on bare punctuation. May lay the unit
+/// out, hence the mutable handle.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_word_at(
+    session: *mut cb_session,
+    x: f32,
+    y: f32,
+    start: *mut u32,
+    end: *mut u32,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        let Some((from, to)) = session.inner.word_at(x, y) else {
+            return fail(cb_status::CB_ERR_UNAVAILABLE, "no word under the point");
+        };
+        out!(start, from, "start");
+        out!(end, to, "end");
+        cb_status::CB_OK
+    })
+}
+
 // ---- Lifecycle ----
 
 /// Save the reading position and let go of everything reconstructible.

@@ -931,3 +931,268 @@ fn apply_answers_repaint_and_consumed_separately() {
     );
     unsafe { cb_session_close(session) };
 }
+
+// ---- The text surface ----
+
+/// Set metrics and force a layout the way a host does: by asking a
+/// question whose answer needs one.
+fn laid_out(name: &str, rel: &str) -> *mut cb_session {
+    let session = open(name, rel);
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut pages: usize = 0;
+    assert_eq!(
+        unsafe { cb_session_page_count(session, &mut pages) },
+        cb_status::CB_OK
+    );
+    assert!(pages > 0);
+    session
+}
+
+#[test]
+fn text_runs_cross_the_boundary() {
+    let session = laid_out("text-runs", "epub/minimal.epub");
+
+    let mut count: usize = 0;
+    assert_eq!(
+        unsafe { cb_session_page_text_run_count(session, &mut count) },
+        cb_status::CB_OK
+    );
+    assert!(count > 0, "a text page has runs");
+
+    let mut run = cb_text_run {
+        rect: cb_rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        },
+        locator_start: 1,
+        locator_end: 0,
+    };
+    assert_eq!(
+        unsafe { cb_session_page_text_run(session, 0, &mut run) },
+        cb_status::CB_OK
+    );
+    assert!(run.rect.w > 0.0 && run.rect.h > 0.0, "{run:?}");
+    assert!(run.locator_end >= run.locator_start, "{run:?}");
+
+    let text = read_string(|buf, cap, needed| unsafe {
+        cb_session_page_text_run_text(session, 0, buf, cap, needed)
+    })
+    .expect("run text crosses");
+    assert!(!text.is_empty());
+
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn words_and_speakable_text_cross() {
+    let session = laid_out("text-words", "epub/minimal.epub");
+
+    let speakable = read_string(|buf, cap, needed| unsafe {
+        cb_session_page_speakable_text(session, buf, cap, needed)
+    })
+    .expect("speakable text crosses");
+    assert!(!speakable.is_empty());
+
+    let mut words: usize = 0;
+    assert_eq!(
+        unsafe { cb_session_page_word_count(session, &mut words) },
+        cb_status::CB_OK
+    );
+    assert!(words > 0, "a text page has words");
+
+    let mut span = cb_word_span {
+        text_start: 0,
+        text_end: 0,
+        locator_start: 0,
+        locator_end: 0,
+    };
+    assert_eq!(
+        unsafe { cb_session_page_word(session, 0, &mut span) },
+        cb_status::CB_OK
+    );
+    assert!(span.text_end > span.text_start, "{span:?}");
+    assert!(span.locator_end > span.locator_start, "{span:?}");
+    // The span indexes the string it was defined against.
+    let chars = speakable.chars().count() as u32;
+    assert!(span.text_end <= chars, "{span:?} over {chars} chars");
+
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn text_surface_is_unavailable_before_metrics() {
+    let session = open("text-early", "epub/minimal.epub");
+    let mut count: usize = 0;
+    assert_eq!(
+        unsafe { cb_session_page_text_run_count(session, &mut count) },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+    let mut needed: usize = 0;
+    assert_eq!(
+        unsafe { cb_session_page_speakable_text(session, std::ptr::null_mut(), 0, &mut needed) },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn text_run_index_out_of_range_is_invalid() {
+    let session = laid_out("text-range", "epub/minimal.epub");
+    let mut count: usize = 0;
+    assert_eq!(
+        unsafe { cb_session_page_text_run_count(session, &mut count) },
+        cb_status::CB_OK
+    );
+    let mut run = cb_text_run {
+        rect: cb_rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        },
+        locator_start: 0,
+        locator_end: 0,
+    };
+    assert_eq!(
+        unsafe { cb_session_page_text_run(session, count, &mut run) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    let mut words: usize = 0;
+    assert_eq!(
+        unsafe { cb_session_page_word_count(session, &mut words) },
+        cb_status::CB_OK
+    );
+    let mut span = cb_word_span {
+        text_start: 0,
+        text_end: 0,
+        locator_start: 0,
+        locator_end: 0,
+    };
+    assert_eq!(
+        unsafe { cb_session_page_word(session, words, &mut span) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn range_rects_two_call_idiom() {
+    let session = laid_out("text-rects", "epub/minimal.epub");
+
+    // A range with geometry: the first run's own.
+    let mut run = cb_text_run {
+        rect: cb_rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        },
+        locator_start: 0,
+        locator_end: 0,
+    };
+    assert_eq!(
+        unsafe { cb_session_page_text_run(session, 0, &mut run) },
+        cb_status::CB_OK
+    );
+
+    // The sizing call, as a host writes it.
+    let mut needed: usize = 0;
+    assert_eq!(
+        unsafe {
+            cb_session_range_rects(
+                session,
+                run.locator_start,
+                run.locator_end,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        },
+        cb_status::CB_ERR_BUFFER_TOO_SMALL
+    );
+    assert!(needed > 0, "the first run has geometry");
+
+    let mut rects = vec![
+        cb_rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        };
+        needed
+    ];
+    assert_eq!(
+        unsafe {
+            cb_session_range_rects(
+                session,
+                run.locator_start,
+                run.locator_end,
+                rects.as_mut_ptr(),
+                rects.len(),
+                &mut needed,
+            )
+        },
+        cb_status::CB_OK
+    );
+    assert_eq!(needed, rects.len());
+    for rect in &rects {
+        assert!(rect.w > 0.0 && rect.h > 0.0, "{rect:?}");
+    }
+
+    // An empty range sizes to zero, and a zero-capacity call for it is OK.
+    assert_eq!(
+        unsafe {
+            cb_session_range_rects(
+                session,
+                run.locator_start,
+                run.locator_start,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        },
+        cb_status::CB_OK
+    );
+    assert_eq!(needed, 0);
+
+    unsafe { cb_session_close(session) };
+}
+
+#[test]
+fn word_at_answers_under_text() {
+    let session = laid_out("text-word-at", "epub/minimal.epub");
+
+    // Where the text sits depends on the fixture fonts, so sweep for it —
+    // the same discipline the session tests use.
+    let mut hit = None;
+    'sweep: for y in (60..760).step_by(8) {
+        for x in (60..560).step_by(8) {
+            let (mut start, mut end) = (0u32, 0u32);
+            if unsafe { cb_session_word_at(session, x as f32, y as f32, &mut start, &mut end) }
+                == cb_status::CB_OK
+            {
+                hit = Some((start, end));
+                break 'sweep;
+            }
+        }
+    }
+    let (start, end) = hit.expect("some point on the page is a word");
+    assert!(end > start);
+
+    // The word has geometry, reachable by the same range.
+    let mut needed: usize = 0;
+    assert_eq!(
+        unsafe {
+            cb_session_range_rects(session, start, end, std::ptr::null_mut(), 0, &mut needed)
+        },
+        cb_status::CB_ERR_BUFFER_TOO_SMALL
+    );
+    assert!(needed > 0);
+
+    unsafe { cb_session_close(session) };
+}

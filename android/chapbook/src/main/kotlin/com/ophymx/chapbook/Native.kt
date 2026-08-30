@@ -63,4 +63,35 @@ internal object Native {
 
     /** 0 changed, 1 unchanged, 2 not the engine's, -1 unusable. */
     external fun applyAction(handle: Long, action: String): Int
+
+    // The text surface: the page's text with geometry, for accessibility
+    // trees, TTS word highlighting, and dictionary lookup. Ranges pack
+    // like `position` — `start shl 32 or end` — and tables flatten into
+    // primitive arrays so TTS reads a page in one crossing.
+
+    /** Runs on the current page; -1 until laid out, 0 for a comic. */
+    external fun pageTextRunCount(handle: Long): Int
+
+    /** Locator range packed `start shl 32 or end`; -1 on a bad index. */
+    external fun pageTextRunRange(handle: Long, index: Int): Long
+
+    /** Page-space `[x, y, w, h]`; empty on a bad index. */
+    external fun pageTextRunRect(handle: Long, index: Int): FloatArray
+
+    external fun pageTextRunText(handle: Long, index: Int): String
+
+    /** The page as one speakable string for TTS; `""` until laid out. */
+    external fun speakableText(handle: Long): String
+
+    /**
+     * Four ints per word: textStart, textEnd (char offsets into
+     * [speakableText]), locatorStart, locatorEnd.
+     */
+    external fun pageWords(handle: Long): IntArray
+
+    /** Word under a panel point, packed like a range; -1 for none. */
+    external fun wordAt(handle: Long, x: Float, y: Float): Long
+
+    /** Four floats per rect covering a locator range on this page. */
+    external fun rangeRects(handle: Long, start: Int, end: Int): FloatArray
 }

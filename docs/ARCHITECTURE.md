@@ -311,19 +311,20 @@ stripped e-ink profile's knobs):
   closure as everything else; SVG `<text>` shapes against a fontdb copied
   from the session's `FontSystem`, never the host's font list.
 
-## Deferred
+## The text surface
 
-Not out of scope — wanted, shaped, and not built yet. Listed separately from
-the section above because that one is a set of decisions and this is a queue.
-
-- **Accessibility** (a11y tree export, screen-reader path). The shape is
-  settled: a `Session` accessor giving the current page's text runs with
-  their rects and locator ranges, which each platform wraps in its own tree
-  — `UIAccessibilityElement`, `AccessibilityNodeInfo`, AT-SPI. Deliberately
-  *not* the display list, which carries glyph indices and no text; see
-  `PLATFORM.md` §7 for why that distinction matters and for the earlier
-  claim it corrects. Additive, so it constrains no boundary and can land
-  whenever it is picked up. Also a legal requirement in some markets.
+The current page's text with geometry, the layer under accessibility,
+TTS, and dictionary lookup — built, not deferred. `Session::page_text_runs`
+gives one `TextRun` per visual line (`{text, rect, locator_start,
+locator_end}`, page space); `speakable_page` gives the page as one
+collapsed string plus a `WordSpan` table mapping speech progress back to
+locator space (segmented in locator space, so spans feed `range_rects`
+and `select_range` directly); `word_at` answers a dictionary tap. Built
+over `LineFragment` text and per-glyph locators — deliberately *not* the
+display list, which carries glyph indices and no text; `PLATFORM.md` §7
+has that argument. Each platform wraps the runs in its own tree
+(`UIAccessibilityElement`, `AccessibilityNodeInfo`, AT-SPI); the GTK
+viewer's `PageArea` is the reference, verified against AT-SPI end to end.
 
 ## Milestones
 

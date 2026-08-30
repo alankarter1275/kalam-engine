@@ -10,6 +10,33 @@ data class Position(val spine: Int, val page: Int)
 data class RenderSize(val width: Int, val height: Int)
 
 /**
+ * One visual line of the current page, with its geometry and locator
+ * range — the material an `AccessibilityNodeInfo` tree is built from.
+ * The rect is page space (logical units, page top-left); the locator
+ * range is `[start, end)` in the same offsets positions and annotations
+ * use. The text's length is not the locator span's width.
+ */
+data class TextRun(
+    val text: String,
+    val rect: android.graphics.RectF,
+    val locatorStart: Int,
+    val locatorEnd: Int,
+)
+
+/**
+ * One word: where it sits in [Session.speakableText] (char offsets) and
+ * in locator space. `onRangeStart` from a TTS utterance reports offsets
+ * into the string; the locator range is how that progress becomes a
+ * highlight via [Session.rangeRects].
+ */
+data class WordSpan(
+    val textStart: Int,
+    val textEnd: Int,
+    val locatorStart: Int,
+    val locatorEnd: Int,
+)
+
+/**
  * What the engine did with an action, and what you owe the platform back.
  *
  * Two questions, not one, and neither implies the other. [needsRedraw] says
@@ -195,6 +222,62 @@ class Session private constructor(private var handle: Long) : AutoCloseable {
         0 -> ActionOutcome.Changed
         1 -> ActionOutcome.Unchanged
         else -> ActionOutcome.Unhandled
+    }
+
+    // The text surface: what an accessibility tree, TTS, or a dictionary
+    // popup consumes. Re-fetch after anything that redraws — a turn, a
+    // reflow, a settings change.
+
+    /**
+     * The current page's text runs in reading order, or null until the
+     * page is laid out. Empty for a page with nothing to speak (a comic).
+     */
+    fun pageTextRuns(): List<TextRun>? {
+        val count = Native.pageTextRunCount(handle)
+        if (count < 0) return null
+        return (0 until count).mapNotNull { index ->
+            val packed = Native.pageTextRunRange(handle, index)
+            val rect = Native.pageTextRunRect(handle, index)
+            if (packed < 0 || rect.size != 4) return@mapNotNull null
+            TextRun(
+                text = Native.pageTextRunText(handle, index),
+                rect = android.graphics.RectF(
+                    rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]),
+                locatorStart = (packed ushr 32).toInt(),
+                locatorEnd = (packed and 0xffffffffL).toInt(),
+            )
+        }
+    }
+
+    /** The page as one string for a TTS utterance; `""` until laid out. */
+    val speakableText: String get() = Native.speakableText(handle)
+
+    /** The word table mapping TTS progress back to locator space. */
+    fun pageWords(): List<WordSpan> {
+        val flat = Native.pageWords(handle)
+        return (flat.indices step 4).map { i ->
+            WordSpan(flat[i], flat[i + 1], flat[i + 2], flat[i + 3])
+        }
+    }
+
+    /**
+     * The word under a panel point as a locator range, or null — off
+     * text, on whitespace, on bare punctuation. Dictionary lookup's
+     * question; feed the range to [rangeRects] or a selection.
+     */
+    fun wordAt(x: Float, y: Float): Pair<Int, Int>? {
+        val packed = Native.wordAt(handle, x, y)
+        if (packed < 0) return null
+        return (packed ushr 32).toInt() to (packed and 0xffffffffL).toInt()
+    }
+
+    /** Page-space rects covering a locator range on the current page. */
+    fun rangeRects(start: Int, end: Int): List<android.graphics.RectF> {
+        val flat = Native.rangeRects(handle, start, end)
+        return (flat.indices step 4).map { i ->
+            android.graphics.RectF(
+                flat[i], flat[i + 1], flat[i] + flat[i + 2], flat[i + 1] + flat[i + 3])
+        }
     }
 
     override fun close() {
