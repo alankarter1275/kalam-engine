@@ -35,8 +35,9 @@
 //! The evidence was gathered on real devices during the Android and iOS
 //! bring-up; the rules it bought live in these types — no `Default` on
 //! [`Generics`] or [`Fallbacks`], zero faces an error, nothing loading
-//! host fonts implicitly — and the open per-platform questions in
-//! `docs/PLATFORM.md` §3.
+//! host fonts implicitly. The open per-platform questions (who ships an
+//! embedded source, who owns the generic-family tables) are tracked in
+//! the task backlog.
 
 use std::path::PathBuf;
 use std::sync::Arc;

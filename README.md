@@ -188,7 +188,7 @@ units resolved by approximation.
 | [docs/STABILITY.md](docs/STABILITY.md) | Which crates carry semver discipline, which are internals, and why |
 | [docs/LOCATORS.md](docs/LOCATORS.md) | Why reading positions are layered and versioned (the spec is `chapbook_core::locator`'s docs) |
 | [crates/opds-client/INTEROP.md](crates/opds-client/INTEROP.md) | What the OPDS client must interoperate with, and how it was verified |
-| [docs/PLATFORM.md](docs/PLATFORM.md) | Porting to real devices: panels, e-ink, cross-compilation, what is proven and what is not |
+| [docs/PLATFORM.md](docs/PLATFORM.md) | The five substitution axes a downstream app builds against, and the state of each seam |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | The verification gate, the invariants, and the things that fail quietly |
 | [NOTICE](NOTICE) | Third-party licences a binary carries |
 
