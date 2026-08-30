@@ -4,9 +4,10 @@
 //! This suite exists because none of it was ever checked. cosmic-text does
 //! the Unicode Bidirectional Algorithm, so the reordering was assumed to
 //! work — and it does. Everything chapbook wrapped around it did not.
-//! `fixtures/epub/rtl.epub`, the one fixture that sounded like coverage,
-//! is English prose with an RTL page-progression direction and contains no
-//! Hebrew or Arabic at all; it tests which way pages turn.
+//! The one fixture that sounded like coverage was `rtl.epub` — English
+//! prose with an RTL page-progression direction and no Hebrew or Arabic in
+//! it at all. It tests which way pages turn, and is called
+//! `page-direction.epub` now so it stops claiming otherwise.
 //!
 //! Three defects were found the first time a Hebrew paragraph was actually
 //! laid out, each with a regression test below:
@@ -578,6 +579,54 @@ fn an_unsplit_selection_is_still_one_rect() {
             spans.len(),
             1,
             "{starts_with}: a contiguous selection came back as {spans:?}"
+        );
+    }
+}
+
+/// The text surface over RTL — the material an accessibility tree and TTS
+/// are built from, so its order is a reading order, not a screen order.
+///
+/// This assertion used to live in `tests/text_surface.rs` under the name
+/// `rtl_runs_have_sane_ranges`, pointed at a fixture with no RTL text in
+/// it. The comment there described exactly what is checked below —
+/// per-line locators not monotonic in x, runs still in reading order —
+/// about a book that could not have demonstrated any of it.
+#[test]
+fn the_text_surface_over_rtl_stays_in_reading_order() {
+    let session = open("surface");
+    let runs = session.page_text_runs().expect("laid out");
+    assert!(!runs.is_empty());
+
+    let mut last_start = 0;
+    for run in &runs {
+        assert!(!run.text.is_empty(), "empty runs are skipped");
+        assert!(
+            run.locator_end >= run.locator_start,
+            "range is [start, end): {run:?}"
+        );
+        assert!(
+            run.locator_start >= last_start,
+            "runs are in reading order: {run:?}"
+        );
+        last_start = run.locator_start;
+        assert!(
+            run.rect.min_x() >= -0.5
+                && run.rect.min_y() >= -0.5
+                && run.rect.max_x() <= PAGE.w + 0.5
+                && run.rect.max_y() <= PAGE.h + 0.5,
+            "rect is on the page: {run:?}"
+        );
+    }
+
+    // The Hebrew and Arabic runs are single runs covering their whole
+    // paragraph even though their glyphs run the other way: a run is a
+    // line of reading, not a left-to-right sweep.
+    for starts_with in ["שלום עולם", "مرحبا"] {
+        let p = para(&session, starts_with);
+        assert_eq!(
+            p.text.chars().count() as u32,
+            p.end - p.start,
+            "{starts_with}: the run's locator range should cover its text once"
         );
     }
 }

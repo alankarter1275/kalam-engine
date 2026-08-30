@@ -7,6 +7,41 @@ use chapbook_core::{PageMetrics, Publication, ReadingSettings, Result, TocEntry}
 use chapbook_epub::Book;
 use chapbook_layout::{cascade, dom};
 
+/// The fixture corpus's fonts: vendored faces only, never host fonts, so
+/// every stage this CLI dumps is byte-identical on any machine.
+///
+/// Crimson Text answers all five CSS generics and covers the Latin corpus.
+/// The second directory holds the Hebrew and Arabic faces, reached only
+/// through per-script fallback — a Latin page never sees them, which is
+/// why adding them moved no existing golden. It is separate because
+/// `fixtures/fonts` is scanned recursively and pinned at four faces by a
+/// test, and is what every other fixture falls back to.
+///
+/// Without the mapping the bidi fixture would still lay out, still
+/// paginate and still render. It would render as tofu.
+fn fixture_fonts() -> chapbook_core::FontSource {
+    use chapbook_core::{Faces, FallbackFamilies, Fallbacks, FontSource, ScriptTag};
+
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let mut source = FontSource::embedded(fixtures.join("fonts"), "Crimson Text");
+    source.faces.push(Faces::Dir(fixtures.join("fonts-bidi")));
+    source.fallback = Fallbacks::Explicit(FallbackFamilies {
+        common: Vec::new(),
+        per_script: vec![
+            (
+                ScriptTag::new("Hebr").expect("Hebr is a script tag"),
+                vec!["Noto Sans Hebrew".into()],
+            ),
+            (
+                ScriptTag::new("Arab").expect("Arab is a script tag"),
+                vec!["Noto Naskh Arabic".into()],
+            ),
+        ],
+        forbidden: Vec::new(),
+    });
+    source
+}
+
 /// Open a local book by extension: `.cbz`/`.pdf` -> image-per-page
 /// producers, else EPUB.
 fn open_publication(path: &Path) -> Result<Box<dyn chapbook_core::Publication>> {
@@ -131,12 +166,7 @@ pub fn layout(epub: &Path, spine: usize) -> Result<String> {
     let href = book.spine_item(spine)?.href.clone();
     let (doc, css, notes) = styled_chapter(&book, spine, &href, &ReadingSettings::default())?;
 
-    // Deterministic fonts: vendored fixture faces only, never host fonts.
-    let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
-    let (mut fonts, _) = chapbook_layout::build_font_system(&chapbook_core::FontSource::embedded(
-        &fonts_dir,
-        "Crimson Text",
-    ))?;
+    let (mut fonts, _) = chapbook_layout::build_font_system(&fixture_fonts())?;
     let images = load_chapter_assets(&book, &href, &doc, &css, &mut fonts);
     let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
     let layout =
@@ -197,11 +227,7 @@ pub fn render(
     };
     let (doc, css, _notes) = styled_chapter(&book, spine, &href, &settings)?;
 
-    let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
-    let (mut fonts, _) = chapbook_layout::build_font_system(&chapbook_core::FontSource::embedded(
-        &fonts_dir,
-        "Crimson Text",
-    ))?;
+    let (mut fonts, _) = chapbook_layout::build_font_system(&fixture_fonts())?;
     let images = load_chapter_assets(&book, &href, &doc, &css, &mut fonts);
     let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
     let metrics = PageMetrics::default();
@@ -546,11 +572,7 @@ fn render_image_book(
         (dl.size.h * scale) as u32,
     )
     .ok_or_else(|| chapbook_core::ChapbookError::Layout("empty page size".into()))?;
-    let fonts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts");
-    let (mut fonts, _) = chapbook_layout::build_font_system(&chapbook_core::FontSource::embedded(
-        &fonts_dir,
-        "Crimson Text",
-    ))?;
+    let (mut fonts, _) = chapbook_layout::build_font_system(&fixture_fonts())?;
     let mut renderer = chapbook_render_tinyskia::Renderer::new();
     renderer.render(&dl, &mut fonts, &images, scale, &mut pixmap.as_mut());
     pixmap

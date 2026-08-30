@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A book that turns its pages the other way. The only thing that makes it
+  right-to-left is `page-progression-direction` on the spine below: which
+  edge a reader starts from, which way a page turn goes, and therefore
+  which side of the screen means "next" — see `TapZones`.
+
+  Its text is deliberately ordinary English. Nothing here is bidi, and
+  this fixture cannot say anything about how right-to-left *text* lays
+  out. It used to be called rtl.epub, which read as though it could, and
+  for a while it was the only thing standing where that coverage should
+  have been. `bidi.epub` is that fixture.
+-->
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="en">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="pub-id">urn:uuid:3c5b7a02-1f10-4e3c-9e40-chapbook0002</dc:identifier>

@@ -149,7 +149,7 @@ fn an_rtl_book_flips_the_tap_zones_without_the_shell_deciding_anything() {
     render_loaded(&mut ltr);
     assert_eq!(ltr.reading_direction(), ReadingDirection::Ltr);
 
-    let mut rtl = open_isolated("epub-dir-rtl", &fixture("epub/rtl.epub"));
+    let mut rtl = open_isolated("epub-dir-rtl", &fixture("epub/page-direction.epub"));
     rtl.set_metrics(metrics());
     render_loaded(&mut rtl);
     assert_eq!(rtl.reading_direction(), ReadingDirection::Rtl);

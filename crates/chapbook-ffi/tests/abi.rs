@@ -773,7 +773,7 @@ fn taps_resolve_through_the_book_and_not_the_shell() {
     );
     unsafe { cb_session_close(session) };
 
-    let rtl = open("tap-rtl", "epub/rtl.epub");
+    let rtl = open("tap-rtl", "epub/page-direction.epub");
     assert_eq!(
         unsafe { cb_session_set_metrics(rtl, metrics()) },
         cb_status::CB_OK
