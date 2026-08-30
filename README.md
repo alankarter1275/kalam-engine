@@ -66,7 +66,6 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 | `chapbook-paint` | Format-neutral page model + paint-neutral display list | Contract |
 | `chapbook-render-tinyskia` | CPU rasterization backend | Backend |
 | `chapbook-render-vello` | GPU rasterization backend (vello + wgpu) | Backend |
-| `chapbook-panel-fbdev` | Linux framebuffer panel backend (`/dev/fb0`) | Backend |
 | `opds-client` | OPDS 1.2/2.0 catalog client, bring-your-own-HTTP (no chapbook dependency) | API |
 | `chapbook-opds` | Binds `opds-client` to chapbook: OPDS-PSE streamed comics as `Publication`s | Producer |
 | `chapbook-cbz` | CBZ comic-book archive reading | Producer |
@@ -201,11 +200,14 @@ decode on a background thread.
 Pages rasterize on the CPU with tiny-skia, or on the GPU through vello and
 wgpu — the same session and the same display list, a different backend
 consuming it. Panels — screens that are asked to change rather than
-presented to — go through a `Panel` trait with a driver that picks the
-update class, avoids writing under an in-flight refresh, and rations the
-ghosting flash; `chapbook-panel-fbdev` implements it over a plain Linux
-framebuffer (`--example probe` to see what a device reports, `--example
-show` to read a book on it).
+presented to — are [mezzotint]'s half of the job: a `Panel` trait with a
+driver that picks the update class, avoids writing under an in-flight
+refresh, and rations the ghosting flash, over e-ink controllers and the
+plain Linux framebuffer. chapbook names the kind of change and hands over
+the pixels; `cargo run -p chapbook-cli --features fbdev --example show`
+reads a book on `/dev/fb0` through the pairing.
+
+[mezzotint]: https://crates.io/crates/mezzotint
 
 Explicitly out of scope:
 fixed-layout EPUB, JavaScript/scripted content, inline MathML layout

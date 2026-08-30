@@ -16,6 +16,12 @@ path = "src/lib.rs"
 name = "chapbook"
 path = "src/main.rs"
 
+[features]
+# The framebuffer example. Off by default because it is the one thing here
+# that needs a device: `mezzotint/fbdev` is Linux-only, and a dev CLI on a
+# desktop has no framebuffer to open.
+fbdev = ["mezzotint/fbdev"]
+
 [dependencies]
 chapbook-core = { workspace = true }
 chapbook-epub = { workspace = true }
@@ -28,8 +34,18 @@ chapbook-render-tinyskia = { workspace = true }
 # The dev CLI is a desktop process: it wants the bundled transport.
 chapbook-opds = { workspace = true, features = ["ureq"] }
 chapbook-library = { workspace = true }
+mezzotint = { workspace = true }
 clap = { workspace = true }
 cosmic-text = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+# For `show`, which drives a whole reading session onto a panel. The
+# binary itself works a stage at a time and needs no session.
+chapbook-reader = { workspace = true, features = ["cbz", "pdf", "svg", "mathml"] }
+
+# The chapbook half of the panel seam: mezzotint's own examples cover a
+# panel with no book behind it, and this one covers the pairing.
+[[example]]
+name = "show"
+required-features = ["fbdev"]

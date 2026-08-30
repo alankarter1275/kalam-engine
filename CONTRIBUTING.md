@@ -92,6 +92,12 @@ These are not style preferences. Each one has cost somebody a day.
   contract, and `UreqHttp` is only its default implementation; the page
   loader is a plain thread.
 - **Core stays GPU-assumption-free**, so it can port to e-ink.
+- **The panel seam is [mezzotint](https://crates.io/crates/mezzotint), not
+  chapbook.** `Panel`, `PanelDriver`, `RefreshPolicy`, `RecordingPanel`,
+  the backends and the `encode` reduction path all live there;
+  `chapbook-core` re-exports only `UpdateClass`, `PanelRect` and
+  `PixelFormat`, because the page model speaks those three. Anything below
+  that seam belongs upstream rather than here.
 - **`DomNode` must stay pointer-sized** — stylo's style sharing cache
   statically asserts it.
 - **stylo runs sequentially, and that is a soundness precondition.**

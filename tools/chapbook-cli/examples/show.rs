@@ -1,6 +1,6 @@
 //! Read a book on a Linux framebuffer.
 //!
-//!     cargo run -p chapbook-panel-fbdev --example show -- <book> [/dev/fb0]
+//!     cargo run -p chapbook-cli --features fbdev --example show -- <book> [/dev/fb0]
 //!
 //! Deliberately written the way a device shell would be, rather than the
 //! short way. It goes through `Session::frame` and rasterizes for itself,
@@ -8,15 +8,21 @@
 //! intent, and `PanelDriver`'s rules — not just `Session::render`, which
 //! would hide all of it behind one call.
 //!
+//! The panel half of that seam is [mezzotint]; this is the chapbook half,
+//! and it lives here because it is the only part of the pairing that knows
+//! what a book is. mezzotint's own `pattern` and `selftest` examples cover
+//! the panel without one.
+//!
 //! Needs write access to the framebuffer (`video` group, or root), and a
 //! console that is not being redrawn underneath it — `chvt` to a free one,
-//! or run it in a VM.
+//! or run it in a VM. mezzotint's `scripts/fbdev-vm.sh` boots one.
 
 use std::time::Duration;
 
-use chapbook_core::{EdgeSizes, PageMetrics, Panel, PanelDriver, PanelRect, Rotation, Size};
-use chapbook_panel_fbdev::FbdevPanel;
+use chapbook_core::{EdgeSizes, PageMetrics, Rotation, Size};
 use chapbook_reader::{chapbook_paint, chapbook_render_tinyskia, tiny_skia, Session};
+use mezzotint::fbdev::FbdevPanel;
+use mezzotint::{Panel, PanelDriver, Source, Update};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -51,6 +57,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let Some(frame) = session.frame() else {
             return Ok(());
         };
+        // Nothing changed, so there is nothing for the panel to do. On
+        // e-ink that is a saving worth having: the cheapest update is the
+        // one not submitted.
+        let Some(class) = frame.intent.update_class() else {
+            return Ok(());
+        };
         let (w, h) = (page.w as u32, page.h as u32);
         let Some(mut pixmap) = tiny_skia::Pixmap::new(w, h) else {
             return Ok(());
@@ -58,19 +70,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (fonts, images) = session.paint_resources();
         renderer.render(&frame.list, fonts, images, 1.0, &mut pixmap.as_mut());
 
-        // Panel policy, exactly as any other backend applies it. The
-        // display list says where dithering belongs — over images, not
-        // over text — which is the one part of this a shell cannot work
-        // out from the pixels it was handed.
+        // Where dithering belongs — over images, not over text — is the
+        // one part of this a shell cannot work out from the pixels it was
+        // handed, and the display list is what knows.
         let dithered = frame.list.dither_regions(1.0);
-        chapbook_paint::quantize_regions(pixmap.data_mut(), w, h, info.format, &dithered);
+        // Both halves of the reduction question, and exactly one of them
+        // acts. A panel asking for `Grey` wants the reduction done above
+        // it, which is this call; a panel asking for `Rgba` reduces at
+        // submit, where it knows the class, and this is a no-op — so the
+        // regions travel on the `Update` as well, for the backend that
+        // will use them there.
+        let whole = mezzotint::PanelRect::full(w, h);
+        mezzotint::encode::quantize_for(pixmap.data_mut(), w, h, whole, info.format, &dithered);
         let rgba = chapbook_paint::rotate(pixmap.data(), w, h, rotation);
 
         let damage = frame
             .damage
-            .map(|rect| PanelRect::from_page(rect, page, 1.0, rotation));
+            .map(|rect| chapbook_paint::panel_rect(rect, page, 1.0, rotation));
+        let src = Source::panel(&rgba, info.width, info.height)?;
         driver
-            .present(&rgba, damage, frame.intent.update_class())
+            .present(src, damage, Update::new(class).dithering_within(&dithered))
             .map(|_| ())
     };
 

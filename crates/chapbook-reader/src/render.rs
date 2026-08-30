@@ -2,7 +2,7 @@
 //! caller-owned buffer or a fresh pixmap, panel rotation and pixel
 //! format applied.
 
-use chapbook_core::{PixelFormat, Rotation};
+use chapbook_core::{PanelRect, PixelFormat, Rotation};
 use chapbook_render_tinyskia::tiny_skia;
 
 use crate::Session;
@@ -11,7 +11,7 @@ impl Session {
     /// Convert rendered pages for a panel that can't show full color —
     /// 16-level grey or 1-bit e-ink. [`Session::render`] applies it; a
     /// shell rasterizing a frame itself calls
-    /// [`chapbook_paint::quantize`] at the same point — panel policy
+    /// `mezzotint::encode::quantize_for` at the same point — panel policy
     /// belongs to the target, not to whichever rasterizer produced the
     /// pixels.
     ///
@@ -140,7 +140,15 @@ impl Session {
         // photograph flattens the photograph.
         let (w, h) = (target.width(), target.height());
         let dithered = dl.dither_regions(scale);
-        chapbook_paint::quantize_regions(target.data_mut(), w, h, self.pixel_format, &dithered);
+        let format = self.pixel_format;
+        mezzotint::encode::quantize_for(
+            target.data_mut(),
+            w,
+            h,
+            PanelRect::full(w, h),
+            format,
+            &dithered,
+        );
         Some(())
     }
 

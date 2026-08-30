@@ -18,7 +18,7 @@ There are four shells in the workspace to read alongside it:
 | smallest | `chapbook-viewer/examples/minimal.rs` | the whole contract, nothing else |
 | desktop | `chapbook-viewer` | selection, links, clipboard, touch, GPU |
 | toolkit | `chapbook-viewer-gtk` (Linux only) | the same session under someone else's main loop |
-| device | `chapbook-panel-fbdev/examples/show.rs` | rasterizing yourself, panel policy, damage |
+| device | `tools/chapbook-cli/examples/show.rs` | rasterizing yourself, panel policy, damage |
 
 Start from `minimal.rs`. It exists to be copied.
 
@@ -396,34 +396,39 @@ thread.
 
 ## 7. Panels
 
-A framebuffer or e-ink panel needs three things a window does not.
+A framebuffer or e-ink panel needs three things a window does not. The
+panel itself is [mezzotint] — a separate crate, because nothing under
+that seam knows what a book is — so this section is the join, and
+mezzotint's own docs are the contract for everything below it.
 
 **Pixel format.** `session.set_pixel_format(PixelFormat::Grey { levels, dither })`
-makes `render()` quantize for a panel that cannot show full colour. Panel
+makes `render()` reduce for a panel that cannot show full colour. Panel
 policy belongs to the target, not to whichever rasterizer produced the
-pixels — which is also why `chapbook_paint::rotate` lives there rather
-than in a backend.
+pixels — which is also why `chapbook_paint::rotate` lives above the
+backends rather than inside one.
 
 A shell rasterizing its own frames does the same reduction itself, and
-should reach for `chapbook_paint::quantize_regions` rather than
-`quantize`:
+must hand over the diffusion regions rather than a bare flag:
 
 ```rust
 let dithered = frame.list.dither_regions(scale);
-chapbook_paint::quantize_regions(&mut pixels, w, h, format, &dithered);
+let whole = mezzotint::PanelRect::full(w, h);
+mezzotint::encode::quantize_for(&mut pixels, w, h, whole, format, &dithered);
 ```
 
-`dither` is one flag for a whole page, and a page is not one kind of
-thing. Diffusing error through body text stipples the antialiased edge of
-every glyph; *not* diffusing it through a photograph turns the photograph
-into a silhouette. `dither_regions` asks the display list which pixels
-came from images — the last point at which anything knows — so the
-diffusion happens over those and nowhere else. At sixteen levels this is
-a refinement; at two, which is what a 1bpp panel has, it is the
-difference between a readable page and an unreadable one.
+A page is not one kind of thing. Diffusing error through body text
+stipples the antialiased edge of every glyph; *not* diffusing it through a
+photograph turns the photograph into a silhouette. `dither_regions` asks
+the display list which pixels came from images — the last point at which
+anything knows — so the diffusion happens over those and nowhere else. At
+sixteen levels this is a refinement; at two, which is what a 1bpp panel
+has, it is the difference between a readable page and an unreadable one.
 
-`quantize` is still there for a caller with no display list to hand, and
-still dithers the whole page when asked.
+Pass `&[]` for the regions and nothing diffuses at all, which is the
+right answer for a page of pure text. A panel asking for `PixelFormat::Rgba`
+means "do not reduce; I will", and `quantize_for` does nothing — that
+panel reduces at `submit`, where it knows the update class, so hand the
+same regions to `Update::dithering_within` and let it decide.
 
 **Rotation.** Set it in `PageMetrics` and the page is laid out unturned and
 turned on the way out. `panel_size()` gives you the buffer size (axes
@@ -432,18 +437,25 @@ coordinates. Changing only the rotation does not rebuild the layout —
 `same_layout()` is what decides that — so a shell may turn the panel as
 often as it likes.
 
-**Update classes.** `PanelDriver` wraps a `Panel` implementation and takes
-`present(&rgba, damage, intent.update_class())`. `damage` is `None` for
-"the whole panel", the same convention `Frame::damage` uses, so one passes
-straight into the other — via `PanelRect::from_page(rect, page, scale,
+**Update classes.** `mezzotint::PanelDriver` wraps a `Panel` implementation
+and takes `present(src, damage, class)`. `damage` is `None` for "the whole
+panel", the same convention `Frame::damage` uses, so one passes straight
+into the other — via `chapbook_paint::panel_rect(rect, page, scale,
 rotation)`, which converts page coordinates to panel ones with the
-rotation folded in. `RefreshPolicy` decides separately when to spend a
-full flash the content did not ask for, to pay off ghosting.
+rotation folded in, rounding outward so a stale sliver cannot survive.
+
+`intent.update_class()` is an `Option`: `None` means the frame is a plain
+repaint and there is nothing for the panel to do, which on e-ink is a
+saving worth taking rather than a case to paper over. `RefreshPolicy`
+decides separately when to spend a full flash the content did not ask
+for, to pay off ghosting.
 
 Two calls a shell owes the panel and tends to forget:
-`PanelDriver::settle(&rgba)` repaints whatever a fast update left
+`PanelDriver::settle(src, &dithered)` repaints whatever a fast update left
 degraded — cheap when nothing is owed, so an idle tick is the right place
 for it — and `flush()` before tearing the panel down.
+
+[mezzotint]: https://crates.io/crates/mezzotint
 
 ## 8. Proving it
 

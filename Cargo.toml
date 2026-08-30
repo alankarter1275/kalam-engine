@@ -7,7 +7,6 @@ members = [
     "crates/chapbook-paint",
     "crates/chapbook-render-tinyskia",
     "crates/chapbook-render-vello",
-    "crates/chapbook-panel-fbdev",
     "crates/chapbook-opds",
     "crates/opds-client",
     "crates/chapbook-cbz",
@@ -42,7 +41,6 @@ chapbook-layout = { path = "crates/chapbook-layout", default-features = false }
 chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
 chapbook-render-vello = { path = "crates/chapbook-render-vello" }
-chapbook-panel-fbdev = { path = "crates/chapbook-panel-fbdev" }
 # `default-features = false` here so a member can drop the bundled ureq
 # transport: without it on the workspace entry, a member's own
 # `default-features = false` is silently ignored. Members that want the
@@ -63,6 +61,17 @@ chapbook-library = { path = "crates/chapbook-library" }
 # inherited. External consumers get the full default set as usual.
 chapbook-reader = { path = "crates/chapbook-reader", default-features = false }
 chapbook-ffi = { path = "crates/chapbook-ffi", default-features = false }
+
+# The panel seam: update classes, the driver that holds the refresh rules,
+# and the backends underneath. It was chapbook's own module until it turned
+# out to have nothing to do with books, so it is somebody else's crate now
+# and chapbook is an ordinary consumer.
+#
+# Defaults off because they include `fbdev`, and which backend a build talks
+# to is a shell's decision — chapbook-core wants the vocabulary and nothing
+# else. A shell that means to open /dev/fb0 asks for `mezzotint/fbdev`
+# itself; `std` is here because every consumer in this workspace has one.
+mezzotint = { version = "0.1", default-features = false, features = ["std"] }
 
 # Stylo lockstep set — these release together and break together; pin exact
 # versions and upgrade all of them in one deliberate pass (use Blitz's diff

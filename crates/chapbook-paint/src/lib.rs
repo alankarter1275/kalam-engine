@@ -17,4 +17,4 @@ pub use page::{
     image_page, BoxDecoration, Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment,
     Page,
 };
-pub use panel::{quantize, quantize_regions, rotate};
+pub use panel::{panel_rect, rotate};

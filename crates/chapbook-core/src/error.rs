@@ -68,9 +68,20 @@ pub enum ChapbookError {
     Credential(String),
 
     /// A display panel rejected an update, or could not be reached.
+    ///
+    /// Flattened to a string rather than carrying [`mezzotint::Error`]:
+    /// the panel seam is a whole crate now, its error is free to grow
+    /// variants on its own schedule, and every one of them arrives here as
+    /// `CB_ERR_PANEL` anyway.
     #[error("panel error: {0}")]
     Panel(String),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl From<mezzotint::Error> for ChapbookError {
+    fn from(err: mezzotint::Error) -> Self {
+        ChapbookError::Panel(err.to_string())
+    }
 }

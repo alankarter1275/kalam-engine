@@ -76,17 +76,9 @@ stays that way.
   `char_offset` indexes the *raw locator text*
   (`chapbook_layout::dom::locator_text`, versioned by `LOCATOR_VERSION`),
   not the
-  collapsed display text. Also the panel update seam: the `Panel` trait
-  (`blit`/`submit`/`wait` — submit returns a token because an e-ink update
-  takes 100ms to a second and blocking on it would make page turns feel
-  broken), `UpdateClass` as the vendor-neutral half of a waveform choice,
-  `PanelRect` rounding outward once for every backend, `RefreshPolicy` for
-  ghosting debt, `PanelDriver` enforcing the rules above a panel (never
-  blit under an in-flight update that overlaps; repaint what a monochrome
-  update degraded when `settle` says the gesture ended; ration the flash),
-  and `RecordingPanel` so all of it is testable with no panel attached. A
-  device crate implements against this and nothing else — it never sees a
-  display list. No heavy deps.
+  collapsed display text. It also re-exports the three panel types the page
+  model itself speaks — `UpdateClass`, `PanelRect`, `PixelFormat` — from
+  mezzotint, so those still come from one place. No heavy deps.
 - **chapbook-epub** — wraps `rbook` for OCF/OPF/spine/TOC; adds relative
   resource resolution, fixed-layout detection (rejected), font
   de-obfuscation (M5). The wrapper boundary means rbook gaps can be patched
@@ -165,12 +157,14 @@ stays that way.
   fragments tagged with an opaque producer-defined `u64`, never a DOM type),
   the `Frame` a backend consumes (ops plus a `FrameIntent` and optional
   damage rect, so an e-ink panel can choose a refresh mode;
-  `FrameIntent::update_class` maps it to a `chapbook_core::UpdateClass`, and
-  damage accumulates independently of the intent ordering so a highlight
-  does not discard the region a live selection already named), the panel
-  policy every backend shares (`quantize` for grey panels, `rotate` for
-  orientation — properties of the target, not of the rasterizer; packing
-  grey into device layout belongs lower, in `Panel::blit`), and the
+  `FrameIntent::update_class` maps it to an `Option<UpdateClass>` — `None`
+  for a plain repaint, because nothing to show is the absence of an update
+  rather than a kind of one — and damage accumulates independently of the
+  intent ordering so a highlight does not discard the region a live
+  selection already named), the orientation policy every backend shares
+  (`rotate` for the pixels, `panel_rect` for a rect turned the same way, so
+  a damage region and the pixels under it agree — properties of the target,
+  not of the rasterizer), and the
   dumb display ops. There are exactly three:
   `FillRect`, `GlyphRun { fontdb::ID, glyphs }` (no re-shaping at paint
   time), and `Image`. Borders, box backgrounds, rules, and text
@@ -182,15 +176,6 @@ stays that way.
   pixels (swash applies cosmic-text's vertical sub-pixel bin in the
   opposite direction, so the true fraction lifts every line); horizontal
   sub-pixel positioning is kept.
-- **chapbook-panel-fbdev** — a `Panel` over `/dev/fb0`. No EPDC behind it,
-  so `UpdateClass` is accepted and ignored: pixels are on screen when
-  `blit` returns. Its value is being a second implementor of the panel
-  seam that can actually run — on a VM or a Pi — while an e-ink backend
-  cannot be written without the device. Pixel packing is a pure module
-  driven by the framebuffer's own bitfields, so one path covers RGB565,
-  XRGB8888 and the rest, and it is tested against a `Vec` rather than a
-  screen; the `#[repr(C)]` geometry structs are what `--example probe`
-  checks on real hardware.
 - **chapbook-render-vello** — the GPU backend, over the same display list:
   vello's glyph API takes pre-positioned glyph ids, so a `GlyphRun`
   transcribes onto it, and device scale becomes a scene transform. Renders
@@ -257,7 +242,33 @@ stays that way.
   evidence that the seam is a seam.
 - **tools/chapbook-cli** — `meta|toc|text|styles|layout|render|opds|lib`;
   each subcommand exposes one pipeline stage and generates the snapshot
-  inputs for that stage's golden tests.
+  inputs for that stage's golden tests. `--features fbdev --example show`
+  is the device-shell demonstration: a whole reading session onto
+  `/dev/fb0`, written the long way so the display list, panel policy,
+  damage, intent and the driver's rules all get walked.
+
+### The panel seam is mezzotint
+
+Everything below "here are the pixels, and here is what kind of change they
+are" lives in [mezzotint], an external crate. It holds the `Panel` trait
+(`blit`/`submit`/`wait` — submit returns a token because an e-ink update
+takes 100ms to a second and blocking on it would make page turns feel
+broken), `UpdateClass` as the vendor-neutral half of a waveform choice,
+`PanelRect` rounding outward once for every backend, `RefreshPolicy` for
+ghosting debt, `PanelDriver` enforcing the rules above a panel (never blit
+under an in-flight update that overlaps; repaint what a monochrome update
+degraded when `settle` says the gesture ended; ration the flash),
+`RecordingPanel` so all of it is testable with no panel attached, the
+`encode` reduction path, and the backends — including the Linux framebuffer
+one that used to be `chapbook-panel-fbdev`.
+
+It was chapbook's own module until it turned out to have nothing to do with
+books: nothing under that seam knows what a page is, and the same code
+serves any application that puts pixels on an electrophoretic display. So
+chapbook is an ordinary consumer of it now, which is also the honest test of
+whether the seam was real.
+
+[mezzotint]: https://crates.io/crates/mezzotint
 
 ## Version policy
 

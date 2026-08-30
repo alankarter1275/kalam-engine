@@ -529,11 +529,13 @@ dependencies = [
  "chapbook-opds",
  "chapbook-paint",
  "chapbook-pdf",
+ "chapbook-reader",
  "chapbook-render-tinyskia",
  "clap",
  "cosmic-text",
  "image",
  "insta",
+ "mezzotint",
 ]
 
 [[package]]
@@ -541,6 +543,7 @@ name = "chapbook-core"
 version = "0.1.0"
 dependencies = [
  "log",
+ "mezzotint",
  "thiserror 2.0.20",
 ]
 
@@ -637,15 +640,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chapbook-panel-fbdev"
-version = "0.1.0"
-dependencies = [
- "chapbook-core",
- "chapbook-reader",
- "libc",
-]
-
-[[package]]
 name = "chapbook-pdf"
 version = "0.1.0"
 dependencies = [
@@ -670,6 +664,7 @@ dependencies = [
  "cosmic-text",
  "image",
  "log",
+ "mezzotint",
  "unicode-segmentation",
 ]
 
@@ -693,6 +688,7 @@ dependencies = [
  "chapbook-reader",
  "chapbook-render-tinyskia",
  "cosmic-text",
+ "mezzotint",
  "pollster",
  "tiny-skia 0.12.0",
  "vello",
@@ -2667,6 +2663,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "mezzotint"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a749807248be26d4d0aa6bb2b01e67daccfe1ad1545f9e48e1678aed4ec5a74"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

@@ -22,7 +22,7 @@ use vello::peniko::{
 use vello::wgpu;
 use vello::{AaConfig, Glyph, RenderParams, Renderer, RendererOptions, Scene};
 
-use chapbook_core::{PixelFormat, Rgba, Rotation, Size};
+use chapbook_core::{PanelRect, PixelFormat, Rgba, Rotation, Size};
 use chapbook_paint::{DisplayList, DisplayOp, ImageStore};
 
 /// A rasterized page in straight (non-premultiplied) RGBA8.
@@ -37,7 +37,12 @@ impl RenderedPage {
     /// Apply panel color policy — the same conversion the CPU backend
     /// gets, because it belongs to the target rather than the rasterizer.
     pub fn quantize(&mut self, format: PixelFormat) {
-        chapbook_paint::quantize(&mut self.rgba, self.width, self.height, format);
+        let (w, h) = (self.width, self.height);
+        // No diffusion regions: a caller that has the display list hands
+        // `dither_regions` to `mezzotint::encode::quantize_for` directly.
+        // A `RenderedPage` on its own no longer knows where its images
+        // were, and guessing is what stipples body text.
+        mezzotint::encode::quantize_for(&mut self.rgba, w, h, PanelRect::full(w, h), format, &[]);
     }
 
     /// Turn the page for a panel mounted in another orientation. Quarter
