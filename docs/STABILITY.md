@@ -18,7 +18,7 @@ meaning something, and where it will not be treated as a cost at all.
 | **Contract** | `chapbook-core`, `chapbook-paint`, `chapbook-ffi` | Types that appear in signatures a downstream must name. Breaking one breaks every shell *and* every backend at once. Changed most reluctantly. |
 | **API** | `chapbook-reader`, `chapbook-library`, `opds-client` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
 | **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf`, `chapbook-opds` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
-| **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello`, `chapbook-panel-fbdev` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
+| **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
 | **Internal** | `chapbook-layout` | No stability of any kind. It exists to make the engine work, its DOM binding and cascade driver follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
 | **Not a library** | `chapbook-viewer`, `chapbook-viewer-gtk`, `tools/chapbook-cli`, `chapbook-jni` | Their surface is not their Rust API. For the three binaries it is a command line; for `chapbook-jni` it is the AAR's Kotlin API, which is why it is here rather than in a tier of its own. The reference shells exist to be read and copied, not linked. |
 
@@ -28,8 +28,8 @@ meaning something, and where it will not be treated as a cost at all.
 which puts `chapbook-reader` at the top. But `reader` can add a method
 without disturbing anyone, while a field added to `chapbook_core::Rect`
 or a fourth variant of `chapbook_paint::DisplayOp` breaks every
-implementor of `Panel` and every rasterizer at once — including ones
-outside this repository, which is the whole premise of `PLATFORM.md`.
+rasterizer at once — including ones outside this repository, which is
+the whole premise of `PLATFORM.md`.
 Blast radius, not call frequency, is what earns the strictest tier.
 
 That is also why `chapbook-paint` is Contract rather than Internal, even
@@ -37,11 +37,17 @@ though nothing outside the workspace has ever imported it: a render
 backend cannot exist without naming `DisplayList`, and render backends
 are the seam.
 
-**Backends are stable in the direction that matters.** A device port
-implements `chapbook_core::Panel`; it does not link `chapbook-panel-fbdev`.
-So the promise belongs to the trait, and the framebuffer crate stays free
-to change — it is a worked example of the port, not a dependency of one.
-The same holds for the two rasterizers against `DisplayList`.
+**Backends are stable in the direction that matters.** A rasterizer is
+named by `DisplayList` and nothing else, so the promise belongs to the
+trait and the implementing crate stays free to change — substituting it
+is the point.
+
+**The panel seam is somebody else's stability problem now.** A device
+port implements `mezzotint::Panel`, and mezzotint versions on its own
+schedule. What chapbook owes is only that the three types it re-exports
+from there — `UpdateClass`, `PanelRect`, `PixelFormat` — keep coming from
+one place; a mezzotint major bump is therefore a Contract-tier change
+here, and is taken deliberately for that reason.
 
 **`chapbook-library` is API, not Internal**, because it is not hidden:
 `chapbook-reader` re-exports it and its `AnnotationKind` and record types
@@ -79,10 +85,11 @@ anything about that surface would be promising something about Servo's.
   commit. The workspace builds together, so the compiler finds them.
 - **Internal tier:** no ceremony. These follow the engine.
 - **Any tier:** if a change moves a type *between* crates, it moves
-  between tiers too — `quantize` and `rotate` moving from
-  `chapbook-render-tinyskia` into `chapbook-paint` promoted them from
-  Backend to Contract, which is the correct outcome and worth noticing at
-  the time rather than later.
+  between tiers too. `rotate` moving from `chapbook-render-tinyskia` into
+  `chapbook-paint` promoted it from Backend to Contract; the panel seam
+  leaving for mezzotint took `Panel` and `PanelDriver` out of chapbook's
+  tiers altogether, which is a larger version of the same event. Both are
+  the correct outcome and worth noticing at the time rather than later.
 
 ## Depending on chapbook
 
@@ -93,9 +100,10 @@ cannot skew versions with the engine it drives. `docs/SHELLS.md` §9 says
 the same thing from the shell's side.
 
 Reaching past that re-export — naming `chapbook-core` as a direct
-dependency, say — is supported and sometimes necessary (a `Panel`
-implementation must), but it is a version you now have to keep in step
-yourself.
+dependency, say — is supported and sometimes necessary (a shell driving
+a panel names `mezzotint` too, since the driver and the `Panel` trait are
+deliberately not re-exported), but it is a version you now have to keep
+in step yourself.
 
 Nothing is published to crates.io yet. When it is, the Internal and
 "Not a library" tiers get `publish = false` unless there is a reason not

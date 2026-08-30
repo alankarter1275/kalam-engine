@@ -6,8 +6,8 @@
 //! second kind had been invisible.
 //!
 //! The instance that motivated the harness: the first end-to-end run of
-//! `chapbook-panel-fbdev`'s `show` example on real hardware turned exactly
-//! one page and stopped. Nothing was wrong with the engine. The shell
+//! the framebuffer `show` example on real hardware turned exactly one
+//! page and stopped. Nothing was wrong with the engine. The shell
 //! compared `session.page()` across a turn, but a turn off the end of a
 //! unit crosses into the next one by resetting the page to 0 — so a
 //! successful move read as "did not move", and since most books open on a

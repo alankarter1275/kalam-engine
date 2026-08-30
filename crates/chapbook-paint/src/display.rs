@@ -19,7 +19,7 @@ impl DisplayList {
     /// The list is the only thing that knows the difference between a
     /// photograph and a paragraph by the time pixels exist, so the answer
     /// has to come from here. Hand the result to
-    /// [`quantize_regions`](crate::quantize_regions).
+    /// `mezzotint::encode::quantize_for` as its diffusion regions.
     ///
     /// Device pixels in page orientation, rounded outward — the space a
     /// rasterized page is in before [`rotate`](crate::rotate) turns it,
@@ -28,12 +28,9 @@ impl DisplayList {
         self.ops
             .iter()
             .filter_map(|op| match op {
-                DisplayOp::Image { dest, .. } => Some(PanelRect::from_page(
-                    *dest,
-                    self.size,
-                    scale,
-                    Rotation::None,
-                )),
+                DisplayOp::Image { dest, .. } => {
+                    Some(crate::panel_rect(*dest, self.size, scale, Rotation::None))
+                }
                 _ => None,
             })
             .filter(|rect| !rect.is_empty())
@@ -96,22 +93,27 @@ impl FrameIntent {
     /// waveform it calls that).
     ///
     /// Each row is the *least* disruptive update that still renders the
-    /// change faithfully; [`chapbook_core::RefreshPolicy`] decides
-    /// separately when to spend a flash the content did not ask for.
+    /// change faithfully; `mezzotint::RefreshPolicy` decides separately
+    /// when to spend a flash the content did not ask for.
     ///
     /// `Relayout` is the one row that asks for more than it strictly
     /// needs. Every pixel changed anyway, so the flash costs nothing the
     /// user was not already going to see — and it pays off the ghosting
     /// debt for free, at the moment it is cheapest.
-    pub fn update_class(self) -> UpdateClass {
+    ///
+    /// `None` for [`FrameIntent::Repaint`]: nothing changed, so there is
+    /// nothing for a panel to do. That is the absence of an update rather
+    /// than a kind of one, which is why it is an `Option` here instead of
+    /// a variant every backend would have to write a dead match arm for.
+    pub fn update_class(self) -> Option<UpdateClass> {
         match self {
-            FrameIntent::Repaint => UpdateClass::None,
-            FrameIntent::Selection => UpdateClass::Monochrome,
-            FrameIntent::Annotation => UpdateClass::Fast,
+            FrameIntent::Repaint => None,
+            FrameIntent::Selection => Some(UpdateClass::Monochrome),
+            FrameIntent::Annotation => Some(UpdateClass::Fast),
             FrameIntent::ContentArrived | FrameIntent::PageTurn | FrameIntent::UnitChange => {
-                UpdateClass::Quality
+                Some(UpdateClass::Quality)
             }
-            FrameIntent::Relayout => UpdateClass::Flash,
+            FrameIntent::Relayout => Some(UpdateClass::Flash),
         }
     }
 }

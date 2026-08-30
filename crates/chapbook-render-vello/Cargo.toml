@@ -11,6 +11,7 @@ authors.workspace = true
 [dependencies]
 chapbook-core = { workspace = true }
 chapbook-paint = { workspace = true }
+mezzotint = { workspace = true }
 cosmic-text = { workspace = true }
 vello = { workspace = true }
 pollster = { workspace = true }

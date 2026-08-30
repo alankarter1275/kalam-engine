@@ -154,7 +154,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     levels: 16,
                     dither: true,
                 };
-                quantize.time(|| chapbook_paint::quantize(pixmap.data_mut(), w, h, grey));
+                // The whole page as one diffusion region: this stage is
+                // named for the dithered cost, and mezzotint diffuses only
+                // where it is told to.
+                let whole = mezzotint::PanelRect::full(w, h);
+                quantize.time(|| {
+                    mezzotint::encode::quantize_for(pixmap.data_mut(), w, h, whole, grey, &[whole])
+                });
                 rotate.time(|| {
                     chapbook_paint::rotate(pixmap.data(), w, h, chapbook_core::Rotation::None)
                 });

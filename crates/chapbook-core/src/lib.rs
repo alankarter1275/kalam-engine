@@ -15,7 +15,6 @@ mod geometry;
 mod input;
 mod locator;
 mod page;
-mod panel;
 mod source;
 
 pub use book::{
@@ -38,12 +37,23 @@ pub use locator::{
     book_progression, find_quote_nearest, resolve_in_text, LayeredLocator, Locator, Quote,
     ResolvedOffset, LOCATOR_VERSION, QUOTE_CONTEXT_CHARS,
 };
-pub use page::{PageMetrics, PixelFormat, ReadingSettings, Rotation, Theme};
-pub use panel::{
-    Panel, PanelDriver, PanelInfo, PanelRect, RecordingPanel, RefreshPolicy, UpdateClass,
-    UpdateToken,
-};
+pub use page::{PageMetrics, ReadingSettings, Rotation, Theme};
 pub use source::{Format, ReadSeek, Source, FORMAT_SNIFF_BYTES};
+
+/// The panel vocabulary, from [mezzotint].
+///
+/// These are the three panel types the page model itself speaks:
+/// `FrameIntent::update_class` names an [`UpdateClass`],
+/// `DisplayList::dither_regions` produces [`PanelRect`]s, and a session
+/// rasterizes for a [`PixelFormat`]. They are re-exported so those types
+/// still come from one place.
+///
+/// The machinery *underneath* the seam — `Panel`, `PanelDriver`,
+/// `RecordingPanel`, `Source`, `Update` — is deliberately not re-exported.
+/// A shell driving a panel is a consumer of mezzotint and should say so;
+/// and `mezzotint::Source` is a window onto a pixel buffer, which is not
+/// what [`Source`] means here.
+pub use mezzotint::{PanelRect, PixelFormat, UpdateClass};
 
 /// Convenience result type used across chapbook crates.
 pub type Result<T> = std::result::Result<T, ChapbookError>;

@@ -42,10 +42,12 @@ jobs:
       - run: cargo test --workspace
 
   device-targets:
-    # The panel backend transcribes kernel structs whose layout shifts with
-    # word size, and every e-ink device is 32- or 64-bit ARM. `check` is
-    # enough: the layout assertions are const-evaluated, so a drifted
-    # transcription fails here without a linker, a device, or an emulator.
+    # Every e-ink device is 32- or 64-bit ARM, and chapbook-core is where a
+    # device build starts, so it has to cross-compile — including the panel
+    # vocabulary it now re-exports from mezzotint. The kernel-struct
+    # transcription that used to be checked here went with the backend;
+    # mezzotint's own CI holds those layout assertions.
+    #
     # Scoped to the crates that cross-compile without system libraries —
     # the rest of the workspace wants sqlite, fontconfig and GTK.
     name: check (armv7 + aarch64)
@@ -57,8 +59,8 @@ jobs:
           toolchain: ${{ env.RUST_PIN }}
           targets: armv7-unknown-linux-gnueabihf, aarch64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p chapbook-core -p chapbook-panel-fbdev --target armv7-unknown-linux-gnueabihf
-      - run: cargo check -p chapbook-core -p chapbook-panel-fbdev --target aarch64-unknown-linux-gnu
+      - run: cargo check -p chapbook-core --target armv7-unknown-linux-gnueabihf
+      - run: cargo check -p chapbook-core --target aarch64-unknown-linux-gnu
 
   reader-features:
     # chapbook-reader's formats are separately compilable, and a device

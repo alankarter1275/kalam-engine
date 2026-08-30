@@ -53,28 +53,35 @@ mode damage must not have. A prefetched unit landing silently is the
 other half of the same discipline: `poll_loaded` answers "did the page
 on screen change", so background loads spend no refresh at all.
 
-Panel colour and orientation are pipeline policy, applied in
-chapbook-paint over plain RGBA rows so every backend agrees:
-`PixelFormat::Grey { levels, dither }` quantizes luminance (floored at
-two levels, no ceiling — a cap would be a claim about which panels
+Panel colour and orientation are pipeline policy, so every backend
+agrees: `PixelFormat::Grey { levels, dither }` reduces luminance (floored
+at two levels, no ceiling — a cap would be a claim about which panels
 exist), `DisplayList::dither_regions` scopes error diffusion to where
 the page has images so body text is not stippled, and
 `PageMetrics::rotation` turns output on its way to the buffer with
-`panel_to_page` as its inverse for input. Packing into a device's buffer
-layout belongs one step lower, to `Panel::blit`.
+`panel_to_page` as its inverse for input. The turn is chapbook-paint's
+(`rotate` for the pixels, `panel_rect` for a rect turned the same way);
+the reduction is `mezzotint::encode`, and packing into a device's buffer
+layout belongs one step lower still, to `Panel::blit`.
 
-The update seam is `chapbook_core::panel`, and its module docs are the
-contract: `UpdateClass` as the vendor-neutral half of a waveform choice,
-`RefreshPolicy` for ghosting debt, `PanelDriver` enforcing the rules
-that work on a desk and fail on a device, `RecordingPanel` so all of it
-asserts on a build machine with no panel attached.
-`chapbook-panel-fbdev` is the in-tree implementor — a plain Linux
-framebuffer with no EPDC, its packing checked against pixel formats a
-kernel chose (a QEMU harness, `scripts/fbdev-vm.sh`, plus read-back
-selftests on real hardware), including 1bpp packed mono with
+**The update seam itself is not chapbook's.** It is [mezzotint], and
+that crate's docs are the contract: `UpdateClass` as the vendor-neutral
+half of a waveform choice, `RefreshPolicy` for ghosting debt,
+`PanelDriver` enforcing the rules that work on a desk and fail on a
+device, `RecordingPanel` so all of it asserts on a build machine with no
+panel attached, and the backends — a plain Linux framebuffer today, its
+packing checked against pixel formats a kernel chose (a QEMU harness plus
+read-back selftests on real hardware), including 1bpp packed mono with
 kernel-declared polarity. A real e-ink backend cannot be written without
-the device — `mxcfb` is one vendor's SoC interface, not a standard —
-and waits in the backlog with the rest of the display increments.
+the device — `mxcfb` is one vendor's SoC interface, not a standard — and
+it is mezzotint's increment to make, not chapbook's.
+
+What chapbook owes that seam is one call: the pixels, the damage rect,
+and which `UpdateClass` the change is.
+`tools/chapbook-cli/examples/show.rs` is that pairing written out in
+full, and it is the only place in this repo that opens a device.
+
+[mezzotint]: https://crates.io/crates/mezzotint
 
 ## Input
 
@@ -120,9 +127,9 @@ at every level it names:
   loader thread, fonts embedded, opened from bytes) is the same profile
   a stripped e-ink build wants, and is held open by a CI `cargo check`
   for `wasm32-unknown-unknown`.
-- **Cross-compilation**: CI checks `chapbook-core` and
-  `chapbook-panel-fbdev` on armv7 and aarch64 (const-evaluated
-  kernel-struct assertions, no linker needed), and everything except
+- **Cross-compilation**: CI checks `chapbook-core` on armv7 and aarch64
+  (no linker needed — it is where a device build starts), and everything
+  except
   `chapbook-viewer-gtk` cross-builds and links for
   `aarch64-unknown-linux-gnu`; the linked binary needs `libc`, `libm`
   and `libgcc_s` and nothing else. GTK is a packaging exception
@@ -196,19 +203,15 @@ nothing:
 | Android | JNI to a `Surface`; Onyx adds `EpdController` | ARGB_8888 | none, or Onyx's own DU/GC/A2/REGAL |
 | Pi + Waveshare SPI | SPI transfer plus a BUSY pin | 1bpp packed; some panels 2 or 4 levels | whole-panel or window refresh commands |
 
-`Panel` survives all five because a file descriptor and an mmap, a JNI
-call, and an SPI transaction are the same three operations — stage the
-pixels, ask for a change, find out when it landed — and
-`blit`/`submit`/`wait` is that, with the token making the asynchrony
-explicit. The contract wording the table forced: `blit` obliges the
-panel only to *take* the pixels before returning (staging, not "the
-panel's own memory"); `submit` may refresh **more** than asked and never
-less, and a panel that widens owns making its own `blit` safe under it;
-`PanelInfo::format` is a *request*, so `Rgba` means "do not reduce, I
-will" — the right answer for an EPDC with hardware dithering, and the
-shape that lets a panel reduce per-update in `submit`, where the
-`UpdateClass` is finally known. E-ink does not imply greyscale: a colour
-e-ink panel takes `Rgba` alongside a full set of waveforms.
+Everything below the last column is [mezzotint]'s to survive, and its
+docs carry the argument for why `blit`/`submit`/`wait` does: a file
+descriptor and an mmap, a JNI call, and an SPI transaction are the same
+three operations. The table stays here because it is what chapbook's
+*own* half has to hold up under — a session that can be told its pixel
+format, that states damage it can stand behind, and that names the kind
+of change rather than a waveform. Nothing above the seam varies across
+these five rows, and that is the claim worth re-checking when a sixth
+one arrives.
 
 ## Why not a web view
 

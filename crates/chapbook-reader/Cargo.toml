@@ -76,6 +76,9 @@ chapbook-layout = { workspace = true }
 chapbook-paint = { workspace = true }
 chapbook-library = { workspace = true, optional = true }
 chapbook-render-tinyskia = { workspace = true }
+# The reduction half of panel policy: `render_into` quantizes for the
+# session's pixel format at the same point it rasterizes.
+mezzotint = { workspace = true }
 cosmic-text = { workspace = true }
 unicode-segmentation = { workspace = true }
 image = { workspace = true }
