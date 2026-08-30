@@ -9,6 +9,8 @@
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod page_area;
 
 #[cfg(target_os = "linux")]
 fn main() -> gtk4::glib::ExitCode {

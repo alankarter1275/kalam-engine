@@ -34,6 +34,8 @@ use gtk4 as gtk;
 use chapbook_core::{ActionOutcome, EdgeSizes, Key, KeyMap, PageMetrics, Rotation, Size, TapZones};
 use chapbook_reader::Session;
 
+use crate::page_area::PageArea;
+
 pub fn run() -> glib::ExitCode {
     // See chapbook-viewer: the engine reports through `log`.
     chapbook_core::log_to_stderr();
@@ -68,7 +70,9 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
         .default_height(800)
         .build();
 
-    let area = gtk::DrawingArea::new();
+    // The page widget carries the accessible text surface; to everything
+    // below it is just a DrawingArea.
+    let area = PageArea::new(session.clone());
     area.set_hexpand(true);
     area.set_vexpand(true);
     window.set_child(Some(&area));
@@ -184,6 +188,9 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             if outcome.needs_redraw() {
                 if let Some(area) = area.upgrade() {
                     area.queue_draw();
+                    // A turn or a reflow replaced the page's text; the
+                    // screen reader only knows if it is told.
+                    area.page_changed();
                 }
             }
             // The other half. GTK's propagation flag is the same bit
@@ -231,6 +238,7 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                         drop(s);
                         if let Some(area) = area_weak.upgrade() {
                             area.queue_draw();
+                            area.page_changed();
                         }
                         return;
                     }
@@ -291,6 +299,7 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                 if outcome.needs_redraw() {
                     if let Some(area) = area_weak.upgrade() {
                         area.queue_draw();
+                        area.page_changed();
                     }
                 }
             });
@@ -309,6 +318,7 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             if session.borrow_mut().poll_loaded() {
                 if let Some(area) = area_weak.upgrade() {
                     area.queue_draw();
+                    area.page_changed();
                 }
             }
             gtk::glib::ControlFlow::Continue
