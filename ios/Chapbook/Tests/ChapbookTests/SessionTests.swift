@@ -136,14 +136,14 @@ private func metrics() -> PageMetrics {
     try session.setMetrics(metrics())
     _ = try session.pageCount()  // forces the layout
 
-    let runs = try #require(session.pageTextRuns())
+    let runs = try #require(try session.pageTextRuns())
     #expect(!runs.isEmpty)
     for run in runs {
         #expect(!run.text.isEmpty)
         #expect(run.rect.width > 0 && run.rect.height > 0)
     }
 
-    let page = try #require(session.speakablePage())
+    let page = try #require(try session.speakablePage())
     #expect(!page.text.isEmpty)
     #expect(!page.words.isEmpty)
     for word in page.words {
@@ -154,3 +154,56 @@ private func metrics() -> PageMetrics {
     let first = try #require(page.words.first)
     #expect(try !session.rects(for: first.locators).isEmpty)
 }
+
+#if canImport(AppKit)
+    import AppKit
+
+    // The macOS accessibility element, driven with the questions VoiceOver
+    // asks — value, ranges, extents, the word under a point — against a
+    // real session in a real (borderless, never shown) window. The same
+    // idea as proving the GTK surface against the live AT-SPI bus, at the
+    // depth a build machine allows.
+    @Test @MainActor func voiceOverGetsThePage() throws {
+        let library = try scratchLibrary("a11y")
+        defer { try? FileManager.default.removeItem(at: library) }
+
+        let session = try Session(
+            source: .path(fixtures.appendingPathComponent("epub/minimal.epub")),
+            configuration: SessionConfiguration(fonts: fonts(), libraryDirectory: library))
+        try session.setMetrics(metrics())
+        _ = try session.pageCount()  // forces the layout
+
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 800))
+        let window = NSWindow(
+            contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = view
+
+        let a11y = PageAccessibility(host: view, session: session)
+        view.setAccessibilityChildren([a11y])
+        a11y.pageChanged()
+
+        // The whole page is the value, and ranges index it in UTF-16.
+        let value = try #require(a11y.accessibilityValue() as? String)
+        #expect(!value.isEmpty)
+        let full = a11y.accessibilityVisibleCharacterRange()
+        #expect(full.length == (value as NSString).length)
+        #expect(a11y.accessibilityString(for: full) == value)
+
+        // A word's range has an extent, and the extent's center answers
+        // back with the same word — the pointer round trip.
+        let page = try #require(try session.speakablePage())
+        let word = try #require(page.words.first)
+        let range = NSRange(
+            location: Int(word.textRange.lowerBound),
+            length: Int(word.textRange.upperBound - word.textRange.lowerBound))
+        let frame = a11y.accessibilityFrame(for: range)
+        #expect(frame.width > 0 && frame.height > 0)
+        #expect(a11y.accessibilityRange(for: NSPoint(x: frame.midX, y: frame.midY)) == range)
+
+        // A page turn changes the value; a repeated notification no-ops.
+        try session.nextPage()
+        _ = try session.pageCount()
+        a11y.pageChanged()
+        #expect((a11y.accessibilityValue() as? String) != value)
+    }
+#endif

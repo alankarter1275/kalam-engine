@@ -579,9 +579,14 @@ them itself. Hyphenation is the proof the category is real: dictionary-based
   `AccessibilityNodeProvider` over the same runs — one virtual node per
   line, explore-by-touch, page-turn announcements — verified on an
   emulator against uiautomator's node walk and TalkBack's speech
-  dispatch. What remains is iOS's tree (`UIAccessibilityElement`), which
-  wraps the same accessor. §7 has the history, including the FFI claim
-  it corrects.
+  dispatch. The Apple trees are the Swift package's `PageAccessibility`,
+  one name with two platform-shaped halves: on iOS a
+  `UIAccessibilityElement` per line for VoiceOver's swipe order, on
+  macOS one `NSAccessibility` static-text element answering the same
+  range-and-extent questions the GTK surface answers Orca — and the
+  macOS half runs under `swift test`, so VoiceOver's questions are
+  asserted on every build machine. §7 has the history, including the
+  FFI claim it corrects.
 
 ## 5. Breadth and sync
 
@@ -934,8 +939,14 @@ word granularity, and range extents all answering — before the C ABI
 froze the struct layouts. The surface crossed every boundary the same
 week: `cb_session_page_text_run*`, `cb_session_page_word*`,
 `cb_session_range_rects` and `cb_session_word_at` in the header, with
-JNI and Swift wrappers over the same shapes. What remains is each
-platform's tree and speech plumbing, which is shell work by construction.
+JNI and Swift wrappers over the same shapes. The trees over those
+wrappers exist on all four platforms now — GTK proven on the live
+AT-SPI bus, Android on an emulator, the Swift package's two
+`PageAccessibility` halves (UIKit element list, AppKit static text)
+with the macOS half asserted by `swift test` and the iOS half still
+owed a VoiceOver session on a real device. What remains beyond that is
+speech plumbing (`AVSpeechSynthesizer`, Android TTS), which is shell
+work by construction.
 
 **Text identity, two smaller ones.** Nothing reads `UIContentSizeCategory`,
 so Dynamic Type — the accessibility setting Apple users actually change —
