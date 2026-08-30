@@ -51,6 +51,8 @@ fn complete_entry() -> Vec<u8> {
 struct Observed {
     requests: AtomicUsize,
     finalized: AtomicUsize,
+    /// Set by the loader thread once it is inside a page fetch.
+    fetching: std::sync::atomic::AtomicBool,
 }
 
 /// The `user` pointer's referent — dropped by the finalizer, so the drop
@@ -120,6 +122,29 @@ unsafe extern "C" fn serve(
             cb_status::CB_OK
         );
     }
+}
+
+/// Like [`serve`], but a page fetch announces itself and then takes its
+/// time — so a test can close the session while the loader thread is
+/// provably inside the host's callback.
+///
+/// Without this, the loader is parked in `recv` at close and exits almost
+/// at once, so whether the finalizer beats the assertion is scheduling
+/// luck: the detached and the joined implementation both pass on an idle
+/// machine and only the detached one fails under load. That is the bug
+/// this transport exists to make deterministic.
+unsafe extern "C" fn serve_slow_pages(
+    request: *const cb_http_request,
+    response: *mut cb_http_response,
+    user: *mut c_void,
+) {
+    let url = unsafe { CStr::from_ptr((*request).url) }.to_str().unwrap();
+    if url.contains("/pages") {
+        let context = unsafe { &*(user as *const HostContext) };
+        context.observed.fetching.store(true, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    unsafe { serve(request, response, user) };
 }
 
 /// A transport whose network is down, reporting the way the header says.
@@ -343,4 +368,80 @@ fn a_url_that_is_not_one_is_refused_before_the_network() {
     assert_eq!(observed.requests.load(Ordering::SeqCst), 0);
     // Consumed-either-way applies here too.
     assert_eq!(observed.finalized.load(Ordering::SeqCst), 1);
+}
+
+/// Closing a session waits for the page it was fetching.
+///
+/// The loader thread owns the publication, which owns the transport, which
+/// owns the host's context and runs its `finalize` on drop. If close does
+/// not wait for that thread, it returns to a host whose context is still
+/// alive on a thread the host cannot see — and a host that frees it there,
+/// which is what the header's wording invites, has a use-after-free while
+/// a page fetch is still running through the transport it just tore down.
+///
+/// The fetch is slow on purpose so the close lands on top of it. That is
+/// the only arrangement that tells a joined implementation from a detached
+/// one: with the thread idle, both pass.
+#[test]
+fn closing_a_session_waits_for_the_page_it_was_fetching() {
+    let observed = Arc::new(Observed::default());
+    let config = config_with_transport("in-flight", Some(serve_slow_pages), &observed);
+
+    let url = cstr(&format!("{HOST}/feed"));
+    let session = unsafe { cb_session_open_url(url.as_ptr(), config) };
+    assert!(!session.is_null(), "open failed: {}", last_error());
+
+    let metrics = cb_metrics {
+        width: 600.0,
+        height: 800.0,
+        margin_top: 40.0,
+        margin_right: 40.0,
+        margin_bottom: 40.0,
+        margin_left: 40.0,
+        dpi_scale: 1.0,
+        rotation: cb_rotation::CB_ROTATION_NONE,
+    };
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics) },
+        cb_status::CB_OK
+    );
+
+    // Rendering queues the first page on the loader thread and comes back
+    // with a placeholder; the fetch is still running.
+    let (mut w, mut h) = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_render_size(session, &mut w, &mut h) },
+        cb_status::CB_OK
+    );
+    let mut surface = vec![0u8; (w as usize) * (h as usize) * 4];
+    let stride = w as usize * 4;
+    assert_eq!(
+        unsafe {
+            cb_session_render_into(session, surface.as_mut_ptr(), surface.len(), w, h, stride)
+        },
+        cb_status::CB_OK
+    );
+
+    // Wait until the host callback says it is in the fetch, so the close
+    // below is genuinely concurrent with it rather than after it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !observed.fetching.load(Ordering::SeqCst) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the loader never reached the page fetch"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        observed.finalized.load(Ordering::SeqCst),
+        0,
+        "the transport is in use; nothing should have been released"
+    );
+
+    unsafe { cb_session_close(session) };
+    assert_eq!(
+        observed.finalized.load(Ordering::SeqCst),
+        1,
+        "close returned while the loader still held the host's context"
+    );
 }

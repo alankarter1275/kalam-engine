@@ -908,6 +908,11 @@ cb_status cb_http_response_fail(struct cb_http_response *response, const char *m
  * (a streamed comic fetches pages while the shell fetches a cover), so
  * what `user` points at must tolerate both.
  *
+ * They have all finished by the time [`cb_session_close`] returns, which
+ * is what makes "forget it" safe: a host may free whatever `user` pointed
+ * at as soon as `finalize` runs, and never has to wonder whether a
+ * loader thread is still inside a callback.
+ *
  * In a build without OPDS (`cb_capabilities()` lacks `CB_CAP_OPDS`)
  * there is nothing to fetch and this reports
  * `CB_ERR_FORMAT_NOT_BUILT` — after running `finalize`, keeping the
@@ -1110,6 +1115,21 @@ struct cb_session *cb_session_open_url(const char *url, struct cb_config *config
  * Close a session and release everything it holds. Passing null is a
  * no-op. Every handle from a `cb_session_open_*` must reach this exactly
  * once.
+ *
+ * **This blocks until the session's background work has finished.** An
+ * image book loads its pages on a worker thread, and that thread holds
+ * the publication — and therefore any host transport, and therefore the
+ * host's own `user` context. Returning before it finished would hand a
+ * host back control while its context was still live on a thread it
+ * cannot see, and a host that then freed it — which is what the
+ * ownership rule invites — would be freeing memory a page fetch is still
+ * using.
+ *
+ * So the wait is the contract, not an implementation detail: when this
+ * returns, every callback the host installed has been called for the
+ * last time and `finalize` has already run. The cost is that closing
+ * during a slow fetch takes as long as that fetch, which is why a shell
+ * tearing down in a hurry should prefer `cb_session_suspend`.
  */
 void cb_session_close(struct cb_session *session);
 

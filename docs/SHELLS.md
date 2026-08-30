@@ -336,6 +336,14 @@ caches. Call it when the platform says you are about to be stopped, because
 that is the only guaranteed callback and it is on a clock. The session keeps
 working afterwards; the library reopens on the next access.
 
+**Dropping a session blocks** until its loader thread finishes whatever it
+was fetching — which on a cold comic page over a slow network is seconds.
+That is deliberate. The worker holds the publication, and for a streamed
+comic the publication holds your HTTP transport; returning sooner would
+hand you back control while your own context was still in use on a thread
+you cannot see. If you are being torn down in a hurry, `suspend()` is what
+you want — it persists and lets go without waiting on the network.
+
 **`session.frame() -> Option<Frame>`** is the seam. `Frame` carries:
 
 - `list` — a `DisplayList` of paint-neutral ops. There are exactly three:
