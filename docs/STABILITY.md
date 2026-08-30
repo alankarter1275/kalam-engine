@@ -1,7 +1,7 @@
 # API stability
 
-Sixteen workspace members is a lot of surface to promise nothing about
-and far too much to promise everything about. This is the split: which
+A workspace this size is a lot of surface to promise nothing about and
+far too much to promise everything about. This is the split: which
 crates carry semver discipline, which are implementations you may depend
 on at your own pace, and which are internals that will move under you.
 

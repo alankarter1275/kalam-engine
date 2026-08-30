@@ -21,7 +21,8 @@ assumptions; hidpi scaling happens only inside a backend.
 ## Format extensibility (EPUB-first, not EPUB-only)
 
 Chapbook's focus is the reflowable-EPUB pipeline above, but the seams are
-placed so an image-per-page format (CBZ) can join later without a redesign:
+placed so an image-per-page format joins without a redesign — and three
+have:
 
 - **Book model in core.** `BookMetadata`/`SpineItem`/`TocEntry`/`Resource`
   and the `Publication` trait live in `chapbook-core`. The library, reader
@@ -254,8 +255,8 @@ stays that way.
   session needs no knowledge of which one it is talking to, which is the
   evidence that the seam is a seam.
 - **tools/chapbook-cli** — `meta|toc|text|styles|layout|render|opds|lib`;
-  each subcommand ships with its milestone and generates the snapshot inputs
-  for that milestone's golden tests.
+  each subcommand exposes one pipeline stage and generates the snapshot
+  inputs for that stage's golden tests.
 
 ## Version policy
 
@@ -325,9 +326,3 @@ display list, which carries glyph indices and no text; `PLATFORM.md` §7
 has that argument. Each platform wraps the runs in its own tree
 (`UIAccessibilityElement`, `AccessibilityNodeInfo`, AT-SPI); the GTK
 viewer's `PageArea` is the reference, verified against AT-SPI end to end.
-
-## Milestones
-
-M0 scaffold/CI → M1 EPUB+text extraction → M2 stylo cascade → M3 paginated
-layout → M4 pixels (renderer + viewer) → M5 images/@font-face → M6 OPDS →
-M7 library → M8 stretch (tables, CFI, themes, hyphenation, e-ink backend).
