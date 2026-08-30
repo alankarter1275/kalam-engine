@@ -155,9 +155,18 @@ impl OpdsClient {
         self.get(&url, "image/*")
     }
 
+    /// The transport itself, for the one flow that is not a GET (see
+    /// `crate::progression`). Crate-internal: the client owns how requests
+    /// are assembled, and handing the transport out publicly would let a
+    /// caller route around the credential.
+    #[cfg(feature = "progression")]
+    pub(crate) fn transport(&self) -> &dyn HttpClient {
+        &*self.http
+    }
+
     /// Assemble a request: one Accept media type, no q-values (interop doc
     /// §1), plus credentials when the caller has set them.
-    fn request(&self, url: &str, accept: &str) -> HttpRequest {
+    pub(crate) fn request(&self, url: &str, accept: &str) -> HttpRequest {
         let request = HttpRequest::new(url).header("Accept", accept);
         match &self.authorization {
             Some(auth) => request.header("Authorization", auth),
@@ -165,7 +174,11 @@ impl OpdsClient {
         }
     }
 
-    fn get(&self, url: &str, accept: &str) -> Result<(Vec<u8>, Option<String>), OpdsError> {
+    pub(crate) fn get(
+        &self,
+        url: &str,
+        accept: &str,
+    ) -> Result<(Vec<u8>, Option<String>), OpdsError> {
         let mut response = self
             .http
             .get(self.request(url, accept))

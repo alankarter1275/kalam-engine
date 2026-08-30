@@ -99,6 +99,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
 
+  progression-feature:
+    # OPDS Progression 1.0 is off by default because the spec is an
+    # unreleased draft, which means the workspace-wide `clippy` and `test`
+    # jobs never compile a line of it. Without this job the whole feature
+    # would rot unnoticed — the failure mode a gate invites and the reason
+    # `reader-features` exists one job up.
+    #
+    # Both shapes, because they differ: with `ureq` exercises the bundled
+    # transport's `put`, and without it proves the flow stays reachable for
+    # a host that brought its own network, which is the configuration an
+    # iOS or Android build actually ships.
+    name: check (opds-client, progression draft)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p opds-client --all-targets --features progression
+      - run: cargo clippy -p opds-client --all-targets --no-default-features --features progression
+      - run: cargo test -p opds-client --features progression
+
   wasm-profile:
     # The EPUB-only profile — no library, no loader thread, no networking —
     # checked for wasm32. Not a build: no linker, no wasm-bindgen, no Node.

@@ -77,6 +77,13 @@
 //!
 //! The full contract, with the server survey behind it, is this crate's
 //! `INTEROP.md`.
+//!
+//! # Position sync
+//!
+//! [`progression`] speaks OPDS Progression 1.0 — reading and writing where
+//! a reader last was in one publication — behind the **non-default**
+//! `progression` feature. The gate is there because the spec is an
+//! unreleased draft; see that module for what turning it on means.
 
 mod atom;
 mod client;
@@ -84,6 +91,8 @@ mod href;
 pub mod http;
 mod model;
 mod opds2;
+#[cfg(feature = "progression")]
+pub mod progression;
 #[cfg(feature = "ureq")]
 mod ureq_transport;
 
@@ -96,6 +105,11 @@ pub use model::{
     Series, Totals, AUTH_BASIC,
 };
 pub use opds2::{parse_opds2, parse_opds2_publication};
+#[cfg(feature = "progression")]
+pub use progression::{
+    Device, Progression, ProgressionRefusal, ProgressionUpdate, RefusalReason,
+    MEDIA_TYPE_PROGRESSION, REL_PROGRESSION,
+};
 #[cfg(feature = "ureq")]
 pub use ureq_transport::UreqHttp;
 

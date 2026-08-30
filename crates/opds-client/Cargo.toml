@@ -25,3 +25,10 @@ insta = { workspace = true }
 # else in the crate is unchanged. See src/http.rs for why that seam exists.
 default = ["ureq"]
 ureq = ["dep:ureq"]
+# OPDS Progression 1.0 position sync. Off by default because the spec is an
+# unreleased draft (drafts.opds.io, absent from specs.opds.io) whose wire
+# format can still change — not because it costs dependencies, since it adds
+# none. Turning it on is a caller accepting that surface may move; it also
+# adds `HttpClient::put`, which has a refusing default so existing
+# transports keep compiling. See src/progression.rs and INTEROP.md §6.
+progression = []

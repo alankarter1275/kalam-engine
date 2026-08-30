@@ -150,8 +150,15 @@ The library is SQLite, bundled, and stays SQLite everywhere — replacing
 it per-platform would make the storage layer unshareable, which is the
 point of having one. The schema is already sync-shaped (`updated_at` on
 positions, soft deletes on the user tables), so a shell can mirror it
-into a sync service with no migration; the sync clients themselves
-(OPDS Progression 1.0, kosync, annotation interchange) are backlog.
+into a sync service with no migration. One sync client exists: OPDS
+Progression 1.0 in `opds-client`, behind a non-default `progression`
+feature because the spec is an unreleased draft (INTEROP.md §6). It
+speaks the protocol and nothing more — binding it to chapbook positions
+is not built, and the open question is identity, not wire format, since
+a progression service is addressed by a per-publication URL while the
+library keys books by edition fingerprint. kosync and annotation
+interchange (W3C Web Annotation Protocol, which is where the OPDS
+maintainers point for annotations) remain backlog.
 
 Three conclusions here are load-bearing for every host and worth
 restating wherever a shell author looks:
