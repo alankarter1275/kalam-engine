@@ -352,15 +352,3 @@ fn speakable_page_none_before_layout() {
     let s = open_isolated("epub-speak-early", &fixture("epub/illustrated.epub"));
     assert_eq!(s.speakable_page(), None);
 }
-
-#[test]
-fn rtl_runs_have_sane_ranges() {
-    let mut s = open_isolated("epub-runs-rtl", &fixture("epub/rtl.epub"));
-    s.set_metrics(metrics());
-    render_loaded(&mut s);
-    // Glyphs inside an RTL line are in visual order, so per-line locators
-    // are not monotonic in x — the locator_end rule reads the max, and the
-    // run list stays in reading order regardless.
-    let runs = s.page_text_runs().expect("laid out");
-    assert_runs_sane(&runs, &metrics());
-}

@@ -612,6 +612,9 @@ impl<'f> Paginator<'f> {
                         y: gy * scale,
                         advance,
                         locator: math.locator,
+                        // formulary lays out left to right, and `prepare`
+                        // already refused any formula with a mirrored glyph.
+                        rtl: false,
                     };
                     match runs.last_mut() {
                         Some(run) if run.font_size == size && run.color == color => {
@@ -1145,6 +1148,7 @@ impl<'f> Paginator<'f> {
                     y: glyph.y - glyph.y_offset,
                     advance: glyph.w,
                     locator: locator_at(run.line_i, glyph.start),
+                    rtl: glyph.level.is_rtl(),
                 };
                 let is_space = run.text.get(glyph.start..glyph.end) == Some(" ");
                 match glyph_runs.last_mut() {
@@ -1303,17 +1307,24 @@ impl<'f> Paginator<'f> {
             .last()
             .and_then(|r| r.glyphs.last())
             .map_or(0.0, |g| g.y);
-        let locator = line
+        // The hyphen belongs to the word it broke, so it takes that word's
+        // last glyph's offset and its direction. `x_end` puts it at the
+        // line's right edge, which is where a visible hyphen goes in an
+        // LTR line and is wrong in an RTL one — but `hyphenation` only
+        // ships en-US dictionaries, so no RTL line reaches here today.
+        // See the module docs' note on non-English dictionaries.
+        let (locator, rtl) = line
             .runs
             .last()
             .and_then(|r| r.glyphs.last())
-            .map_or(0, |g| g.locator);
+            .map_or((0, false), |g| (g.locator, g.rtl));
         line.runs.last_mut().unwrap().glyphs.push(Glyph {
             id: glyph_id,
             x: x_end,
             y,
             advance,
             locator,
+            rtl,
         });
         line.width = line.width.max(x_end + advance);
         line.text.push('-');

@@ -114,6 +114,23 @@ fn render_golden_foreign() {
     );
 }
 
+/// Hebrew, Arabic that has to join, and an LTR island inside RTL — the
+/// only golden with a non-Latin script in it.
+///
+/// The assertions in `chapbook-reader/tests/bidi.rs` are sharper than a
+/// PNG diff and say why they fail; this is here for the thing they cannot
+/// check, which is whether it *looks* like Hebrew. Every defect that suite
+/// found was invisible to the Latin corpus, and so is every future one.
+#[test]
+fn render_golden_bidi() {
+    check_golden_of(
+        "fixtures/epub/bidi.epub",
+        0,
+        0,
+        "fixtures/render/bidi-s0p0.png",
+    );
+}
+
 #[test]
 fn render_golden_comic_page() {
     // Comic pages carry no text, so this golden is font-independent.

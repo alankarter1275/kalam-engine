@@ -331,6 +331,10 @@ fn push_hidden_text(
                 y: 0.0,
                 advance: g.width * factor,
                 locator: g.offset,
+                // A PDF's text layer is positioned glyphs, not a bidi
+                // paragraph: hayro hands over what the page draws, in the
+                // order it draws it, with no embedding levels to carry.
+                rtl: false,
             })
             .collect();
         page.fragments.push(chapbook_paint::Fragment {

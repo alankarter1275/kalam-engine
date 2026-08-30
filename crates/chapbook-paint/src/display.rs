@@ -223,25 +223,19 @@ fn push_selection_rect(
     line: &crate::page::LineFragment,
     sel: Selection,
 ) {
-    if sel.end <= sel.start {
-        return;
-    }
-    let mut min_x = f32::INFINITY;
-    let mut max_x = f32::NEG_INFINITY;
-    for run in &line.runs {
-        for glyph in &run.glyphs {
-            if glyph.locator >= sel.start && glyph.locator < sel.end {
-                min_x = min_x.min(glyph.x);
-                max_x = max_x.max(glyph.x + glyph.advance);
-            }
-        }
-    }
-    if max_x > min_x {
+    // One fill per visually contiguous piece — see
+    // `LineFragment::selected_spans` for why a bidi line can need two.
+    // Allocates per line per selection, which a drag event pays; the
+    // alternative is threading a scratch buffer through the whole walk for
+    // a vector that is almost always one element long.
+    let mut spans = Vec::new();
+    line.selected_spans(sel.start, sel.end, &mut spans);
+    for (from, to) in spans {
         ops.push(DisplayOp::FillRect {
             rect: Rect::new(
-                fragment.rect.origin.x + min_x,
+                fragment.rect.origin.x + from,
                 fragment.rect.origin.y,
-                max_x - min_x,
+                to - from,
                 fragment.rect.size.h,
             ),
             color: sel.color,

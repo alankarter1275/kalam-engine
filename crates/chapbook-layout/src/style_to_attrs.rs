@@ -120,12 +120,33 @@ fn letter_spacing_px(style: &ComputedValues) -> f32 {
         .to_f64_px() as f32
 }
 
-/// Buffer alignment from computed text-align.
+/// Buffer alignment from computed text-align, resolved against the inline
+/// base direction.
+///
+/// `start` and `end` are *logical*, so they depend on `direction` — and
+/// `start` is the initial value, which means getting this wrong left every
+/// Hebrew and Arabic paragraph in the corpus flush against the wrong
+/// margin. It did: `Start` used to map unconditionally to `Align::Left`.
+///
+/// One narrower thing this still does not fix. cosmic-text resolves the
+/// bidi *base level* per line from the first strong character, and 0.19
+/// offers no way to state it, so a paragraph declared `dir="rtl"` whose
+/// first word is Latin reorders as if it were LTR while aligning right.
+/// Declared direction wins the alignment; the reordering is still a guess.
+/// `bidi_base_level_comes_from_the_text_not_the_declaration` in
+/// `tests/bidi.rs` pins that as known behaviour rather than a surprise.
 pub fn align_for(style: &ComputedValues) -> Option<Align> {
+    use style::properties::longhands::direction::computed_value::T as Direction;
     use style::values::computed::text::TextAlign;
+
+    let rtl = style.clone_direction() == Direction::Rtl;
     match style.clone_text_align() {
-        TextAlign::Start | TextAlign::Left | TextAlign::MozLeft => Some(Align::Left),
-        TextAlign::End | TextAlign::Right | TextAlign::MozRight => Some(Align::Right),
+        TextAlign::Left | TextAlign::MozLeft => Some(Align::Left),
+        TextAlign::Right | TextAlign::MozRight => Some(Align::Right),
+        TextAlign::Start if rtl => Some(Align::Right),
+        TextAlign::Start => Some(Align::Left),
+        TextAlign::End if rtl => Some(Align::Left),
+        TextAlign::End => Some(Align::Right),
         TextAlign::Center | TextAlign::MozCenter => Some(Align::Center),
         TextAlign::Justify => Some(Align::Justified),
     }

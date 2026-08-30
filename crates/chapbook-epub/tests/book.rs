@@ -120,7 +120,7 @@ fn page_progression_direction_comes_off_the_spine() {
     // the spec says and not merely what the default happens to be.
     assert_eq!(minimal().reading_direction(), ReadingDirection::Ltr);
 
-    let rtl = Book::open(&fixture("rtl.epub")).expect("fixture EPUB should open");
+    let rtl = Book::open(&fixture("page-direction.epub")).expect("fixture EPUB should open");
     assert_eq!(rtl.reading_direction(), ReadingDirection::Rtl);
     assert_eq!(
         rtl.spine().len(),
