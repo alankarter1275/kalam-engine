@@ -18,7 +18,13 @@ env:
 jobs:
   check:
     name: fmt + clippy + test (pinned stable)
-    runs-on: ubuntu-latest
+    # 26.04 rather than `-latest` (24.04): the GTK viewer's AccessibleText
+    # surface needs system GTK >= 4.16 — its extents/offset vfuncs are
+    # 4.16 API, gated as `v4_16` in gtk4-rs — and 24.04 ships 4.14.5, so
+    # gdk4-sys fails in its build script before any Rust is judged. Only
+    # the two workspace-wide jobs care; the rest never touch GTK. Fold
+    # back into `-latest` when it reaches 26.04.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       # The only system library the workspace needs: gtk4-sys probes for
@@ -131,7 +137,8 @@ jobs:
 
   msrv:
     name: build (MSRV 1.92)
-    runs-on: ubuntu-latest
+    # 26.04 for GTK >= 4.16, as in `check` above.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev

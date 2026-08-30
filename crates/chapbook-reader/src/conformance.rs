@@ -92,6 +92,10 @@ pub enum Check {
     ASelectionLivesAndDiesWithThePage,
     /// A saved position comes back on reopen.
     PositionSurvivesARestart,
+    /// A laid-out text page reports text runs and speakable words whose
+    /// ranges hold together — the surface an accessibility tree or a TTS
+    /// engine stands on.
+    ThePageSpeaksItsText,
 }
 
 impl Check {
@@ -108,6 +112,7 @@ impl Check {
         Check::PendingLoadsConverge,
         Check::ASelectionLivesAndDiesWithThePage,
         Check::PositionSurvivesARestart,
+        Check::ThePageSpeaksItsText,
     ];
 }
 
@@ -125,6 +130,7 @@ impl fmt::Display for Check {
             Check::PendingLoadsConverge => "pending loads converge",
             Check::ASelectionLivesAndDiesWithThePage => "a selection lives and dies with the page",
             Check::PositionSurvivesARestart => "position survives a restart",
+            Check::ThePageSpeaksItsText => "the page speaks its text",
         })
     }
 }
@@ -282,6 +288,7 @@ impl<F: FnMut() -> Session> Harness<F> {
             Check::PendingLoadsConverge => self.loads_converge(session),
             Check::ASelectionLivesAndDiesWithThePage => self.selection_lifecycle(session),
             Check::PositionSurvivesARestart => self.position_survives(session),
+            Check::ThePageSpeaksItsText => self.page_speaks(session),
         }
     }
 
@@ -645,6 +652,74 @@ impl<F: FnMut() -> Session> Harness<F> {
                 "a page turn kept the selection: its offsets no longer name \
                  anything on screen"
                     .into(),
+            );
+        }
+        Outcome::Passed
+    }
+
+    /// A shell building an accessibility tree or driving TTS walks the
+    /// text surface; this makes sure a text book actually presents one,
+    /// and that its ranges hold together. A book may open on a page with
+    /// nothing to read (a cover image, a PDF's drawing pages), so the
+    /// check walks forward to the first page that has text.
+    fn page_speaks(&mut self, session: &mut Session) -> Outcome {
+        if session.kind() == BookKind::Comic {
+            return Outcome::Skipped("comic pages have no text layer".into());
+        }
+        let mut turns = 0usize;
+        let runs = loop {
+            match session.page_text_runs() {
+                None => {
+                    return Outcome::Failed(
+                        "a settled page reported no layout to read text from".into(),
+                    );
+                }
+                Some(runs) if !runs.is_empty() => break runs,
+                Some(_) => {
+                    if !session.next_page() || turns >= MAX_TURNS {
+                        return Outcome::Skipped("no page in this book carries text runs".into());
+                    }
+                    turns += 1;
+                    let _ = settle(session, self.budget);
+                }
+            }
+        };
+        let mut last_start = 0;
+        for run in &runs {
+            if run.text.is_empty() || run.locator_end < run.locator_start {
+                return Outcome::Failed(format!("a malformed text run came back: {run:?}"));
+            }
+            if run.locator_start < last_start {
+                return Outcome::Failed("text runs are not in reading order".into());
+            }
+            last_start = run.locator_start;
+        }
+        let Some(speech) = session.speakable_page() else {
+            return Outcome::Failed("a page with text runs had no speakable text".into());
+        };
+        if speech.words.is_empty() {
+            return Outcome::Failed("a page with text runs produced no words".into());
+        }
+        let text_chars = speech.text.chars().count() as u32;
+        let mut last_word = 0;
+        for word in &speech.words {
+            if word.text_start >= word.text_end || word.text_end > text_chars {
+                return Outcome::Failed(format!(
+                    "a word span does not index the speakable text: {word:?} over {text_chars} chars"
+                ));
+            }
+            if word.text_start < last_word {
+                return Outcome::Failed("word spans are not in reading order".into());
+            }
+            last_word = word.text_start;
+        }
+        let first = speech.words[0];
+        if session
+            .range_rects(first.locator_start, first.locator_end)
+            .is_empty()
+        {
+            return Outcome::Failed(
+                "the first word on the page has no geometry: TTS could not highlight it".into(),
             );
         }
         Outcome::Passed

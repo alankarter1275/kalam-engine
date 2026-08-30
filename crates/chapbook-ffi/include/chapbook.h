@@ -582,6 +582,56 @@ typedef struct cb_settings {
 } cb_settings;
 
 /**
+ * A rectangle in page space: CSS px, origin at the page's top-left.
+ * Rotation is a property of the output, so a host painting a rotated
+ * panel maps these itself — the same transform it applies to the pixels.
+ */
+typedef struct cb_rect {
+    float x;
+    float y;
+    float w;
+    float h;
+} cb_rect;
+
+/**
+ * One run of the current page's text: one visual line's geometry and
+ * locator range. The text itself comes from
+ * [`cb_session_page_text_run_text`] — split from the struct so nothing
+ * here crosses owned. The run's char count is *not* `locator_end -
+ * locator_start`: shaped text collapses whitespace, drops soft hyphens
+ * and may add generated marks.
+ */
+typedef struct cb_text_run {
+    struct cb_rect rect;
+    /**
+     * Locator range `[start, end)` in the unit's locator space — the
+     * same offsets positions, selections and annotations use.
+     */
+    uint32_t locator_start;
+    uint32_t locator_end;
+} cb_text_run;
+
+/**
+ * One word on the current page: where it sits in the speakable string
+ * ([`cb_session_page_speakable_text`], char offsets) and in locator
+ * space. A TTS engine reports progress as ranges into the string it was
+ * handed; the locator range is how that progress becomes a highlight —
+ * feed it to [`cb_session_range_rects`].
+ */
+typedef struct cb_word_span {
+    /**
+     * Char range `[start, end)` within the speakable text.
+     */
+    uint32_t text_start;
+    uint32_t text_end;
+    /**
+     * Locator range `[start, end)` in the unit's locator space.
+     */
+    uint32_t locator_start;
+    uint32_t locator_end;
+} cb_word_span;
+
+/**
  * Called when a background load finishes and there is something new to
  * show. **Fires on the loader thread**, not the host's UI thread: it must
  * only hand a token to whatever the host's main loop watches — a pipe, a
@@ -990,6 +1040,83 @@ cb_status cb_session_render_into(struct cb_session *session,
                                  uint32_t width,
                                  uint32_t height,
                                  size_t stride);
+
+/**
+ * How many text runs the current page holds. `CB_ERR_UNAVAILABLE` until
+ * the page is laid out; zero for a laid-out page with nothing to speak
+ * (a comic), which is a different answer on purpose.
+ */
+cb_status cb_session_page_text_run_count(const struct cb_session *session, size_t *count);
+
+/**
+ * One text run's geometry and locator range, by index in reading order.
+ * `CB_ERR_INVALID_ARGUMENT` past the count.
+ */
+cb_status cb_session_page_text_run(const struct cb_session *session,
+                                   size_t index,
+                                   struct cb_text_run *run);
+
+/**
+ * One text run's text, by the same index. Caller-allocates; see
+ * [`cb_last_error_message`] for the two-call idiom.
+ */
+cb_status cb_session_page_text_run_text(const struct cb_session *session,
+                                        size_t index,
+                                        char *buf,
+                                        size_t cap,
+                                        size_t *needed);
+
+/**
+ * Page-space rects covering a locator range on the current page — one
+ * per line the range touches; the geometry a word highlight or an
+ * accessibility extent asks for. The two-call idiom: `needed` is always
+ * the full count, a zero-capacity call sizes. Empty when the page is not
+ * laid out or the range lies elsewhere.
+ */
+cb_status cb_session_range_rects(const struct cb_session *session,
+                                 uint32_t start,
+                                 uint32_t end,
+                                 struct cb_rect *rects,
+                                 size_t cap,
+                                 size_t *needed);
+
+/**
+ * The current page as one speakable string — hand it to a TTS engine
+ * whole, then map its progress reports back through the word table.
+ * Whitespace is collapsed and soft hyphens dropped, so its offsets are
+ * the word table's `text_*` fields and nothing else. Caller-allocates;
+ * two-call idiom. `CB_ERR_UNAVAILABLE` until the page is laid out.
+ */
+cb_status cb_session_page_speakable_text(const struct cb_session *session,
+                                         char *buf,
+                                         size_t cap,
+                                         size_t *needed);
+
+/**
+ * How many words the speakable page holds. Same availability rule as
+ * [`cb_session_page_speakable_text`].
+ */
+cb_status cb_session_page_word_count(const struct cb_session *session, size_t *count);
+
+/**
+ * One word span, by index in reading order. `CB_ERR_INVALID_ARGUMENT`
+ * past the count.
+ */
+cb_status cb_session_page_word(const struct cb_session *session,
+                               size_t index,
+                               struct cb_word_span *span);
+
+/**
+ * The word under a point in panel coordinates, as a locator range —
+ * dictionary lookup's question. `CB_ERR_UNAVAILABLE` when no word is
+ * there: off text, on whitespace, on bare punctuation. May lay the unit
+ * out, hence the mutable handle.
+ */
+cb_status cb_session_word_at(struct cb_session *session,
+                             float x,
+                             float y,
+                             uint32_t *start,
+                             uint32_t *end);
 
 /**
  * Save the reading position and let go of everything reconstructible.

@@ -16,6 +16,9 @@ final class ReaderViewController: UIViewController, UIDocumentPickerDelegate {
     let pageView = UIImageView()
     let status = UILabel()
     var session: Session?
+    // The page's text runs as VoiceOver's element list; render() owes it
+    // one pageChanged() per draw, and it no-ops unless the text moved.
+    var a11y: PageAccessibility?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -109,6 +112,7 @@ final class ReaderViewController: UIViewController, UIDocumentPickerDelegate {
             }
 
             self.session = session
+            self.a11y = PageAccessibility(host: pageView, session: session)
             print("DEMO \(phase): \"\(session.title() ?? "?")\" — \(resolved.url.lastPathComponent)")
             render()
         } catch {
@@ -124,6 +128,7 @@ final class ReaderViewController: UIViewController, UIDocumentPickerDelegate {
                 cgImage: image,
                 scale: view.window?.screen.scale ?? UIScreen.main.scale,
                 orientation: .up)
+            a11y?.pageChanged()
         } catch {
             show("render failed: \(error)")
         }

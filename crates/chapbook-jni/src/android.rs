@@ -15,7 +15,7 @@ use chapbook_reader::chapbook_core::{
 };
 use chapbook_reader::{Session, SessionConfig};
 use jni::objects::{JClass, JObject, JString};
-use jni::sys::{jboolean, jfloat, jint, jlong, jstring};
+use jni::sys::{jboolean, jfloat, jfloatArray, jint, jintArray, jlong, jstring};
 use jni::JNIEnv;
 
 // ---- Handles ----
@@ -387,6 +387,185 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_title(
         None => String::new(),
     };
     string_out(&env, &title)
+}
+
+// ---- The text surface ----
+//
+// The current page's text with geometry — what `AccessibilityNodeInfo`,
+// TTS word highlighting (`UtteranceProgressListener.onRangeStart`), and a
+// dictionary popup consume. Values cross packed — ranges in a `jlong`
+// like `position`, geometry flattened into primitive arrays — because a
+// TTS engine reads the whole word table once per page, and a JNI call per
+// word is the expensive shape. Locator offsets ride `jint`/`jlong` halves
+// as raw `u32` bits; real books sit far below 2^31 characters a unit.
+
+fn float_array_out(env: &JNIEnv, values: &[jfloat]) -> jfloatArray {
+    let Ok(array) = env.new_float_array(values.len() as i32) else {
+        return JObject::null().into_raw();
+    };
+    if env.set_float_array_region(&array, 0, values).is_err() {
+        return JObject::null().into_raw();
+    }
+    array.into_raw()
+}
+
+fn int_array_out(env: &JNIEnv, values: &[jint]) -> jintArray {
+    let Ok(array) = env.new_int_array(values.len() as i32) else {
+        return JObject::null().into_raw();
+    };
+    if env.set_int_array_region(&array, 0, values).is_err() {
+        return JObject::null().into_raw();
+    }
+    array.into_raw()
+}
+
+fn pack_range(start: u32, end: u32) -> jlong {
+    ((start as jlong) << 32) | (end as jlong & 0xffff_ffff)
+}
+
+/// How many text runs the current page holds; `-1` until it is laid out,
+/// `0` for a laid-out page with nothing to speak (a comic) — different
+/// answers on purpose.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pageTextRunCount(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    match unsafe { session(handle) }.and_then(|s| s.page_text_runs()) {
+        Some(runs) => runs.len() as jint,
+        None => -1,
+    }
+}
+
+/// One run's locator range packed like `position`: `start << 32 | end`.
+/// `-1` for a bad handle or index.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pageTextRunRange(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jlong {
+    unsafe { session(handle) }
+        .and_then(|s| s.page_text_runs())
+        .and_then(|runs| runs.get(index as usize).cloned())
+        .map(|run| pack_range(run.locator_start, run.locator_end))
+        .unwrap_or(-1)
+}
+
+/// One run's page-space rect as `[x, y, w, h]`; empty for a bad handle or
+/// index.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pageTextRunRect(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jfloatArray {
+    let rect = unsafe { session(handle) }
+        .and_then(|s| s.page_text_runs())
+        .and_then(|runs| runs.get(index as usize).map(|run| run.rect));
+    match rect {
+        Some(r) => float_array_out(&env, &[r.origin.x, r.origin.y, r.size.w, r.size.h]),
+        None => float_array_out(&env, &[]),
+    }
+}
+
+/// One run's text; `""` for a bad handle or index.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pageTextRunText(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let text = unsafe { session(handle) }
+        .and_then(|s| s.page_text_runs())
+        .and_then(|runs| runs.get(index as usize).map(|run| run.text.clone()))
+        .unwrap_or_default();
+    string_out(&env, &text)
+}
+
+/// The page as one speakable string — hand it to TTS whole, then map its
+/// progress reports back through [`pageWords`]. `""` until laid out.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_speakableText(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let text = unsafe { session(handle) }
+        .and_then(|s| s.speakable_page())
+        .map(|page| page.text)
+        .unwrap_or_default();
+    string_out(&env, &text)
+}
+
+/// The whole word table in one crossing: four ints per word —
+/// `textStart, textEnd, locatorStart, locatorEnd` — char offsets into
+/// [`speakableText`] and locator offsets respectively. Empty until laid
+/// out (use [`pageTextRunCount`] to tell "not laid out" from "no words").
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pageWords(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jintArray {
+    let words: Vec<jint> = unsafe { session(handle) }
+        .and_then(|s| s.speakable_page())
+        .map(|page| {
+            page.words
+                .iter()
+                .flat_map(|w| {
+                    [
+                        w.text_start as jint,
+                        w.text_end as jint,
+                        w.locator_start as jint,
+                        w.locator_end as jint,
+                    ]
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    int_array_out(&env, &words)
+}
+
+/// The word under a point in panel coordinates, packed `start << 32 |
+/// end` — dictionary lookup's question. `-1` off text, on whitespace, or
+/// on bare punctuation.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_wordAt(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    x: jfloat,
+    y: jfloat,
+) -> jlong {
+    unsafe { session(handle) }
+        .and_then(|s| s.word_at(x, y))
+        .map(|(start, end)| pack_range(start, end))
+        .unwrap_or(-1)
+}
+
+/// Page-space rects covering a locator range on the current page, four
+/// floats per rect — the geometry a TTS word highlight paints. Empty when
+/// nothing is there.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_rangeRects(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    start: jint,
+    end: jint,
+) -> jfloatArray {
+    let flat: Vec<jfloat> = unsafe { session(handle) }
+        .map(|s| s.range_rects(start as u32, end as u32))
+        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|r| [r.origin.x, r.origin.y, r.size.w, r.size.h])
+        .collect();
+    float_array_out(&env, &flat)
 }
 
 // ---- Input ----

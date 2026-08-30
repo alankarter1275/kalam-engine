@@ -562,17 +562,31 @@ These belong to the engine by construction; a downstream app cannot implement
 them itself. Hyphenation is the proof the category is real: dictionary-based
 `hyphens: auto` had to go in the line breaker, and did.
 
-- **TTS** — needs text extraction plus word-level highlight timing.
-- **Dictionary lookup** — word-boundary selection semantics.
+- **TTS** — the engine primitives exist: `Session::speakable_page` hands a
+  TTS engine the page as one string plus the word table that maps its
+  progress reports back to locator space, and `range_rects` turns a word's
+  range into the highlight. What remains is per-platform plumbing
+  (`AVSpeechSynthesizer`, Android TTS), which is shell work.
+- **Dictionary lookup** — `Session::word_at` answers the word under a tap
+  as a locator range; `select_word_at` selects it. The popup is the
+  shell's.
 - **Bidi correctness** for Arabic/Hebrew — cosmic-text can do it; confirm it
-  is exercised and tested rather than assumed.
-- **Accessibility** — no a11y tree export, no screen-reader path. Also a
-  legal requirement in some markets. **Deferred**, with the shape settled:
-  §7 corrects an earlier claim that this was an FFI scheduling constraint.
-  It is not. The display list holds glyph indices and no text, so an a11y
-  tree was never built from it; what is missing is a `Session` accessor for
-  the page's text runs and their rects, which is additive and owes the C
-  ABI nothing.
+  is exercised and tested rather than assumed. Still open.
+- **Accessibility** — the engine's half is built: `Session::page_text_runs`
+  is the text-runs-and-rects accessor §7 called for, and the GTK viewer
+  wraps it in GTK's `AccessibleText`, verified against AT-SPI end to end.
+  Android's tree exists too: the AAR's `PageAccessibility` is a raw
+  `AccessibilityNodeProvider` over the same runs — one virtual node per
+  line, explore-by-touch, page-turn announcements — verified on an
+  emulator against uiautomator's node walk and TalkBack's speech
+  dispatch. The Apple trees are the Swift package's `PageAccessibility`,
+  one name with two platform-shaped halves: on iOS a
+  `UIAccessibilityElement` per line for VoiceOver's swipe order, on
+  macOS one `NSAccessibility` static-text element answering the same
+  range-and-extent questions the GTK surface answers Orca — and the
+  macOS half runs under `swift test`, so VoiceOver's questions are
+  asserted on every build machine. §7 has the history, including the
+  FFI claim it corrects.
 
 ## 5. Breadth and sync
 
@@ -867,7 +881,7 @@ flags. That is the local half of §5's sync story already in place — an iOS
 shell can mirror those tables into CloudKit with no schema change, and sync
 stays a shell concern rather than an engine one.
 
-### Accessibility is deferred, and is not an FFI question
+### Accessibility is built, and was never an FFI question
 
 §4 lists accessibility as a feature shells cannot add from outside, and that
 is still true. A rasterized page is opaque to VoiceOver: a reader that is a
@@ -898,7 +912,7 @@ their rects and locator ranges — `LineFragment` material — which is a much
 smaller thing to hold still than the paint vocabulary: no font ids, no
 colours, no glyph arrays, and no `cosmic_text::fontdb::ID` dragged into a
 Contract-tier header. The selection loupe and the edit menu want the same
-runs, and `Page::highlight_rects` already turns a locator range into rects
+runs, and `Page::rects_for_range` already turns a locator range into rects
 internally.
 
 **Two consequences.** Keeping the display list out of the first C ABI costs
@@ -906,19 +920,33 @@ accessibility nothing, so that recommendation is now a cheap yes rather than
 a reluctant trade. And the accessor is *additive* — adding a function to a C
 header breaks no one — so none of this has to happen before a header exists.
 
-**The real gap is a level below the boundary.** `Session` exposes no page
-text with geometry at all: `selected_text` needs a selection to already
-exist, and `search_unit` answers a query. Nothing answers "what text is on
-this page, and where". A Rust shell cannot build an accessibility tree
-today either, so this was never an FFI scheduling constraint — it is a
-missing accessor, fixable in safe Rust and testable in the workspace
-whenever it is picked up.
+**The real gap was a level below the boundary.** `Session` exposed no page
+text with geometry at all: `selected_text` needed a selection to already
+exist, and `search_unit` answered a query. Nothing answered "what text is
+on this page, and where" — so this was never an FFI scheduling constraint;
+it was a missing accessor, and it was fixed in safe Rust and tested in the
+workspace, as predicted.
 
-**Status: deferred**, with the shape settled so that picking it up is cheap.
-The work is one accessor returning `{ text, rect, locator_start,
-locator_end }` per run for the current page, plus whatever each platform
-wraps it in. A GTK shell could verify it against AT-SPI without a device,
-which is the cheapest place to find out whether the shape is right.
+**Status: built and proven.** `Session::page_text_runs` is that accessor —
+one `{ text, rect, locator_start, locator_end }` per visual line — and it
+came with the word layer TTS and dictionary lookup wanted from the same
+material: `speakable_page` (the page as one collapsed string plus a
+`WordSpan` table, segmented in locator space so spans feed `range_rects`
+and `select_range` directly) and `word_at`. The GTK viewer's `PageArea`
+subclass wraps the accessor in GTK's `AccessibleText`, and the proof ran
+in the predicted place: read back over the live AT-SPI bus — page text,
+word granularity, and range extents all answering — before the C ABI
+froze the struct layouts. The surface crossed every boundary the same
+week: `cb_session_page_text_run*`, `cb_session_page_word*`,
+`cb_session_range_rects` and `cb_session_word_at` in the header, with
+JNI and Swift wrappers over the same shapes. The trees over those
+wrappers exist on all four platforms now — GTK proven on the live
+AT-SPI bus, Android on an emulator, the Swift package's two
+`PageAccessibility` halves (UIKit element list, AppKit static text)
+with the macOS half asserted by `swift test` and the iOS half still
+owed a VoiceOver session on a real device. What remains beyond that is
+speech plumbing (`AVSpeechSynthesizer`, Android TTS), which is shell
+work by construction.
 
 **Text identity, two smaller ones.** Nothing reads `UIContentSizeCategory`,
 so Dynamic Type — the accessibility setting Apple users actually change —

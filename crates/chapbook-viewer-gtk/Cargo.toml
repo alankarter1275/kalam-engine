@@ -16,4 +16,7 @@ authors.workspace = true
 chapbook-core = { workspace = true }
 chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds", "svg", "mathml"] }
 chapbook-render-tinyskia = { workspace = true }
-gtk4 = { version = "0.11", features = ["v4_10"] }
+# v4_16 raises this viewer's — not the engine's — runtime floor to GTK
+# 4.16, for the AccessibleText interface (4.14) and its extents/offset
+# geometry (4.16), which is what puts the page in front of a screen reader.
+gtk4 = { version = "0.11", features = ["v4_16"] }

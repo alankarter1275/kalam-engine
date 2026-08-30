@@ -34,6 +34,8 @@ use gtk4 as gtk;
 use chapbook_core::{ActionOutcome, EdgeSizes, Key, KeyMap, PageMetrics, Rotation, Size, TapZones};
 use chapbook_reader::Session;
 
+use crate::page_area::PageArea;
+
 pub fn run() -> glib::ExitCode {
     // See chapbook-viewer: the engine reports through `log`.
     chapbook_core::log_to_stderr();
@@ -68,7 +70,9 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
         .default_height(800)
         .build();
 
-    let area = gtk::DrawingArea::new();
+    // The page widget carries the accessible text surface; to everything
+    // below it is just a DrawingArea.
+    let area = PageArea::new(session.clone());
     area.set_hexpand(true);
     area.set_vexpand(true);
     window.set_child(Some(&area));
@@ -77,6 +81,7 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
     {
         let session = session.clone();
         let window = window.downgrade();
+        let page_weak = area.downgrade();
         area.set_draw_func(move |area, ctx, width, height| {
             if width <= 0 || height <= 0 {
                 return;
@@ -124,6 +129,17 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             ctx.scale(1.0 / scale as f64, 1.0 / scale as f64);
             let _ = ctx.set_source_surface(&surface, 0.0, 0.0);
             let _ = ctx.paint();
+
+            // Every content change funnels through a draw, so this is the
+            // one place assistive technology needs to be told — from an
+            // idle rather than inside the draw vfunc, and page_changed
+            // itself no-ops unless the page's text actually moved.
+            let page = page_weak.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(page) = page.upgrade() {
+                    page.page_changed();
+                }
+            });
         });
     }
 
@@ -325,6 +341,9 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
     }
 
     window.present();
+    // Focus the page, not the window shell around it: a screen reader
+    // speaks the focused object, and the page is the object with text.
+    area.grab_focus();
 }
 
 /// A GDK keyval name in the engine's key vocabulary, or `None` for a key

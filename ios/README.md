@@ -62,6 +62,19 @@ they were bought with:
   in the app's own container still demands it), and a stored bookmark
   must be re-resolved before the session is constructed on every cold
   launch, because scoped access does not survive relaunch.
+- **`PageAccessibility` makes the rasterized page readable** — a
+  picture of text is unusable with a screen reader. One name, two
+  platform-shaped halves over the engine's text surface: on iOS, one
+  `UIAccessibilityElement` per visual line so VoiceOver swipes in
+  reading order; on macOS, one `NSAccessibility` static-text element
+  answering range, extent and point questions in UTF-16 — the
+  scalar↔UTF-16 conversion lives there so it exists exactly once. A
+  host owes constructing it over the page view and one `pageChanged()`
+  per render, which no-ops unless the page's text actually moved and
+  otherwise rebuilds the tree and announces the turn. Geometry assumes
+  page space and the view's logical coordinates coincide (metrics from
+  the view's own bounds, no rotation) — a rotating shell maps the rects
+  the same way it maps its pixels.
 
 A book opened by descriptor **keeps its place**: the engine adopts it
 into the library by a fingerprint of its bytes, so position, annotations
@@ -114,6 +127,11 @@ What is settled, and what still needs a physical device.
 - **Still device-only:** bundled SQLite under real App Sandbox
   confinement (the simulator ran it, but `simctl` is not the sandbox),
   bookmark revocation (file moved or deleted underneath a stored
-  bookmark), and iCloud placeholders — a file that is legal, named,
+  bookmark), iCloud placeholders — a file that is legal, named,
   and not yet downloaded, where acquiring the descriptor can fail or
-  block for reasons the engine must not try to interpret.
+  block for reasons the engine must not try to interpret — and a live
+  VoiceOver pass over the iOS element list. The macOS accessibility
+  half is asserted by `swift test` (value, ranges, extents, the word
+  under a point); the iOS half compiles and mirrors the
+  emulator-verified Android tree, but no screen reader has walked it
+  yet.

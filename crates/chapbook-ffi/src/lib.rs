@@ -67,8 +67,10 @@
 //! here: it would drag `cosmic_text::fontdb::ID` across a boundary meant to
 //! name no third-party type, and nothing needs it yet. Pixels only — see
 //! [`cb_session_render_into`]. Accessibility once argued the other way and
-//! no longer does; it wants a text-runs-and-rects accessor, which is
-//! additive whenever it arrives.
+//! no longer does; it wanted a text-runs-and-rects accessor, and that is
+//! what it got — [`cb_session_page_text_run`] and its neighbours arrived
+//! additively, after the shape was proven against AT-SPI, exactly as this
+//! paragraph predicted.
 //!
 //! Search, the table of contents, links and annotations are absent for the
 //! same reason and not for a different one: the Contract tier means what

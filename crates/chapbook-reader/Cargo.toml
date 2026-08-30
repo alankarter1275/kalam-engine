@@ -77,4 +77,5 @@ chapbook-paint = { workspace = true }
 chapbook-library = { workspace = true, optional = true }
 chapbook-render-tinyskia = { workspace = true }
 cosmic-text = { workspace = true }
+unicode-segmentation = { workspace = true }
 image = { workspace = true }
