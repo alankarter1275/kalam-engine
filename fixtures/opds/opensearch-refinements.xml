@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A template with refinement parameters beyond {searchTerms}, which is
+     what Calibre-Web, COPS and Kavita actually emit. A client that only
+     substitutes {searchTerms} sends the rest literally, and the server
+     reads "{atom:author?}" as an author to filter on: 200, empty feed,
+     indistinguishable from a search that found nothing. -->
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <ShortName>Example Catalog</ShortName>
+  <Description>Search the example catalog by title, author or subject</Description>
+  <Url type="application/atom+xml;profile=opds-catalog;kind=acquisition"
+       template="/opds/search?q={searchTerms}&amp;author={atom:author?}&amp;title={atom:title?}&amp;page={startPage?}"></Url>
+</OpenSearchDescription>

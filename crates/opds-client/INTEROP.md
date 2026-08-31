@@ -79,6 +79,19 @@ switch.
 - Entry ids and hrefs are opaque strings: comic-server chapter ids contain
   slashes and dots; path-normalizing or splitting them breaks routing.
   `Content-Disposition` filenames on downloads can be garbage — sanitize.
+- **Fill every OpenSearch template parameter, not just `{searchTerms}`.**
+  Real description documents carry refinement parameters —
+  `?q={searchTerms}&author={atom:author?}&title={atom:title?}` is what
+  Calibre-Web, COPS and Kavita emit. Per OpenSearch 1.1 §4.2 an optional
+  parameter (trailing `?`) the client does not supply is replaced with the
+  **empty string**, and a required one it cannot supply means the template
+  is unusable. Leaving `{atom:author?}` in the URL is not a cosmetic
+  failure: the server filters on an author literally named
+  `{atom:author?}` and answers **200 with an empty feed**, which is
+  indistinguishable from a search that found nothing. Match parameters on
+  their local name (`{os:searchTerms}` is `{searchTerms}`);
+  `startIndex`/`startPage`/`language`/`inputEncoding`/`outputEncoding` have
+  spec defaults, `count` does not.
 
 ## 3. Page streaming (OPDS-PSE)
 

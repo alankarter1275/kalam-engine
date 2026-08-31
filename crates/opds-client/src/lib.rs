@@ -56,6 +56,10 @@
 //!   strict-URI-parsed (PSE templates contain literal `{pageNumber}`
 //!   braces); received feeds are never schema-validated as a gate; media
 //!   types compare by parsed essence + parameters, not string equality.
+//! - **OpenSearch templates are filled completely**: optional parameters
+//!   the client does not supply become empty, per OpenSearch 1.1 §4.2.
+//!   A literal `{atom:author?}` left in the URL is read by the server as
+//!   an author to filter on, and answered with 200 and an empty feed.
 //! - One media type per `Accept` header, no q-values (wild servers match by
 //!   substring). Pagination back-rel is `previous`; totals via OpenSearch
 //!   elements (1.2) or `numberOfItems`/`currentPage` (2.0). Both RFC 3339
@@ -97,12 +101,13 @@ pub mod progression;
 mod ureq_transport;
 
 pub use atom::parse_atom;
-pub use client::{opensearch_template, pse_page_url, OpdsClient};
+pub use client::{expand_search_template, opensearch_template, pse_page_url, OpdsClient};
 pub use href::resolve_url;
 pub use http::{HttpClient, HttpError, HttpRequest, HttpResponse};
 pub use model::{
     AuthDocument, AuthFlow, AuthLink, Entry, Feed, Group, Link, MediaType, OpdsVersion, Price,
-    Series, Totals, AUTH_BASIC,
+    Series, Totals, AUTH_BASIC, REL_ACQ_PREFIX, REL_FACET, REL_IMAGE, REL_PSE_STREAM,
+    REL_THUMBNAIL,
 };
 pub use opds2::{parse_opds2, parse_opds2_publication};
 #[cfg(feature = "progression")]
