@@ -112,6 +112,56 @@ pub struct OpdsSource {
     pub auth_user: Option<String>,
 }
 
+/// Where one book's position and marks sync to.
+///
+/// Both URLs are per-*publication*, not per-catalog: in OPDS Progression
+/// and in the Web Annotation Protocol alike, the URL is the publication's
+/// identity, so they are discovered from a catalog entry's links and
+/// belong to the book rather than to the source it came from. `None` is
+/// the ordinary case — a sideloaded book has no service to talk to.
+///
+/// The URLs are opaque and may embed a per-user key. Never log them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SyncTargets {
+    pub progression_url: Option<String>,
+    pub annotation_container: Option<String>,
+    /// The `modified` of the progression document last seen from the
+    /// service, verbatim. Compared for equality, never parsed — see the
+    /// v6 migration for why.
+    pub remote_modified: Option<String>,
+    /// The position `revision` that last agreed with the service.
+    pub position_synced_revision: Option<i64>,
+}
+
+/// One annotation's remote half, for a caller reconciling with a
+/// container.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnnotationSync {
+    /// The local row.
+    pub id: i64,
+    /// The container's IRI. `None` means never pushed.
+    pub remote_iri: Option<String>,
+    /// The tag to send as `If-Match`.
+    pub remote_etag: Option<String>,
+    /// A soft-deleted row: the server owes a DELETE, not a PUT.
+    pub deleted: bool,
+    /// The revision being pushed. Hand it back to
+    /// [`Library::mark_annotation_synced`] so an edit made while the
+    /// request was in flight stays dirty instead of being marked clean.
+    pub revision: i64,
+}
+
+/// A book whose stored position owes its service a write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionPush {
+    pub book: BookId,
+    /// The service to push to — non-null by construction here.
+    pub progression_url: String,
+    /// The revision being pushed; hand it back to
+    /// [`Library::mark_position_synced`].
+    pub revision: i64,
+}
+
 pub struct Library {
     conn: Connection,
     books_dir: PathBuf,
@@ -631,7 +681,8 @@ impl Library {
                         spine_href=?2, spine_index=?3, char_offset=?4,
                         locator_version=?5, quote_prefix=?6, quote_exact=?7,
                         quote_suffix=?8, spine_fraction=?9, book_progression=?10,
-                        updated_at=strftime('%s','now')",
+                        updated_at=strftime('%s','now'),
+                        revision=positions.revision + 1",
                 params![
                     id.0,
                     locator.spine_href,
@@ -769,7 +820,7 @@ impl Library {
     pub fn set_annotation_color(&mut self, annotation_id: i64, color: Option<&str>) -> Result<()> {
         self.conn
             .execute(
-                "UPDATE annotations SET color = ?2, updated_at = strftime('%s','now')
+                "UPDATE annotations SET color = ?2, updated_at = strftime('%s','now'), revision = revision + 1
                  WHERE id = ?1",
                 params![annotation_id, color],
             )
@@ -780,7 +831,7 @@ impl Library {
     pub fn delete_annotation(&mut self, annotation_id: i64) -> Result<()> {
         self.conn
             .execute(
-                "UPDATE annotations SET deleted = 1, updated_at = strftime('%s','now')
+                "UPDATE annotations SET deleted = 1, updated_at = strftime('%s','now'), revision = revision + 1
                  WHERE id = ?1",
                 params![annotation_id],
             )
@@ -910,6 +961,226 @@ impl Library {
             })
             .map_err(db_err)?;
         rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+    }
+
+    // ---- Sync bookkeeping ----
+    //
+    // What this deliberately does *not* hold: a schedule. When to push is
+    // the shell's decision, not the engine's — every page turn is wrong on
+    // a metered radio and on close is wrong for a session that crashes —
+    // so what the library owes a caller is a cheap answer to "what still
+    // owes the server a write", and nothing about when to ask.
+    //
+    // Nor a device identity. `opds_client::progression::Device` is
+    // host-owned by contract, like a credential: the host mints one and
+    // keeps it.
+
+    /// Where this book syncs to, if anywhere.
+    pub fn sync_targets(&self, id: BookId) -> Result<SyncTargets> {
+        self.conn
+            .query_row(
+                "SELECT progression_url, annotation_container, remote_modified,
+                        position_synced_revision
+                 FROM book_sync WHERE book_id = ?1",
+                params![id.0],
+                |row| {
+                    Ok(SyncTargets {
+                        progression_url: row.get(0)?,
+                        annotation_container: row.get(1)?,
+                        remote_modified: row.get(2)?,
+                        position_synced_revision: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(db_err)
+            .map(Option::unwrap_or_default)
+    }
+
+    /// Record where a book syncs, from the links on the catalog entry it
+    /// came from. Passing `None` for either clears it — a book that moved
+    /// catalogs should stop talking to the old one.
+    pub fn set_sync_targets(
+        &mut self,
+        id: BookId,
+        progression_url: Option<&str>,
+        annotation_container: Option<&str>,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO book_sync (book_id, progression_url, annotation_container,
+                        updated_at)
+                 VALUES (?1, ?2, ?3, strftime('%s','now'))
+                 ON CONFLICT(book_id) DO UPDATE SET
+                        progression_url = ?2, annotation_container = ?3,
+                        updated_at = strftime('%s','now')",
+                params![id.0, progression_url, annotation_container],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// True when the stored position has moved since it last agreed with
+    /// the service.
+    ///
+    /// A book with no position is not dirty; a position that has never
+    /// synced is.
+    pub fn position_needs_push(&self, id: BookId) -> Result<bool> {
+        self.conn
+            .query_row(
+                "SELECT p.revision > COALESCE(s.position_synced_revision, 0)
+                 FROM positions p
+                 LEFT JOIN book_sync s ON s.book_id = p.book_id
+                 WHERE p.book_id = ?1",
+                params![id.0],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()
+            .map_err(db_err)
+            .map(|dirty| dirty.unwrap_or(false))
+    }
+
+    /// Every book whose position owes a service a write and has one to
+    /// talk to. What a shell iterates when it decides the moment is right.
+    pub fn positions_needing_push(&self) -> Result<Vec<PositionPush>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT p.book_id, s.progression_url, p.revision
+                 FROM positions p
+                 JOIN book_sync s ON s.book_id = p.book_id
+                 JOIN books b ON b.id = p.book_id
+                 WHERE s.progression_url IS NOT NULL
+                   AND b.deleted = 0
+                   AND p.revision > COALESCE(s.position_synced_revision, 0)
+                 ORDER BY p.book_id",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(PositionPush {
+                    book: BookId(row.get(0)?),
+                    progression_url: row.get(1)?,
+                    revision: row.get(2)?,
+                })
+            })
+            .map_err(db_err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+    }
+
+    /// Record that `revision` of this book's position reached the service,
+    /// and what the service's `modified` was when it did.
+    ///
+    /// `revision` is the one that was *pushed*, from
+    /// [`PositionPush::revision`] — not whatever the row holds now. A
+    /// reader who turns a page while the request is in flight has written
+    /// a newer revision, and stamping that would mark a position clean
+    /// that the service has never seen.
+    pub fn mark_position_synced(
+        &mut self,
+        id: BookId,
+        revision: i64,
+        remote_modified: &str,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO book_sync (book_id, remote_modified,
+                        position_synced_revision, updated_at)
+                 VALUES (?1, ?2, ?3, strftime('%s','now'))
+                 ON CONFLICT(book_id) DO UPDATE SET
+                        remote_modified = ?2,
+                        position_synced_revision = ?3,
+                        updated_at = strftime('%s','now')",
+                params![id.0, remote_modified, revision],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// Annotations that owe the container a write: never-pushed rows,
+    /// edited rows, and soft-deleted rows whose remote copy is still
+    /// there.
+    ///
+    /// A deleted row that was never pushed owes nothing and is not
+    /// returned — there is nothing on the server to remove.
+    pub fn annotations_needing_push(&self, id: BookId) -> Result<Vec<AnnotationSync>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, remote_iri, remote_etag, deleted, revision
+                 FROM annotations
+                 WHERE book_id = ?1
+                   AND (deleted = 0 OR remote_iri IS NOT NULL)
+                   AND revision > COALESCE(synced_revision, 0)
+                 ORDER BY id",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map(params![id.0], |row| {
+                Ok(AnnotationSync {
+                    id: row.get(0)?,
+                    remote_iri: row.get(1)?,
+                    remote_etag: row.get(2)?,
+                    deleted: row.get::<_, i64>(3)? != 0,
+                    revision: row.get(4)?,
+                })
+            })
+            .map_err(db_err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+    }
+
+    /// Record that `revision` of this annotation reached the container.
+    ///
+    /// `revision` is the one that was pushed, from
+    /// [`AnnotationSync::revision`], for the reason
+    /// [`Library::mark_position_synced`] gives — and it matters more here,
+    /// because a position corrects itself on the next page turn and a
+    /// missed annotation edit differs from the container for good.
+    pub fn mark_annotation_synced(
+        &mut self,
+        annotation_id: i64,
+        revision: i64,
+        remote_iri: &str,
+        remote_etag: Option<&str>,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE annotations
+                 SET remote_iri = ?3, remote_etag = ?4, synced_revision = ?2
+                 WHERE id = ?1",
+                params![annotation_id, revision, remote_iri, remote_etag],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// The local row a container IRI belongs to, for reconciling a pull.
+    pub fn annotation_by_remote_iri(&self, remote_iri: &str) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT id FROM annotations WHERE remote_iri = ?1",
+                params![remote_iri],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_err)
+    }
+
+    /// Forget an annotation for good, once the container has confirmed the
+    /// delete.
+    ///
+    /// [`Library::delete_annotation`] is the soft delete a reader's action
+    /// produces; the row has to stay until the server has been told, which
+    /// is what made deletes soft in the first place. This is the other end
+    /// of that, and it refuses a row the reader still has.
+    pub fn purge_annotation(&mut self, annotation_id: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM annotations WHERE id = ?1 AND deleted = 1",
+                params![annotation_id],
+            )
+            .map_err(db_err)?;
+        Ok(())
     }
 }
 

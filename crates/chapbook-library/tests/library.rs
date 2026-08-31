@@ -454,3 +454,290 @@ fn a_removed_book_leaves_the_shelf_and_keeps_its_annotations() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ---- Sync bookkeeping ----
+
+fn book_with_position(library: &mut Library, dir: &std::path::Path) -> chapbook_library::BookId {
+    let path = sample_book(dir, "synced.epub", b"synced");
+    let id = library.import(&path, &FakeBook::new("Synced")).unwrap();
+    library.set_position(id, &locator(0, 0.1)).unwrap();
+    id
+}
+
+fn locator(offset: u32, progression: f64) -> LayeredLocator {
+    LayeredLocator {
+        spine_href: "OEBPS/ch1.xhtml".into(),
+        spine_index: 0,
+        char_offset: offset,
+        locator_version: chapbook_core::LOCATOR_VERSION,
+        quote: chapbook_core::Quote {
+            prefix: "before ".into(),
+            exact: String::new(),
+            suffix: "after".into(),
+        },
+        spine_fraction: progression,
+        book_progression: progression,
+    }
+}
+
+/// A book with no catalog behind it has nowhere to sync, and asking is
+/// not an error — it is most books.
+#[test]
+fn a_sideloaded_book_has_no_sync_targets_and_owes_nothing() {
+    let (mut library, dir) = temp_library();
+    let id = book_with_position(&mut library, &dir);
+
+    assert_eq!(
+        library.sync_targets(id).unwrap(),
+        chapbook_library::SyncTargets::default()
+    );
+    // Dirty in itself — it has never synced — but not in the work list,
+    // because there is no service to push it to.
+    assert!(library.position_needs_push(id).unwrap());
+    assert!(library.positions_needing_push().unwrap().is_empty());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn sync_targets_round_trip_and_can_be_cleared() {
+    let (mut library, dir) = temp_library();
+    let id = book_with_position(&mut library, &dir);
+
+    library
+        .set_sync_targets(
+            id,
+            Some("https://cat.example.com/opds/progression/abc"),
+            Some("https://cat.example.com/annotations/?target=abc"),
+        )
+        .unwrap();
+    let targets = library.sync_targets(id).unwrap();
+    assert_eq!(
+        targets.progression_url.as_deref(),
+        Some("https://cat.example.com/opds/progression/abc")
+    );
+    assert_eq!(
+        targets.annotation_container.as_deref(),
+        Some("https://cat.example.com/annotations/?target=abc")
+    );
+
+    // A book that moved catalogs must stop talking to the old one.
+    library.set_sync_targets(id, None, None).unwrap();
+    let targets = library.sync_targets(id).unwrap();
+    assert_eq!(targets.progression_url, None);
+    assert_eq!(targets.annotation_container, None);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_position_is_dirty_until_it_is_marked_synced() {
+    let (mut library, dir) = temp_library();
+    let id = book_with_position(&mut library, &dir);
+    library
+        .set_sync_targets(id, Some("https://cat.example.com/p/abc"), None)
+        .unwrap();
+
+    let pending = library.positions_needing_push().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].book, id);
+    assert_eq!(pending[0].progression_url, "https://cat.example.com/p/abc");
+
+    library
+        .mark_position_synced(id, pending[0].revision, "2026-08-30T12:00:00Z")
+        .unwrap();
+    assert!(!library.position_needs_push(id).unwrap());
+    assert!(library.positions_needing_push().unwrap().is_empty());
+    assert_eq!(
+        library.sync_targets(id).unwrap().remote_modified.as_deref(),
+        Some("2026-08-30T12:00:00Z")
+    );
+
+    // Reading on moves it again.
+    library.set_position(id, &locator(500, 0.5)).unwrap();
+    assert!(library.position_needs_push(id).unwrap());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The race the revision exists for. `updated_at` has one-second
+/// resolution, so a page turn landing in the same second as the sync mark
+/// would compare equal and look clean; a revision cannot.
+#[test]
+fn a_position_written_while_the_request_was_in_flight_stays_dirty() {
+    let (mut library, dir) = temp_library();
+    let id = book_with_position(&mut library, &dir);
+    library
+        .set_sync_targets(id, Some("https://cat.example.com/p/abc"), None)
+        .unwrap();
+
+    // The push takes the position as it stands.
+    let pushed = library.positions_needing_push().unwrap().remove(0);
+
+    // The reader turns a page before the response lands. Same second —
+    // this whole test runs inside one.
+    library.set_position(id, &locator(900, 0.9)).unwrap();
+
+    // Now the response arrives and marks the revision that went out.
+    library
+        .mark_position_synced(id, pushed.revision, "2026-08-30T12:00:00Z")
+        .unwrap();
+
+    assert!(
+        library.position_needs_push(id).unwrap(),
+        "the position the service has never seen was marked clean"
+    );
+    let still = library.positions_needing_push().unwrap();
+    assert_eq!(still.len(), 1);
+    assert!(
+        still[0].revision > pushed.revision,
+        "the newer revision should be the one now owed"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_annotation_owes_the_container_a_write_until_it_is_marked() {
+    let (mut library, dir) = temp_library();
+    let path = sample_book(&dir, "marks.epub", b"marks");
+    let id = library.import(&path, &FakeBook::new("Marks")).unwrap();
+    let annotation = library
+        .add_annotation(
+            id,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            Some(&locator(20, 0.2)),
+            None,
+            Some("#ffcc00"),
+        )
+        .unwrap();
+
+    let pending = library.annotations_needing_push(id).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, annotation);
+    assert_eq!(pending[0].remote_iri, None, "never pushed");
+    assert!(!pending[0].deleted);
+
+    library
+        .mark_annotation_synced(
+            annotation,
+            pending[0].revision,
+            "https://cat.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+    assert!(library.annotations_needing_push(id).unwrap().is_empty());
+    assert_eq!(
+        library
+            .annotation_by_remote_iri("https://cat.example.com/annotations/abc")
+            .unwrap(),
+        Some(annotation)
+    );
+
+    // Editing it puts it back in the queue, with the tag to guard the PUT.
+    library
+        .set_annotation_color(annotation, Some("#00ccff"))
+        .unwrap();
+    let pending = library.annotations_needing_push(id).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].remote_etag.as_deref(), Some("\"v1\""));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Why deletes were soft from v1: the row has to outlive the reader's
+/// action long enough to tell the server.
+#[test]
+fn a_deleted_annotation_still_owes_the_container_a_delete() {
+    let (mut library, dir) = temp_library();
+    let path = sample_book(&dir, "marks.epub", b"marks");
+    let id = library.import(&path, &FakeBook::new("Marks")).unwrap();
+    let annotation = library
+        .add_annotation(
+            id,
+            AnnotationKind::Bookmark,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(id).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://cat.example.com/annotations/abc",
+            None,
+        )
+        .unwrap();
+
+    library.delete_annotation(annotation).unwrap();
+    assert!(
+        library.annotations(id).unwrap().is_empty(),
+        "the reader should not see it any more"
+    );
+    let pending = library.annotations_needing_push(id).unwrap();
+    assert_eq!(pending.len(), 1, "but the container has not been told");
+    assert!(pending[0].deleted);
+    assert_eq!(
+        pending[0].remote_iri.as_deref(),
+        Some("https://cat.example.com/annotations/abc")
+    );
+
+    // Once told, the row can go.
+    library.purge_annotation(annotation).unwrap();
+    assert!(library.annotations_needing_push(id).unwrap().is_empty());
+    assert_eq!(
+        library
+            .annotation_by_remote_iri("https://cat.example.com/annotations/abc")
+            .unwrap(),
+        None
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A mark deleted before it ever reached the container owes nothing —
+/// there is nothing there to remove.
+#[test]
+fn an_annotation_deleted_before_it_synced_owes_nothing() {
+    let (mut library, dir) = temp_library();
+    let path = sample_book(&dir, "marks.epub", b"marks");
+    let id = library.import(&path, &FakeBook::new("Marks")).unwrap();
+    let annotation = library
+        .add_annotation(
+            id,
+            AnnotationKind::Bookmark,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    library.delete_annotation(annotation).unwrap();
+    assert!(library.annotations_needing_push(id).unwrap().is_empty());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `purge_annotation` is for rows the reader has already deleted. A live
+/// mark must survive it, or a sync bug becomes data loss.
+#[test]
+fn purging_refuses_a_mark_the_reader_still_has() {
+    let (mut library, dir) = temp_library();
+    let path = sample_book(&dir, "marks.epub", b"marks");
+    let id = library.import(&path, &FakeBook::new("Marks")).unwrap();
+    let annotation = library
+        .add_annotation(
+            id,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    library.purge_annotation(annotation).unwrap();
+    assert_eq!(
+        library.annotations(id).unwrap().len(),
+        1,
+        "a live annotation was purged"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
