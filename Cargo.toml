@@ -184,6 +184,16 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Viewer
 winit = "0.30"
+# The GTK shell's cross-thread wakeup. Both arrive in the graph under glib
+# regardless — naming them here adds no crate, it only lets the shell say
+# what it is using. Default features off: the executor, the io-compat
+# layer and the thread pool are all things glib's main context already is.
+futures-channel = { version = "0.3", default-features = false, features = [
+    "std",
+] }
+futures-util = { version = "0.3", default-features = false, features = [
+    "std",
+] }
 softbuffer = "0.4"
 # Clipboard for the winit shell (GTK has gdk's). Text only — the image-data
 # default feature would pull a second `image` build; wayland-data-control

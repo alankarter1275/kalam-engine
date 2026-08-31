@@ -74,10 +74,15 @@ impl Session {
                         text,
                         natural,
                     });
+                    self.push_event(crate::SessionEvent::UnitLoaded { spine });
                 }
                 Err(message) => {
                     log::error!("page {} failed to load: {message}", spine + 1);
-                    self.load_errors.insert(spine, message);
+                    self.load_errors.insert(spine, message.clone());
+                    // Recorded above so a retry is not queued every frame,
+                    // and reported here so a shell can say so: until this
+                    // existed the page simply stayed a placeholder.
+                    self.push_event(crate::SessionEvent::UnitFailed { spine, message });
                 }
             }
             let unit = self.unit_mut(spine);

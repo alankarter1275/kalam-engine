@@ -176,6 +176,43 @@ pub struct Position {
     pub page: usize,
 }
 
+/// Something the shell may want to react to, drained from
+/// [`Session::drain_events`].
+///
+/// Deliberately *not* about drawing. What to repaint is
+/// [`chapbook_paint::FrameIntent`], which a shell already gets from
+/// `frame()` and which says it better — these are the things a shell acts
+/// on rather than paints: telling the reader a page will not load, moving
+/// a progress bar, marking a book read, pushing a position to a sync
+/// service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEvent {
+    /// A background unit finished decoding. Includes prefetches, which
+    /// [`Session::poll_loaded`] deliberately reports as "nothing visible
+    /// changed" — a shell watching load progress wants both, and a shell
+    /// deciding whether to repaint should keep using `poll_loaded`.
+    UnitLoaded { spine: usize },
+    /// A background unit failed and will not be retried.
+    ///
+    /// The reason this type exists. The failure was recorded internally so
+    /// a retry would not be queued every frame, and there it stopped: a
+    /// comic page that failed to download stayed a placeholder forever
+    /// with nothing able to say why. `message` is for a person to read and
+    /// is free to change — do not match on it.
+    UnitFailed { spine: usize, message: String },
+    /// The reader is somewhere else. Reported for moves the shell did not
+    /// make as well as ones it did — a restored position resolving after
+    /// open, a load landing that settles the page — which is what a
+    /// progress UI and a sync client both need and neither can see today.
+    PositionChanged { spine: usize, page: usize },
+    /// The reader reached the last page of the last unit.
+    ///
+    /// Fires on the transition, not on every drain that finds them there,
+    /// and re-arms if they leave and come back. Whether that means "mark
+    /// as read" is the shell's policy, not the engine's.
+    BookFinished,
+}
+
 /// One open book and everything needed to read it.
 pub struct Session {
     book: OpenBook,
@@ -217,6 +254,17 @@ pub struct Session {
     #[cfg(feature = "_image-book")]
     load_errors: HashMap<usize, String>,
     waker: WakerCell,
+    /// Discrete events waiting to be drained. Only facts that *happen* —
+    /// derived ones are computed at drain time, so no mutation site has to
+    /// remember to record them.
+    events: Vec<SessionEvent>,
+    /// The position the last drain reported, so the next one can tell
+    /// whether the reader moved.
+    reported_position: Position,
+    /// Whether the last drain found the reader at the end, so
+    /// [`SessionEvent::BookFinished`] fires on the transition rather than
+    /// on every drain.
+    reported_finished: bool,
     /// Selection anchor and cursor as locator offsets (unordered).
     selection: Option<(u32, u32)>,
     #[cfg(feature = "library")]
@@ -478,6 +526,92 @@ impl Session {
             spine: self.spine,
             page: self.page,
         }
+    }
+
+    /// Take everything that has happened since the last call.
+    ///
+    /// Pull rather than push, and the reason is the type: a `Session` is
+    /// `Send` but not `Sync`, and every mutation takes `&mut self`. A
+    /// handler invoked from inside those methods could not call back into
+    /// the session — a borrow error here, and undefined behaviour across
+    /// the C ABI, where a host will try it anyway. A queue has none of
+    /// that, and it composes with the wakeup a shell already installs:
+    /// [`Session::set_waker`] says *something happened*, this says what.
+    ///
+    /// A shell with no background loads may never need this. One that has
+    /// them should drain on the same tick it calls
+    /// [`Session::poll_loaded`].
+    ///
+    /// # Why half of these are computed here
+    ///
+    /// [`SessionEvent::UnitLoaded`] and [`SessionEvent::UnitFailed`] are
+    /// discrete: they happen once, on the loader thread, and are queued
+    /// when they do. The other two are *derived* — a comparison against
+    /// what the last drain reported.
+    ///
+    /// That is deliberate. The position moves at eleven sites across
+    /// navigation, restore, link-following and page-count clamping, and
+    /// instrumenting all of them means every future site has to remember
+    /// to. Deriving it cannot miss one, and it coalesces for free: a shell
+    /// that turns ten pages between drains is told where the reader ended
+    /// up, which is the only thing it wanted.
+    pub fn drain_events(&mut self) -> Vec<SessionEvent> {
+        let mut events = std::mem::take(&mut self.events);
+
+        let now = self.position();
+        if now != self.reported_position {
+            self.reported_position = now;
+            events.push(SessionEvent::PositionChanged {
+                spine: now.spine,
+                page: now.page,
+            });
+        }
+
+        let finished = self.at_end_of_book();
+        if finished && !self.reported_finished {
+            events.push(SessionEvent::BookFinished);
+        }
+        self.reported_finished = finished;
+
+        events
+    }
+
+    /// Whether the reader is on the last page of the last unit.
+    ///
+    /// Reads only layout that is already cached — never lays a unit out to
+    /// answer. Draining events must not be the thing that triggers a
+    /// pagination pass, and it does not need to be: the reader is looking
+    /// at this unit, so it is laid out, and if it somehow is not then they
+    /// are not on its last page either.
+    fn at_end_of_book(&self) -> bool {
+        if self.spine + 1 != self.spine_len() {
+            return false;
+        }
+        match self.layout(self.spine) {
+            Some(layout) => !layout.pages.is_empty() && self.page + 1 == layout.pages.len(),
+            None => false,
+        }
+    }
+
+    /// Queue a discrete event, keeping at most one per subject.
+    ///
+    /// A shell that installs no wakeup and never drains would otherwise
+    /// grow this without limit while a comic prefetches its way through a
+    /// long book. Replacing rather than appending bounds it at two per
+    /// spine entry and loses nothing: two "unit 5 loaded" events say
+    /// exactly what one says.
+    #[cfg(feature = "_image-book")]
+    pub(crate) fn push_event(&mut self, event: SessionEvent) {
+        let same_subject = |existing: &SessionEvent| match (existing, &event) {
+            (SessionEvent::UnitLoaded { spine: a }, SessionEvent::UnitLoaded { spine: b })
+            | (
+                SessionEvent::UnitFailed { spine: a, .. },
+                SessionEvent::UnitFailed { spine: b, .. },
+            ) => a == b,
+            _ => false,
+        };
+        self.events.retain(|existing| !same_subject(existing));
+        self.events.push(event);
     }
 
     pub fn settings(&self) -> &ReadingSettings {
