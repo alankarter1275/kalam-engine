@@ -1,9 +1,12 @@
 //! Reconcile a book against live services, end to end: discover them from
 //! a catalog entry, import the book, make some local changes, and sync.
 //!
+//! Needs a catalog that serves both OPDS Progression and a Web Annotation
+//! container, and credentials for it. It downloads a book, marks it up and
+//! pushes, so point it somewhere you do not mind writing to.
+//!
 //! ```sh
-//! cd ~/wksp/mocklib && go run ./cmd/mocklib -addr :8096 -auth reader:secret
-//! CATALOG=http://localhost:8096 CATALOG_AUTH=reader:secret \
+//! CATALOG=https://catalog.example.com CATALOG_AUTH=reader:secret \
 //!   cargo run -p chapbook-sync --example reconcile
 //! ```
 

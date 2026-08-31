@@ -407,9 +407,9 @@ impl SyncEngine {
             // one, and the next push would send them back anchored to it.
             //
             // A catalog may advertise the container with a `?target=`
-            // query, as mocklib does. That is not a filter: nothing in the
-            // protocol makes it one and a server is free to ignore it,
-            // which the reference implementation does.
+            // query. That is not a filter: nothing in the protocol makes
+            // it one, and a server is free to ignore it — which the ones
+            // this was tested against do.
             if stored.annotation.target.source != source {
                 continue;
             }

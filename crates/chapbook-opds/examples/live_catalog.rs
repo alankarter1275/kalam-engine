@@ -1,8 +1,5 @@
 //! Walk a live OPDS catalog end to end and print what came back.
 //!
-//! Point it at any server; [`mocklib`] is the convenient one, because it
-//! serves every surface at once over a few hundred entries.
-//!
 //! Fixtures pin the shapes we have seen; this walks the surfaces in one
 //! flow against something that answers like a server: pagination and
 //! facets over a few hundred entries, an OpenSearch description with
@@ -13,13 +10,14 @@
 //! which CI does not have. `cargo clippy --all-targets` still compiles it,
 //! so it cannot rot.
 //!
+//! Point it at any OPDS catalog. `CATALOG` is the base URL and
+//! `CATALOG_AUTH` an optional `user:password`; the position round trip
+//! needs a server that serves OPDS Progression, which most do not.
+//!
 //! ```sh
-//! cd ~/wksp/mocklib && go run ./cmd/mocklib -addr :8096 -auth reader:secret
-//! CATALOG=http://localhost:8096 CATALOG_AUTH=reader:secret \
+//! CATALOG=https://catalog.example.com CATALOG_AUTH=reader:secret \
 //!   cargo run -p chapbook-opds --features progression --example live_catalog
 //! ```
-//!
-//! [`mocklib`]: https://github.com/ophymx/mocklib
 
 use chapbook_opds::{Feed, Link, OpdsClient, OpdsError, REL_FACET, REL_PSE_STREAM};
 
@@ -203,7 +201,7 @@ fn position(client: &OpdsClient, all: &Feed) {
     println!("\nPROGRESSION service {}", link.href);
 
     let device = Device {
-        id: "urn:uuid:5f2b1c8e-mocklib-example".into(),
+        id: "urn:uuid:5f2b1c8e-chapbook-example".into(),
         name: "chapbook".into(),
     };
     let locator = LayeredLocator {

@@ -5,16 +5,18 @@
 //! The assertion in the middle is the point — what the server hands back
 //! has to map to the same `Mark` that went out, offsets and all.
 //!
-//! Point it at any Web Annotation Protocol container; [`mocklib`] is the
-//! convenient one.
+//! Point it at any Web Annotation Protocol container. `CONTAINER` is its
+//! IRI, `SOURCE` the publication the marks anchor into, and
+//! `CONTAINER_AUTH` an optional `user:password`.
+//!
+//! It creates and deletes one annotation, so give it a container you do
+//! not mind writing to.
 //!
 //! ```sh
-//! cd ~/wksp/mocklib && go run ./cmd/mocklib -addr :8095
-//! CONTAINER=http://localhost:8095/annotations/ \
+//! CONTAINER=https://library.example.com/annotations/ \
 //!   cargo run -p chapbook-annotations --example live_container
 //! ```
-//!
-//! [`mocklib`]: https://github.com/ophymx/mocklib
+
 use chapbook_annotations::{
     from_annotation, to_annotation, AnnotationContainer, ContainerError, Mark,
 };
