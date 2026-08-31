@@ -12,6 +12,7 @@ members = [
     "crates/chapbook-cbz",
     "crates/chapbook-pdf",
     "crates/chapbook-library",
+    "crates/chapbook-annotations",
     "crates/chapbook-reader",
     "crates/chapbook-ffi",
     "crates/chapbook-jni",
@@ -56,6 +57,7 @@ opds-client = { path = "crates/opds-client", default-features = false }
 chapbook-cbz = { path = "crates/chapbook-cbz" }
 chapbook-pdf = { path = "crates/chapbook-pdf" }
 chapbook-library = { path = "crates/chapbook-library" }
+chapbook-annotations = { path = "crates/chapbook-annotations", default-features = false }
 # No defaults here: each shell names the formats it means to open, so a
 # device build's surface is visible in its own manifest rather than
 # inherited. External consumers get the full default set as usual.

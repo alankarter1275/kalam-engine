@@ -16,7 +16,7 @@ meaning something, and where it will not be treated as a cost at all.
 | Tier | Crates | What it means |
 |---|---|---|
 | **Contract** | `chapbook-core`, `chapbook-paint`, `chapbook-ffi` | Types that appear in signatures a downstream must name. Breaking one breaks every shell *and* every backend at once. Changed most reluctantly. |
-| **API** | `chapbook-reader`, `chapbook-library`, `opds-client` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
+| **API** | `chapbook-reader`, `chapbook-library`, `chapbook-annotations`, `opds-client` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
 | **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf`, `chapbook-opds` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
 | **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
 | **Internal** | `chapbook-layout` | No stability of any kind. It exists to make the engine work, its DOM binding and cascade driver follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
@@ -62,6 +62,17 @@ expected to leave this repository for its own eventually. It is also the
 only crate here whose *feature* surface is part of the promise: the
 `ureq` transport is a default feature, and a caller that turns it off and
 supplies its own `HttpClient` must keep working.
+
+**`chapbook-annotations` is API** for the same reason
+`chapbook-library` is: a shell calls it directly to sync a reader's marks,
+and its `Mark` is built out of `chapbook_library::AnnotationKind` and
+`chapbook_core::LayeredLocator`, so its signatures are already made of
+another tier's types. Its wire format is not the promise, though — the
+Web Annotation Data Model is, and this crate follows it rather than
+versioning its own shape. What *is* promised is that a document it does
+not fully understand survives a round trip through it unchanged: a
+container is shared with other reading apps, and a lossy parse there is
+their data loss, not ours.
 
 **`chapbook-opds` is Producer,** now that it is only the binding: an
 OPDS-PSE stream presented as a `Publication`, plus the error seam into

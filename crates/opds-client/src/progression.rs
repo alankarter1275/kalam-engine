@@ -224,7 +224,7 @@ impl OpdsClient {
 
         let mut response = self
             .transport()
-            .put(request, body)
+            .send(crate::http::HttpMethod::Put, request, Some(body))
             .map_err(|e| OpdsError::Network(e.to_string()))?;
         let status = response.status;
         let content_type = response.content_type.clone();

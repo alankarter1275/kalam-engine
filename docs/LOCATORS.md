@@ -54,9 +54,16 @@ redesign:
   emptily, so it is written as the run starting at it —
   `text=prefix-,suffix` — and the match start is the point. `char_offset`
   deliberately does not cross: it means nothing off this device.
-- **Readium locators / Readium Annotations** (W3C Web Annotation profile;
-  Thorium imports/exports it): `href`/`locations.progression`/
-  `locations.totalProgression`/`text.before|highlight|after` map directly.
+- **W3C Web Annotation** (the profile Readium and Thorium speak):
+  `chapbook_annotations`. One endpoint becomes a selector stack —
+  `TextQuoteSelector` for the quote layer, `TextPositionSelector` for the
+  offset, `ProgressSelector` for book_progression — with the spine item on
+  the target. The offset selector travels stamped with
+  `chapbook:locatorVersion` and is only read back when the stamp matches,
+  because an offset from an extraction we did not do would mark the wrong
+  words with full confidence. Everything a peer sent and this crate does
+  not model survives the round trip: a shared container means a lossy
+  parse is somebody else's data loss.
 
 Schema hygiene for the same reason: stable ids, updated-at timestamps, and
 soft deletes on positions/annotations, even while everything is single-device.

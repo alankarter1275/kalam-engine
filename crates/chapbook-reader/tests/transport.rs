@@ -72,12 +72,14 @@ impl HttpClient for PickyHttp {
             return Ok(HttpResponse {
                 status: 401,
                 content_type: Some("application/opds-authentication+json".into()),
+                headers: Vec::new(),
                 body: Box::new(Cursor::new(AUTH_DOC.as_bytes().to_vec())),
             });
         }
         Ok(HttpResponse {
             status: 200,
             content_type: Some("application/atom+xml".into()),
+            headers: Vec::new(),
             body: Box::new(Cursor::new(feed().into_bytes())),
         })
     }

@@ -101,7 +101,9 @@ pub mod progression;
 mod ureq_transport;
 
 pub use atom::parse_atom;
-pub use client::{expand_search_template, opensearch_template, pse_page_url, OpdsClient};
+pub use client::{
+    basic_authorization, expand_search_template, opensearch_template, pse_page_url, OpdsClient,
+};
 pub use href::resolve_url;
 pub use http::{HttpClient, HttpError, HttpRequest, HttpResponse};
 pub use model::{

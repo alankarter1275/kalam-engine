@@ -20,8 +20,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// One outgoing request. GET is the only method catalog browsing needs;
-/// the optional `progression` feature adds [`HttpClient::put`], which sends
-/// one of these with a body.
+/// the optional `write` feature adds [`HttpClient::send`], which carries one
+/// of these with a method and an optional body.
 ///
 /// Owned rather than borrowed on purpose: an implementation is as likely to
 /// be a thin shim over a foreign runtime — `URLSession`, OkHttp, `fetch` —
@@ -50,6 +50,37 @@ impl HttpRequest {
     }
 }
 
+/// The methods a write flow uses. GET is not here: it is
+/// [`HttpClient::get`], which every transport implements and which needs no
+/// body.
+#[cfg(feature = "write")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpMethod {
+    Post,
+    Put,
+    Delete,
+}
+
+#[cfg(feature = "write")]
+impl HttpMethod {
+    /// The token to put on the request line, for transports that take the
+    /// method as a string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Delete => "DELETE",
+        }
+    }
+}
+
+#[cfg(feature = "write")]
+impl fmt::Display for HttpMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One response, with its body still unread.
 pub struct HttpResponse {
     /// The real status, including 4xx and 5xx — see [`HttpClient::get`].
@@ -57,7 +88,36 @@ pub struct HttpResponse {
     /// The `Content-Type` header verbatim, parameters and all. This is
     /// authoritative over whatever the caller asked for or a link advertised.
     pub content_type: Option<String>,
+    /// Every other response header, name and value as received.
+    ///
+    /// Separate from `content_type` because that one is load-bearing for
+    /// every flow and deserves to be unmissable; these are needed by the
+    /// flows that write. A Web Annotation container carries its whole
+    /// concurrency story in `ETag` and says where it put a new annotation
+    /// in `Location`, so a transport that discards headers makes safe
+    /// concurrent editing impossible.
+    ///
+    /// A transport may pass all headers or only the ones it can cheaply
+    /// enumerate; a missing header is read as absent, never as empty.
+    /// Duplicates are kept in order rather than joined — the caller that
+    /// cares about a repeated header knows how it wants it folded.
+    pub headers: Vec<(String, String)>,
     pub body: Box<dyn Read + Send>,
+}
+
+impl HttpResponse {
+    /// A header by case-insensitive name, as HTTP requires.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        if name.eq_ignore_ascii_case("content-type") {
+            if let Some(content_type) = &self.content_type {
+                return Some(content_type);
+            }
+        }
+        self.headers
+            .iter()
+            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 /// A transport failure: the request never produced a response. A server that
@@ -146,8 +206,18 @@ pub trait HttpClient: Send + Sync {
         Ok(response.status)
     }
 
-    /// Send `body` with `PUT`, returning the response — added by the
-    /// `progression` feature, the only flow in this crate that writes.
+    /// Send a request that is not a GET, returning the response — added by
+    /// the `write` feature, which the flows that change server state turn
+    /// on.
+    ///
+    /// **One method rather than one per verb.** A host implements its
+    /// transport once, and every write flow here — a position PUT, an
+    /// annotation POST, PUT or DELETE — arrives through the same door. The
+    /// alternative, a gated method per verb, makes a host implement four
+    /// nearly identical shims and makes each new flow a new trait method.
+    ///
+    /// `body` is `None` for a request that has none; a DELETE with a body
+    /// is not something this crate sends.
     ///
     /// The default refuses rather than pretending to succeed. Unlike
     /// [`download`](HttpClient::download), this cannot be built out of
@@ -157,14 +227,20 @@ pub trait HttpClient: Send + Sync {
     /// report the truth: they do not do this.
     ///
     /// An implementation must send the headers as given — the caller has
-    /// already set `Content-Type` and `Accept` — and must return 4xx as
-    /// responses, since the whole protocol is carried in 400/403/409.
-    #[cfg(feature = "progression")]
-    fn put(&self, request: HttpRequest, body: Vec<u8>) -> Result<HttpResponse, HttpError> {
+    /// already set `Content-Type`, `Accept` and any `If-Match` — and must
+    /// return 4xx as responses, since these protocols carry their meaning
+    /// in 400/403/409/412.
+    #[cfg(feature = "write")]
+    fn send(
+        &self,
+        method: HttpMethod,
+        request: HttpRequest,
+        body: Option<Vec<u8>>,
+    ) -> Result<HttpResponse, HttpError> {
         let _ = (request, body);
-        Err(HttpError::new(
-            "this HttpClient does not implement PUT, which OPDS progression requires",
-        ))
+        Err(HttpError::new(format!(
+            "this HttpClient does not implement {method}, which this flow requires"
+        )))
     }
 }
 
@@ -186,8 +262,13 @@ impl<T: HttpClient + ?Sized> HttpClient for Arc<T> {
         (**self).download(request, dest)
     }
 
-    #[cfg(feature = "progression")]
-    fn put(&self, request: HttpRequest, body: Vec<u8>) -> Result<HttpResponse, HttpError> {
-        (**self).put(request, body)
+    #[cfg(feature = "write")]
+    fn send(
+        &self,
+        method: HttpMethod,
+        request: HttpRequest,
+        body: Option<Vec<u8>>,
+    ) -> Result<HttpResponse, HttpError> {
+        (**self).send(method, request, body)
     }
 }

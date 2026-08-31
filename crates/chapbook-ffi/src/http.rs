@@ -401,6 +401,7 @@ mod host {
             Ok(HttpResponse {
                 status,
                 content_type,
+                headers: Vec::new(),
                 body: Box::new(Cursor::new(body)),
             })
         }

@@ -70,8 +70,7 @@ impl OpdsClient {
 
     /// Set HTTP Basic credentials for this catalog.
     pub fn set_basic_auth(&mut self, username: &str, password: &str) {
-        let raw = format!("{username}:{password}");
-        self.set_authorization(format!("Basic {}", base64(raw.as_bytes())));
+        self.set_authorization(basic_authorization(username, password));
     }
 
     /// Drop any credentials, so the next request goes out unauthenticated.
@@ -343,6 +342,21 @@ fn urlencode(s: &str) -> String {
         }
     }
     out
+}
+
+/// The `Authorization` value for HTTP Basic, ready to hand to
+/// [`OpdsClient::set_authorization`] or to any other client that takes an
+/// opaque credential.
+///
+/// Public because the credential is opaque by design and more than one
+/// protocol here needs one: a Web Annotation container is reached with the
+/// same header as a catalog, and hand-rolling base64 a second time to say
+/// so would be silly.
+pub fn basic_authorization(username: &str, password: &str) -> String {
+    format!(
+        "Basic {}",
+        base64(format!("{username}:{password}").as_bytes())
+    )
 }
 
 fn base64(input: &[u8]) -> String {

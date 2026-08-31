@@ -215,6 +215,7 @@ fn a_failed_unit_reaches_the_shell_instead_of_only_the_log() {
             Ok(HttpResponse {
                 status: 200,
                 content_type: Some("application/atom+xml".into()),
+                headers: Vec::new(),
                 body: Box::new(Cursor::new(feed.into_bytes())),
             })
         }

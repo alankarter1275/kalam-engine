@@ -80,6 +80,7 @@ fn respond(status: u16, content_type: Option<&str>, body: Vec<u8>) -> HttpRespon
     HttpResponse {
         status,
         content_type: content_type.map(str::to_string),
+        headers: Vec::new(),
         body: Box::new(Cursor::new(body)),
     }
 }

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-use opds_client::http::{HttpClient, HttpError, HttpRequest, HttpResponse};
+use opds_client::http::{HttpClient, HttpError, HttpMethod, HttpRequest, HttpResponse};
 use opds_client::progression::{
     Device, Progression, ProgressionUpdate, RefusalReason, MEDIA_TYPE_PROGRESSION,
 };
@@ -130,11 +130,13 @@ impl FakeHttp {
             Some((status, content_type, body)) => HttpResponse {
                 status: *status,
                 content_type: Some(content_type.clone()),
+                headers: Vec::new(),
                 body: Box::new(Cursor::new(body.clone().into_bytes())),
             },
             None => HttpResponse {
                 status: 404,
                 content_type: None,
+                headers: Vec::new(),
                 body: Box::new(Cursor::new(Vec::new())),
             },
         }
@@ -147,8 +149,14 @@ impl HttpClient for FakeHttp {
         Ok(Self::serve(&self.0.get_routes, &request.url))
     }
 
-    fn put(&self, request: HttpRequest, body: Vec<u8>) -> Result<HttpResponse, HttpError> {
-        self.record("PUT", &request, body);
+    fn send(
+        &self,
+        method: HttpMethod,
+        request: HttpRequest,
+        body: Option<Vec<u8>>,
+    ) -> Result<HttpResponse, HttpError> {
+        assert_eq!(method, HttpMethod::Put, "progression only ever PUTs");
+        self.record(method.as_str(), &request, body.unwrap_or_default());
         Ok(Self::serve(&self.0.put_routes, &request.url))
     }
 }
@@ -337,9 +345,9 @@ fn an_out_of_range_progression_never_reaches_the_network() {
 }
 
 #[test]
-fn a_transport_without_put_says_so_instead_of_dropping_the_write() {
-    /// A pre-progression transport: GET only, as every existing
-    /// implementation is.
+fn a_transport_that_cannot_write_says_so_instead_of_dropping_the_write() {
+    /// A read-only transport: GET only, as every implementation was
+    /// before the `write` feature existed.
     struct GetOnly;
     impl HttpClient for GetOnly {
         fn get(&self, _: HttpRequest) -> Result<HttpResponse, HttpError> {
