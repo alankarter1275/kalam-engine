@@ -265,21 +265,30 @@ impl AnnotationContainer {
                 None => value,
             },
         };
-        let items = items_of(&value)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        let annotation: Annotation = serde_json::from_value(item.clone()).ok()?;
-                        Some(StoredAnnotation {
-                            iri: annotation.id.clone()?,
-                            etag: None,
-                            annotation,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut items = Vec::new();
+        for item in items_of(&value).map(Vec::as_slice).unwrap_or_default() {
+            match item {
+                // A container that serves IRIs anyway, despite the
+                // `Prefer` on the request. Fetching each is slow, and
+                // slow beats reporting an empty container.
+                serde_json::Value::String(iri) => {
+                    items.push(self.get(&resolve(url, iri))?);
+                }
+                _ => {
+                    let Ok(annotation) = serde_json::from_value::<Annotation>(item.clone()) else {
+                        continue;
+                    };
+                    let Some(iri) = annotation.id.clone() else {
+                        continue;
+                    };
+                    items.push(StoredAnnotation {
+                        iri,
+                        etag: None,
+                        annotation,
+                    });
+                }
+            }
+        }
         Ok(AnnotationPage {
             items,
             next: value
@@ -330,6 +339,23 @@ impl AnnotationContainer {
 
     // ---- plumbing ----
 
+    /// Container reads ask for the annotations themselves.
+    ///
+    /// A container may serve its items as bare IRIs instead of
+    /// descriptions — the protocol lets it choose, and asking is how a
+    /// client says which it can use. Without this a listing can come back
+    /// as a page of strings, which is a page of zero annotations to
+    /// anything expecting objects, and looks exactly like an empty
+    /// container. [`AnnotationContainer::page`] fetches them one by one if
+    /// it happens anyway; this is what stops it being needed.
+    fn container_request(&self, url: &str) -> HttpRequest {
+        self.request(url).header(
+            "Prefer",
+            "return=representation; \
+             include=\"http://www.w3.org/ns/oa#PreferContainedDescriptions\"",
+        )
+    }
+
     fn request(&self, url: &str) -> HttpRequest {
         let mut request = HttpRequest::new(url).header("Accept", MEDIA_TYPE);
         if let Some(authorization) = &self.authorization {
@@ -341,7 +367,7 @@ impl AnnotationContainer {
     fn fetch_json(&self, url: &str) -> Result<serde_json::Value, ContainerError> {
         let mut response = self
             .http
-            .get(self.request(url))
+            .get(self.container_request(url))
             .map_err(|e| ContainerError::Network(e.to_string()))?;
         let status = response.status;
         let mut body = Vec::new();

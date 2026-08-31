@@ -810,3 +810,66 @@ fn one_unsyncable_book_does_not_end_the_batch() {
     drop(worker);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The bug a one-book test cannot see.
+///
+/// A Web Annotation container holds every annotation a reader has, for
+/// every book: the protocol defines no way to ask one for a single
+/// publication's, and a `?target=` on the advertised link is decoration
+/// that a server is free to ignore — the reference implementation does.
+/// So a pull has to filter on the target itself, or syncing one book files
+/// another book's highlights against it and the next push sends them back
+/// anchored to the wrong publication.
+#[test]
+fn another_books_marks_are_not_adopted_from_a_shared_container() {
+    let dir = scratch();
+    let (library, book) = library_with_book(&dir);
+
+    let shared = json!({
+        "type": "AnnotationPage",
+        "items": [
+            {
+                "id": "https://library.example.com/annotations/ours",
+                "type": "Annotation",
+                "motivation": "highlighting",
+                "bodyValue": "in this book",
+                "target": {"source": "urn:isbn:9780000000000", "selector": [
+                    {"type": "TextQuoteSelector", "exact": "Call me Ishmael"}
+                ]}
+            },
+            {
+                "id": "https://library.example.com/annotations/theirs",
+                "type": "Annotation",
+                "motivation": "highlighting",
+                "bodyValue": "in a different book entirely",
+                "target": {"source": "urn:isbn:9781111111111", "selector": [
+                    {"type": "TextQuoteSelector", "exact": "It is a truth universally"}
+                ]}
+            }
+        ]
+    })
+    .to_string();
+
+    let http = FakeHttp::default()
+        .on("GET", "/opds/progression/book", 200, "")
+        .on("GET", "/annotations/", 200, &shared);
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.adopted, 1, "the wrong count came back");
+
+    let marks = engine.library().annotations(book).unwrap();
+    assert_eq!(marks.len(), 1, "a mark from another book was adopted");
+    assert_eq!(marks[0].text.as_deref(), Some("in this book"));
+
+    // And the one that was skipped must not have been claimed, so the
+    // other book can adopt it when its own turn comes.
+    assert_eq!(
+        engine
+            .library()
+            .annotation_by_remote_iri("https://library.example.com/annotations/theirs")
+            .unwrap(),
+        None
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

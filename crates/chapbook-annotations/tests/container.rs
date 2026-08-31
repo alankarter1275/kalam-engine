@@ -409,3 +409,63 @@ fn a_read_only_transport_refuses_the_write_instead_of_dropping_it() {
         other => panic!("expected a transport refusal, got {other:?}"),
     }
 }
+
+/// A container may answer with bare IRIs rather than annotation bodies.
+/// Silently reading that as an empty container is the failure shape that
+/// looks like success, so the IRIs are followed.
+#[test]
+fn a_container_that_serves_iris_is_followed_rather_than_read_as_empty() {
+    let http = FakeHttp::default()
+        .on(
+            "GET",
+            "/annotations/",
+            200,
+            &[],
+            &json!({"type": "AnnotationPage",
+                    "items": ["https://library.example.com/annotations/a",
+                              "https://library.example.com/annotations/b"]})
+            .to_string(),
+        )
+        .on(
+            "GET",
+            "/annotations/a",
+            200,
+            &[],
+            &annotation(Some("https://library.example.com/annotations/a")).to_string(),
+        )
+        .on(
+            "GET",
+            "/annotations/b",
+            200,
+            &[],
+            &annotation(Some("https://library.example.com/annotations/b")).to_string(),
+        );
+
+    let items = AnnotationContainer::new(http)
+        .all(&format!("{HOST}/annotations/"), None)
+        .unwrap();
+    assert_eq!(items.len(), 2, "an IRI listing was read as empty");
+    assert_eq!(items[0].annotation.target.source, "urn:book");
+}
+
+/// And the request says which it wants, so following should rarely be
+/// needed.
+#[test]
+fn a_container_read_asks_for_the_annotations_themselves() {
+    let http = FakeHttp::default().on(
+        "GET",
+        "/annotations/",
+        200,
+        &[],
+        &json!({"type": "AnnotationPage", "items": []}).to_string(),
+    );
+    AnnotationContainer::new(http.clone())
+        .all(&format!("{HOST}/annotations/"), None)
+        .unwrap();
+    let (_, _, headers, _) = http.seen().remove(0);
+    let prefer = header_of(&headers, "Prefer").unwrap_or_default();
+    assert!(
+        prefer.contains("PreferContainedDescriptions"),
+        "the read did not say what it can use: {prefer:?}"
+    );
+}

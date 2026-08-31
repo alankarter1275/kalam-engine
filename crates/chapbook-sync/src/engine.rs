@@ -398,6 +398,21 @@ impl SyncEngine {
             .all(container_url, Some(MAX_CONTAINER_PAGES))
             .map_err(|e| SyncError::Container(e.to_string()))?;
         for stored in listed {
+            // A container is a container: the Web Annotation Protocol
+            // defines no way to ask one for "the annotations on this
+            // book", so what comes back is everything in it, for every
+            // publication this reader has ever marked. Filtering on the
+            // target is the client's job and cannot be skipped — adopting
+            // unfiltered would file another book's highlights against this
+            // one, and the next push would send them back anchored to it.
+            //
+            // A catalog may advertise the container with a `?target=`
+            // query, as mocklib does. That is not a filter: nothing in the
+            // protocol makes it one and a server is free to ignore it,
+            // which the reference implementation does.
+            if stored.annotation.target.source != source {
+                continue;
+            }
             if self
                 .library
                 .annotation_by_remote_iri(&stored.iri)?
