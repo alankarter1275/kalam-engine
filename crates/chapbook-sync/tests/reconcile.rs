@@ -1,0 +1,812 @@
+//! The reconcile rules, against a scripted transport and a real library.
+//!
+//! What is worth pinning here is not that a PUT goes out — the mapping
+//! crates test that — but who wins when two devices disagree, and what
+//! happens to a mark the container refuses.
+
+use std::collections::HashMap;
+use std::io::Cursor;
+use std::sync::{Arc, Mutex};
+
+use chapbook_core::{LayeredLocator, Quote, LOCATOR_VERSION};
+use chapbook_library::{AnnotationKind, BookId, Library};
+use chapbook_opds::http::{HttpClient, HttpError, HttpMethod, HttpRequest, HttpResponse};
+use chapbook_opds::progression::Device;
+use chapbook_sync::{PositionReport, SyncEngine};
+use serde_json::json;
+
+const HOST: &str = "https://library.example.com";
+const PROGRESSION: &str = "https://library.example.com/opds/progression/book";
+const CONTAINER: &str = "https://library.example.com/annotations/";
+
+// ---- a scripted server ----
+
+type Canned = (u16, Vec<(String, String)>, String);
+
+#[derive(Clone, Default)]
+struct FakeHttp(Arc<Inner>);
+
+#[derive(Default)]
+struct Inner {
+    routes: Mutex<HashMap<String, Canned>>,
+    seen: Mutex<Vec<(String, String, String)>>,
+}
+
+impl FakeHttp {
+    fn on(self, method: &str, path: &str, status: u16, body: &str) -> Self {
+        self.route(method, path, status, &[], body)
+    }
+
+    fn route(
+        self,
+        method: &str,
+        path: &str,
+        status: u16,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Self {
+        self.0.routes.lock().unwrap().insert(
+            format!("{method} {path}"),
+            (
+                status,
+                headers
+                    .iter()
+                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .collect(),
+                body.to_string(),
+            ),
+        );
+        self
+    }
+
+    fn seen(&self) -> Vec<(String, String, String)> {
+        self.0.seen.lock().unwrap().clone()
+    }
+
+    fn sent(&self, method: &str) -> Vec<String> {
+        self.seen()
+            .into_iter()
+            .filter(|(m, _, _)| m == method)
+            .map(|(_, _, body)| body)
+            .collect()
+    }
+
+    fn serve(&self, method: &str, request: &HttpRequest, body: Vec<u8>) -> HttpResponse {
+        let path = request.url.trim_start_matches(HOST).to_string();
+        self.0.seen.lock().unwrap().push((
+            method.to_string(),
+            path.clone(),
+            String::from_utf8_lossy(&body).into_owned(),
+        ));
+        match self
+            .0
+            .routes
+            .lock()
+            .unwrap()
+            .get(&format!("{method} {path}"))
+        {
+            Some((status, headers, body)) => HttpResponse {
+                status: *status,
+                content_type: Some("application/json".into()),
+                headers: headers.clone(),
+                body: Box::new(Cursor::new(body.clone().into_bytes())),
+            },
+            None => HttpResponse {
+                status: 404,
+                content_type: None,
+                headers: Vec::new(),
+                body: Box::new(Cursor::new(Vec::new())),
+            },
+        }
+    }
+}
+
+impl HttpClient for FakeHttp {
+    fn get(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        Ok(self.serve("GET", &request, Vec::new()))
+    }
+
+    fn send(
+        &self,
+        method: HttpMethod,
+        request: HttpRequest,
+        body: Option<Vec<u8>>,
+    ) -> Result<HttpResponse, HttpError> {
+        Ok(self.serve(method.as_str(), &request, body.unwrap_or_default()))
+    }
+}
+
+// ---- a library with one syncable book ----
+
+struct FakeBook(chapbook_core::BookMetadata);
+
+impl chapbook_core::Publication for FakeBook {
+    fn kind(&self) -> chapbook_core::BookKind {
+        chapbook_core::BookKind::Epub
+    }
+    fn metadata(&self) -> &chapbook_core::BookMetadata {
+        &self.0
+    }
+    fn spine(&self) -> &[chapbook_core::SpineItem] {
+        &[]
+    }
+    fn toc(&self) -> &[chapbook_core::TocEntry] {
+        &[]
+    }
+    fn unit_bytes(&self, _: usize) -> chapbook_core::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+}
+
+fn scratch() -> std::path::PathBuf {
+    use std::hash::{BuildHasher, Hasher};
+    let suffix = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
+    let dir = std::env::temp_dir().join(format!("chapbook-sync-{}-{suffix}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn library_with_book(dir: &std::path::Path) -> (Library, BookId) {
+    let mut library = Library::open(dir).unwrap();
+    let path = dir.join("book.epub");
+    std::fs::write(&path, b"a book").unwrap();
+    let metadata = chapbook_core::BookMetadata {
+        title: Some("Moby-Dick".into()),
+        identifier: Some("urn:isbn:9780000000000".into()),
+        ..Default::default()
+    };
+    let id = library.import(&path, &FakeBook(metadata)).unwrap();
+    library
+        .set_sync_targets(id, Some(PROGRESSION), Some(CONTAINER))
+        .unwrap();
+    (library, id)
+}
+
+fn engine(library: Library, http: FakeHttp) -> SyncEngine {
+    SyncEngine::new(
+        library,
+        Arc::new(http),
+        Device {
+            id: "urn:uuid:this-device".into(),
+            name: "chapbook".into(),
+        },
+    )
+}
+
+fn locator(offset: u32, progression: f64) -> LayeredLocator {
+    LayeredLocator {
+        spine_href: "OEBPS/ch4.xhtml".into(),
+        spine_index: 3,
+        char_offset: offset,
+        locator_version: LOCATOR_VERSION,
+        quote: Quote {
+            prefix: "the harbour was ".into(),
+            exact: String::new(),
+            suffix: "quiet that morning".into(),
+        },
+        spine_fraction: progression,
+        book_progression: progression,
+    }
+}
+
+fn remote_progression(modified: &str, progression: f64) -> String {
+    json!({
+        "modified": modified,
+        "device": {"id": "urn:uuid:other-device", "name": "Phone"},
+        "progression": progression,
+        "references": ["OEBPS/ch9.xhtml#:~:text=and%20then%20the%20whale"]
+    })
+    .to_string()
+}
+
+fn empty_container() -> String {
+    json!({"type": "AnnotationPage", "items": []}).to_string()
+}
+
+// ---- position ----
+
+#[test]
+fn a_dirty_position_is_offered_to_the_service() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+
+    let http = FakeHttp::default()
+        .on("PUT", "/opds/progression/book", 200, "")
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.position, PositionReport::Pushed);
+
+    let body = http.sent("PUT").remove(0);
+    assert!(body.contains("\"progression\":0.42"), "{body}");
+    assert!(
+        body.contains("text=the%20harbour%20was%20-,quiet%20that%20morning"),
+        "the quote layer did not travel: {body}"
+    );
+    assert!(
+        !body.contains("1200"),
+        "char_offset must not cross the wire: {body}"
+    );
+
+    // Clean now, so a second sync offers nothing.
+    assert!(!engine.library().position_needs_push(book).unwrap());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Two devices race routinely. A service that says its copy is newer is
+/// not a failure, and must not leave the local position looking synced.
+#[test]
+fn a_refused_push_leaves_the_position_owing_a_write() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+
+    let http = FakeHttp::default()
+        .on(
+            "PUT",
+            "/opds/progression/book",
+            409,
+            &json!({"type": "https://registry.opds.io/error#progression-date",
+                    "title": "A more recent progression point is already available."})
+            .to_string(),
+        )
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert!(
+        matches!(report.position, PositionReport::Refused(_)),
+        "{:?}",
+        report.position
+    );
+    assert!(
+        engine.library().position_needs_push(book).unwrap(),
+        "a refused push must not mark the position clean"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The service moved and this device did not: adopt it. The adopted
+/// locator must not claim an offset it never took.
+#[test]
+fn a_clean_local_position_adopts_the_services() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+    // Pretend this position already reached the service.
+    let revision = library.positions_needing_push().unwrap()[0].revision;
+    library
+        .mark_position_synced(book, revision, "2026-08-01T00:00:00Z")
+        .unwrap();
+
+    let http = FakeHttp::default()
+        .on(
+            "GET",
+            "/opds/progression/book",
+            200,
+            &remote_progression("2026-08-30T12:00:00Z", 0.77),
+        )
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.position, PositionReport::Pulled);
+    assert!(http.sent("PUT").is_empty(), "a clean position was pushed");
+
+    let stored = engine.library().position(book).unwrap().unwrap();
+    assert_eq!(stored.locator.book_progression, 0.77);
+    assert_eq!(stored.locator.spine_href, "OEBPS/ch9.xhtml");
+    assert_eq!(
+        stored.locator.quote.exact, "and then the whale",
+        "the peer's quote is what re-anchors it"
+    );
+    assert_eq!(
+        stored.locator.locator_version, 0,
+        "an adopted position must not claim an offset this build can trust"
+    );
+    assert_eq!(stored.locator.char_offset, 0);
+
+    // Adopting is agreement, not a change to push back.
+    assert!(!engine.library().position_needs_push(book).unwrap());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The service's copy has not moved since we last looked, so there is
+/// nothing to adopt and nothing to say.
+#[test]
+fn an_unchanged_service_copy_is_left_alone() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+    let revision = library.positions_needing_push().unwrap()[0].revision;
+    library
+        .mark_position_synced(book, revision, "2026-08-30T12:00:00Z")
+        .unwrap();
+
+    let http = FakeHttp::default()
+        .on(
+            "GET",
+            "/opds/progression/book",
+            200,
+            &remote_progression("2026-08-30T12:00:00Z", 0.77),
+        )
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http);
+
+    assert_eq!(
+        engine.sync_book(book).unwrap().position,
+        PositionReport::Idle
+    );
+    assert_eq!(
+        engine
+            .library()
+            .position(book)
+            .unwrap()
+            .unwrap()
+            .locator
+            .book_progression,
+        0.42,
+        "an unchanged remote overwrote the local position"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A service with nothing recorded answers 200 with an empty body. That is
+/// not a position at 0.0, and must not be read as one.
+#[test]
+fn an_empty_service_answer_is_not_a_position_at_zero() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+    let revision = library.positions_needing_push().unwrap()[0].revision;
+    library
+        .mark_position_synced(book, revision, "2026-08-30T12:00:00Z")
+        .unwrap();
+
+    let http = FakeHttp::default()
+        .on("GET", "/opds/progression/book", 200, "")
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http);
+
+    assert_eq!(
+        engine.sync_book(book).unwrap().position,
+        PositionReport::Idle
+    );
+    assert_eq!(
+        engine
+            .library()
+            .position(book)
+            .unwrap()
+            .unwrap()
+            .locator
+            .book_progression,
+        0.42
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---- annotations ----
+
+#[test]
+fn a_new_mark_is_created_and_remembered() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            Some(&locator(30, 0.2)),
+            Some("a note"),
+            Some("#ffcc00"),
+        )
+        .unwrap();
+
+    let http = FakeHttp::default()
+        .route(
+            "POST",
+            "/annotations/",
+            201,
+            &[
+                ("Location", "https://library.example.com/annotations/abc"),
+                ("ETag", "\"v1\""),
+            ],
+            "",
+        )
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.created, 1);
+
+    let body = http.sent("POST").remove(0);
+    assert!(body.contains("TextQuoteSelector"), "{body}");
+    assert!(
+        body.contains("urn:isbn:9780000000000"),
+        "the mark should anchor to the publication: {body}"
+    );
+
+    assert!(engine
+        .library()
+        .annotations_needing_push(book)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        engine
+            .library()
+            .annotation_by_remote_iri("https://library.example.com/annotations/abc")
+            .unwrap(),
+        Some(annotation)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The container's copy moved. Ours must survive and stay owed — a sync
+/// that resolved this by overwriting would be losing a reader's edit.
+#[test]
+fn a_refused_edit_keeps_the_local_mark_and_stays_dirty() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+    library
+        .set_annotation_color(annotation, Some("#00ccff"))
+        .unwrap();
+
+    let http = FakeHttp::default()
+        .on("PUT", "/annotations/abc", 412, "")
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.conflicts, 1);
+    assert_eq!(report.annotations.updated, 0);
+    assert_eq!(
+        engine.library().annotations(book).unwrap()[0]
+            .color
+            .as_deref(),
+        Some("#00ccff"),
+        "the local edit was overwritten"
+    );
+    assert_eq!(
+        engine
+            .library()
+            .annotations_needing_push(book)
+            .unwrap()
+            .len(),
+        1,
+        "a refused edit must still owe the container a write"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The reader deleted it here; the container has to be told, and only then
+/// may the row go.
+#[test]
+fn a_deleted_mark_is_removed_there_before_it_is_forgotten_here() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Bookmark,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            None,
+        )
+        .unwrap();
+    library.delete_annotation(annotation).unwrap();
+
+    let http = FakeHttp::default()
+        .on("DELETE", "/annotations/abc", 204, "")
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.deleted, 1);
+    assert_eq!(http.sent("DELETE").len(), 1);
+    assert!(engine
+        .library()
+        .annotations_needing_push(book)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        engine
+            .library()
+            .annotation_by_remote_iri("https://library.example.com/annotations/abc")
+            .unwrap(),
+        None,
+        "the row should be gone once the container has been told"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A mark from another device arrives with its own IRI and is adopted
+/// once — a second sync must not duplicate it.
+#[test]
+fn a_mark_from_another_device_is_adopted_exactly_once() {
+    let dir = scratch();
+    let (library, book) = library_with_book(&dir);
+    let remote = json!({
+        "type": "AnnotationPage",
+        "items": [{
+            "@context": "http://www.w3.org/ns/anno.jsonld",
+            "id": "https://library.example.com/annotations/theirs",
+            "type": "Annotation",
+            "motivation": "highlighting",
+            "bodyValue": "from the phone",
+            "target": {"source": "urn:isbn:9780000000000", "selector": [
+                {"type": "TextQuoteSelector", "exact": "Call me Ishmael",
+                 "prefix": "Loomings. "},
+                {"type": "ProgressSelector", "value": 0.03}
+            ]}
+        }]
+    })
+    .to_string();
+
+    let http = FakeHttp::default()
+        .on("GET", "/opds/progression/book", 200, "")
+        .on("GET", "/annotations/", 200, &remote);
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.adopted, 1);
+    let marks = engine.library().annotations(book).unwrap();
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0].text.as_deref(), Some("from the phone"));
+    assert_eq!(marks[0].start.quote.exact, "Call me Ishmael");
+    assert_eq!(
+        marks[0].start.locator_version, 0,
+        "an unstamped peer offset must not be trusted"
+    );
+
+    // Adopting is agreement: it must not immediately owe a write back,
+    // and a second pass must not create a second copy.
+    assert!(engine
+        .library()
+        .annotations_needing_push(book)
+        .unwrap()
+        .is_empty());
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.adopted, 0);
+    assert_eq!(engine.library().annotations(book).unwrap().len(), 1);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A book nobody gave a service to is not an error worth a network call.
+#[test]
+fn a_book_with_no_service_is_refused_before_any_request() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_sync_targets(book, None, None).unwrap();
+
+    let http = FakeHttp::default();
+    let mut engine = engine(library, http.clone());
+    assert!(engine.sync_book(book).is_err());
+    assert!(
+        http.seen().is_empty(),
+        "a bookless sync went to the network"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The position service and the annotation container are separate
+/// services, possibly on separate hosts. One being down must not stop the
+/// other: a reader whose catalog lost its progression endpoint should
+/// still have their highlights reach the container.
+#[test]
+fn a_dead_progression_service_does_not_stop_the_marks() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+    library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let http = FakeHttp::default()
+        .on("PUT", "/opds/progression/book", 503, "")
+        .route(
+            "POST",
+            "/annotations/",
+            201,
+            &[("Location", "https://library.example.com/annotations/abc")],
+            "",
+        )
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert!(
+        matches!(report.position, PositionReport::Failed(_)),
+        "{:?}",
+        report.position
+    );
+    assert_eq!(report.annotations.created, 1, "the mark did not get out");
+    assert_eq!(report.annotations.failed, None);
+    // And the position still owes a write, for the next attempt.
+    assert!(engine.library().position_needs_push(book).unwrap());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// And the other way round.
+#[test]
+fn a_dead_container_does_not_stop_the_position() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+    library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let http = FakeHttp::default()
+        .on("PUT", "/opds/progression/book", 200, "")
+        .on("POST", "/annotations/", 503, "");
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.position, PositionReport::Pushed);
+    assert!(report.annotations.failed.is_some());
+    assert!(!engine.library().position_needs_push(book).unwrap());
+    assert_eq!(
+        engine
+            .library()
+            .annotations_needing_push(book)
+            .unwrap()
+            .len(),
+        1,
+        "the unsent mark must still owe a write"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---- the worker ----
+
+/// The worker is the supported way in, and dropping it must mean nothing
+/// is still writing to the library behind your back.
+#[test]
+fn the_worker_reports_each_book_and_joins_on_drop() {
+    use chapbook_sync::{SyncCommand, SyncEvent, SyncWorker};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+
+    let http = FakeHttp::default()
+        .on("PUT", "/opds/progression/book", 200, "")
+        .on("GET", "/annotations/", 200, &empty_container());
+    let engine = engine(library, http);
+
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let counter = wakes.clone();
+    let worker = SyncWorker::spawn(
+        engine,
+        Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+
+    assert!(worker.request(SyncCommand::All));
+    // One event per book, then the batch's own.
+    let mut reports = 0;
+    let mut finished = None;
+    while finished.is_none() {
+        match worker.next_event() {
+            Some(SyncEvent::Book(report)) => {
+                assert_eq!(report.position, PositionReport::Pushed);
+                reports += 1;
+            }
+            Some(SyncEvent::Failed { reason, .. }) => panic!("{reason}"),
+            Some(SyncEvent::Finished { books }) => finished = Some(books),
+            None => panic!("the worker ended without finishing"),
+        }
+    }
+    assert_eq!(reports, 1);
+    assert_eq!(finished, Some(1));
+    assert!(
+        wakes.load(Ordering::SeqCst) >= 2,
+        "the shell should be nudged per book, not only per batch"
+    );
+
+    drop(worker);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A book that cannot sync is reported and the batch goes on — one dead
+/// host should not leave the rest of a shelf unsynced.
+#[test]
+fn one_unsyncable_book_does_not_end_the_batch() {
+    use chapbook_sync::{SyncCommand, SyncEvent, SyncWorker};
+
+    let dir = scratch();
+    let (mut library, first) = library_with_book(&dir);
+
+    // A second book pointing at a service that answers nothing at all.
+    let path = dir.join("second.epub");
+    std::fs::write(&path, b"another book").unwrap();
+    let second = library
+        .import(
+            &path,
+            &FakeBook(chapbook_core::BookMetadata {
+                title: Some("Second".into()),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+    library
+        .set_sync_targets(
+            second,
+            Some("https://library.example.com/opds/progression/missing"),
+            None,
+        )
+        .unwrap();
+    library.set_position(first, &locator(1200, 0.42)).unwrap();
+    library.set_position(second, &locator(5, 0.05)).unwrap();
+
+    let http = FakeHttp::default()
+        .on("PUT", "/opds/progression/book", 200, "")
+        .on("GET", "/annotations/", 200, &empty_container());
+    let worker = SyncWorker::spawn(engine(library, http), Arc::new(|| {}));
+    assert!(worker.request(SyncCommand::All));
+
+    let mut seen = Vec::new();
+    loop {
+        match worker.next_event() {
+            Some(SyncEvent::Book(report)) => seen.push(report.book),
+            Some(SyncEvent::Failed { book, .. }) => seen.push(book),
+            Some(SyncEvent::Finished { books }) => {
+                assert_eq!(books, 2, "the batch stopped early");
+                break;
+            }
+            None => panic!("the worker ended without finishing"),
+        }
+    }
+    assert!(seen.contains(&first) && seen.contains(&second));
+    drop(worker);
+    std::fs::remove_dir_all(&dir).ok();
+}

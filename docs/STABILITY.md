@@ -16,7 +16,7 @@ meaning something, and where it will not be treated as a cost at all.
 | Tier | Crates | What it means |
 |---|---|---|
 | **Contract** | `chapbook-core`, `chapbook-paint`, `chapbook-ffi` | Types that appear in signatures a downstream must name. Breaking one breaks every shell *and* every backend at once. Changed most reluctantly. |
-| **API** | `chapbook-reader`, `chapbook-library`, `chapbook-annotations`, `opds-client` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
+| **API** | `chapbook-reader`, `chapbook-library`, `chapbook-annotations`, `chapbook-sync`, `opds-client` | What a downstream calls. Semver discipline: breaking changes are deliberate, announced in the changelog, and worth the migration. |
 | **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf`, `chapbook-opds` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
 | **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
 | **Internal** | `chapbook-layout` | No stability of any kind. It exists to make the engine work, its DOM binding and cascade driver follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
@@ -73,6 +73,13 @@ versioning its own shape. What *is* promised is that a document it does
 not fully understand survives a round trip through it unchanged: a
 container is shared with other reading apps, and a lossy parse there is
 their data loss, not ours.
+
+**`chapbook-sync` is API** because a shell drives it: it decides when to
+reconcile, and this is what it calls. The crate deliberately holds no
+schedule of its own — every page turn is wrong on a metered radio, on
+close is wrong for a session that crashes — so the *timing* is the
+shell's and the promise here is only about what the calls do and what
+they report.
 
 **`chapbook-opds` is Producer,** now that it is only the binding: an
 OPDS-PSE stream presented as a `Publication`, plus the error seam into

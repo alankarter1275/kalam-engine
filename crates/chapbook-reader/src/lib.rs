@@ -728,6 +728,22 @@ impl Session {
             .unwrap_or(0)
     }
 
+    /// The library record this session is reading, once it has one.
+    ///
+    /// The join between opening a book and everything the library knows
+    /// about it — most immediately
+    /// [`set_sync_targets`](chapbook_library::Library::set_sync_targets),
+    /// which a shell that downloaded from a catalog has to call with the
+    /// entry's links: the session imported the book, so only it knows
+    /// which row that became.
+    ///
+    /// `None` for a book that never reached the library — an OPDS page
+    /// stream, or a session built without one.
+    #[cfg(feature = "library")]
+    pub fn book_id(&self) -> Option<chapbook_library::BookId> {
+        self.book_id
+    }
+
     /// Capture the position as a full layered locator and persist it.
     /// Comics persist page-unit progression (see `chapbook_core::locator`).
     pub fn save_position(&mut self) {

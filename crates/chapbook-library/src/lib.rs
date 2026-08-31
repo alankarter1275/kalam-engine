@@ -1020,6 +1020,29 @@ impl Library {
         Ok(())
     }
 
+    /// Every live book with a service to sync against, in id order.
+    ///
+    /// What a shell hands to a reconcile loop: books with no catalog
+    /// behind them are not in it, which is most of them.
+    pub fn books_with_sync_targets(&self) -> Result<Vec<BookId>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT s.book_id
+                 FROM book_sync s
+                 JOIN books b ON b.id = s.book_id
+                 WHERE b.deleted = 0
+                   AND (s.progression_url IS NOT NULL
+                        OR s.annotation_container IS NOT NULL)
+                 ORDER BY s.book_id",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([], |row| Ok(BookId(row.get(0)?)))
+            .map_err(db_err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+    }
+
     /// True when the stored position has moved since it last agreed with
     /// the service.
     ///

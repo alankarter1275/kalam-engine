@@ -707,6 +707,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "chapbook-sync"
+version = "0.1.0"
+dependencies = [
+ "chapbook-annotations",
+ "chapbook-core",
+ "chapbook-library",
+ "chapbook-opds",
+ "chapbook-reader",
+ "serde_json",
+]
+
+[[package]]
 name = "chapbook-viewer"
 version = "0.1.0"
 dependencies = [
