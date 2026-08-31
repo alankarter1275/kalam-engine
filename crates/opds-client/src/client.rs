@@ -70,8 +70,7 @@ impl OpdsClient {
 
     /// Set HTTP Basic credentials for this catalog.
     pub fn set_basic_auth(&mut self, username: &str, password: &str) {
-        let raw = format!("{username}:{password}");
-        self.set_authorization(format!("Basic {}", base64(raw.as_bytes())));
+        self.set_authorization(basic_authorization(username, password));
     }
 
     /// Drop any credentials, so the next request goes out unauthenticated.
@@ -113,8 +112,7 @@ impl OpdsClient {
         } else {
             link.href.clone()
         };
-        let encoded = urlencode(query);
-        let url = template.replace("{searchTerms}", &encoded);
+        let url = expand_search_template(&template, query)?;
         let _ = base_url; // hrefs were already resolved at parse time
         self.fetch(&url)
     }
@@ -275,6 +273,63 @@ pub fn opensearch_template(xml: &[u8], base_url: &str) -> Result<String, OpdsErr
     fallback.ok_or_else(|| OpdsError::Parse("opensearch document has no Url template".into()))
 }
 
+/// Fill an OpenSearch URL template (OpenSearch 1.1 §4.2) with a query.
+///
+/// Only `{searchTerms}` carries the caller's query. Everything else in a
+/// template is a parameter this crate does not supply, and the spec is
+/// specific about what that means: an **optional** parameter — one whose
+/// name ends in `?` — is replaced with the empty string, and a
+/// **required** one the client cannot fill makes the template unusable.
+///
+/// Leaving an unfilled parameter in the URL is the one thing that must not
+/// happen, and is what this function exists to prevent. A template like
+/// `?q={searchTerms}&author={atom:author?}` is ordinary — Calibre-Web,
+/// COPS and Kavita all emit optional refinement parameters — and sending
+/// the literal `author={atom:author?}` is read by the server as a filter
+/// on the eleven-character author name `{atom:author?}`. It answers 200
+/// with an empty feed, so the failure looks exactly like a search that
+/// found nothing.
+///
+/// Parameter names are matched on their local part, so the namespaced
+/// `{os:searchTerms}` some catalogs write is the same parameter as
+/// `{searchTerms}`. The spec-defaulted parameters (`startIndex`,
+/// `startPage`, `language`, `inputEncoding`, `outputEncoding`) get their
+/// documented defaults when required; `count` has no client-side default
+/// (the spec leaves it to the server), so a template that requires one
+/// is refused.
+pub fn expand_search_template(template: &str, query: &str) -> Result<String, OpdsError> {
+    let encoded = urlencode(query);
+    let mut out = String::with_capacity(template.len() + encoded.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let Some(close) = rest[open..].find('}').map(|i| open + i) else {
+            break; // an unbalanced brace is literal text, not a parameter
+        };
+        let name = &rest[open + 1..close];
+        out.push_str(&rest[..open]);
+        let (name, optional) = match name.strip_suffix('?') {
+            Some(stripped) => (stripped, true),
+            None => (name, false),
+        };
+        let local = name.rsplit(':').next().unwrap_or(name);
+        match local {
+            "searchTerms" => out.push_str(&encoded),
+            "startIndex" | "startPage" if !optional => out.push('1'),
+            "language" if !optional => out.push('*'),
+            "inputEncoding" | "outputEncoding" if !optional => out.push_str("UTF-8"),
+            _ if optional => {}
+            _ => {
+                return Err(OpdsError::Parse(format!(
+                    "search template requires a parameter this client cannot supply: {{{name}}}"
+                )))
+            }
+        }
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 fn urlencode(s: &str) -> String {
     let mut out = String::new();
     for byte in s.bytes() {
@@ -287,6 +342,21 @@ fn urlencode(s: &str) -> String {
         }
     }
     out
+}
+
+/// The `Authorization` value for HTTP Basic, ready to hand to
+/// [`OpdsClient::set_authorization`] or to any other client that takes an
+/// opaque credential.
+///
+/// Public because the credential is opaque by design and more than one
+/// protocol here needs one: a Web Annotation container is reached with the
+/// same header as a catalog, and hand-rolling base64 a second time to say
+/// so would be silly.
+pub fn basic_authorization(username: &str, password: &str) -> String {
+    format!(
+        "Basic {}",
+        base64(format!("{username}:{password}").as_bytes())
+    )
 }
 
 fn base64(input: &[u8]) -> String {

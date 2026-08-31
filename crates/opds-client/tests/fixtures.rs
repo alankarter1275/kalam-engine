@@ -264,6 +264,63 @@ fn opensearch_description() {
     assert_eq!(template, "https://example.com/opds/search?q={searchTerms}");
 }
 
+/// A template whose refinement parameters are left unfilled is the
+/// zero-results bug: the server reads the literal `{atom:author?}` as an
+/// author name. Optional parameters must become empty, per OpenSearch 1.1
+/// §4.2, and the relative template still resolves against the description
+/// document's own URL.
+#[test]
+fn a_template_with_refinements_leaves_no_parameter_behind() {
+    use opds_client::{expand_search_template, opensearch_template};
+
+    let template = opensearch_template(
+        &fixture("opensearch-refinements.xml"),
+        "https://cat.example.com/opds/opensearch.xml",
+    )
+    .unwrap();
+    assert_eq!(
+        template,
+        "https://cat.example.com/opds/search?q={searchTerms}&author={atom:author?}\
+&title={atom:title?}&page={startPage?}"
+    );
+
+    let url = expand_search_template(&template, "moby dick").unwrap();
+    assert_eq!(
+        url,
+        "https://cat.example.com/opds/search?q=moby%20dick&author=&title=&page="
+    );
+    assert!(!url.contains('{'), "an unfilled parameter survived: {url}");
+}
+
+/// The namespaced spelling of the one parameter we do supply, and the
+/// spec-defaulted parameters, in their required form.
+#[test]
+fn required_parameters_take_their_spec_defaults() {
+    use opds_client::expand_search_template;
+
+    assert_eq!(
+        expand_search_template(
+            "https://e.com/s?q={os:searchTerms}&i={startIndex}&l={language}&e={outputEncoding}",
+            "tea",
+        )
+        .unwrap(),
+        "https://e.com/s?q=tea&i=1&l=*&e=UTF-8"
+    );
+}
+
+/// `count` has no client-side default — the spec leaves the page size to
+/// the server — so a template that requires one cannot be filled. Refusing
+/// beats sending `count={count}` and reading the empty feed as an answer.
+#[test]
+fn a_required_parameter_we_cannot_supply_is_refused_not_guessed() {
+    use opds_client::expand_search_template;
+
+    let err = expand_search_template("https://e.com/s?q={searchTerms}&n={count}", "tea")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("{count}"), "{err}");
+}
+
 // ---- Media types ----
 
 #[test]

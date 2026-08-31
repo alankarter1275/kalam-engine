@@ -22,6 +22,8 @@
 
 pub use opds_client::*;
 
+#[cfg(feature = "progression")]
+pub mod progression;
 mod pse;
 
 pub use pse::StreamedComic;

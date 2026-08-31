@@ -23,3 +23,7 @@ insta = { workspace = true }
 # constructs `OpdsClient::new` with its own `HttpClient`.
 default = ["ureq"]
 ureq = ["opds-client/ureq"]
+# OPDS Progression 1.0 position sync, and the LayeredLocator mapping onto
+# it. Off by default for the same reason opds-client gates it: the spec is
+# an unreleased draft whose wire format can still move.
+progression = ["opds-client/progression"]

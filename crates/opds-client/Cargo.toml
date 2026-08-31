@@ -31,4 +31,9 @@ ureq = ["dep:ureq"]
 # none. Turning it on is a caller accepting that surface may move; it also
 # adds `HttpClient::put`, which has a refusing default so existing
 # transports keep compiling. See src/progression.rs and INTEROP.md §6.
-progression = []
+progression = ["write"]
+# The write side of the transport: `HttpClient::send`. A feature rather than
+# always-on because a read-only host — a catalog browser, a WASM build that
+# only downloads — should not have to implement a method it never calls, and
+# the refusing default is what tells it so at runtime if it does.
+write = []

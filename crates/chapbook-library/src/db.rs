@@ -150,6 +150,72 @@ const MIGRATIONS: &[&str] = &[
     -- is: the cascade moves on to the next one.
     ALTER TABLE reading_settings ADD COLUMN font_family TEXT;
     ",
+    // v6
+    "
+    -- Where a book's position and marks sync to, and how far they have
+    -- got. Separate from `opds_sources`: that row is a catalog the reader
+    -- browses, and these are per-*publication* service URLs, because in
+    -- both protocols the URL *is* the publication's identity. There is no
+    -- id in a Progression document and a Web Annotation container is
+    -- scoped by the link that named it, so a book sideloaded from disk has
+    -- no service at all until something maps it back to a catalog entry.
+    -- Both columns are therefore NULL for most books and that is the
+    -- normal case, not a gap.
+    --
+    -- Opaque and possibly secret-bearing, exactly like `opds_sources.url`:
+    -- a service URL may embed a per-user key. Never log or normalize.
+    CREATE TABLE book_sync (
+        book_id INTEGER PRIMARY KEY REFERENCES books(id),
+        progression_url TEXT,
+        annotation_container TEXT,
+        -- The `modified` of the progression document last seen from the
+        -- service, verbatim. Stored as the string it arrived as and
+        -- compared for equality, never parsed: chapbook has no date type,
+        -- the draft only promises ISO 8601, and equality is the only
+        -- question being asked - did the service's copy change since we
+        -- looked. Ordering is the service's job, and it does it (409).
+        remote_modified TEXT,
+        -- The `positions.revision` that last went out, NOT a timestamp.
+        -- See the revision columns below.
+        position_synced_revision INTEGER,
+        updated_at INTEGER NOT NULL
+    );
+
+    -- Dirty tracking is a revision, never a clock.
+    --
+    -- `updated_at` is `strftime('%s','now')`, which has one-second
+    -- resolution, so an edit landing in the same second as a sync mark
+    -- compares equal and looks clean. For a position that costs one page
+    -- turn; for an annotation it is an edit that is never pushed and
+    -- silently differs from the container for good. Wall clocks also run
+    -- backwards - NTP steps, a device whose user changes the date - and
+    -- \"has this changed since we synced\" should not be able to answer
+    -- \"no\" because of any of that. A counter that only ever goes up
+    -- answers exactly the question and nothing else.
+    --
+    -- `updated_at` stays: it is what a reader's \"recently annotated\"
+    -- list orders by, which is a different job.
+    ALTER TABLE positions ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE annotations ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+
+    -- The remote half of one annotation. NULL `remote_iri` means it has
+    -- never been pushed; the container mints the IRI and it is the sync
+    -- identity from then on.
+    ALTER TABLE annotations ADD COLUMN remote_iri TEXT;
+    -- The entity tag the IRI was last read or written at, sent back as
+    -- `If-Match`. NULL means unguarded - either never pushed, or a
+    -- container that issues no tags.
+    ALTER TABLE annotations ADD COLUMN remote_etag TEXT;
+    -- The `revision` that last agreed with the container.
+    ALTER TABLE annotations ADD COLUMN synced_revision INTEGER;
+
+    -- Finding what still owes the server a write, including the deletes:
+    -- a soft-deleted row with a `remote_iri` is a DELETE that has not
+    -- happened yet, which is the whole reason deletes were soft from v1.
+    CREATE INDEX idx_annotations_sync ON annotations(book_id, synced_revision, revision);
+    CREATE UNIQUE INDEX idx_annotations_remote ON annotations(remote_iri)
+        WHERE remote_iri IS NOT NULL;
+    ",
 ];
 
 pub(crate) fn open_and_migrate(path: &std::path::Path) -> Result<Connection> {
@@ -265,6 +331,95 @@ mod tests {
             !bytes.windows(7).any(|w| w == b"hunter2"),
             "the old plaintext password is still in the database file"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Everything in a library that predates sync has never synced, and
+    /// has to come out of the migration saying so — a row defaulting to
+    /// "clean" would mean a reader's existing marks silently never
+    /// reached the container they later connected.
+    #[test]
+    fn a_library_written_before_sync_owes_the_server_everything() {
+        let dir = scratch("sync-upgrade");
+        let path = dir.join("library.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let upto_v5 = MIGRATIONS[..5].join("\n");
+            conn.execute_batch(&format!(
+                "BEGIN;\n{upto_v5}\nPRAGMA user_version = 5;\nCOMMIT;"
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO books (id, title, file_path, fingerprint, added_at)
+                 VALUES (1, 'Old Book', '/books/old.epub', 'abc123', 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO positions (book_id, spine_href, spine_index, char_offset,
+                        locator_version, quote_prefix, quote_exact, quote_suffix,
+                        spine_fraction, book_progression, updated_at)
+                 VALUES (1, 'ch1.xhtml', 0, 42, 2, 'a', '', 'b', 0.5, 0.25, 1000)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO annotations (book_id, kind,
+                        start_spine_href, start_spine_index, start_char_offset,
+                        start_locator_version, start_quote_prefix, start_quote_exact,
+                        start_quote_suffix, start_spine_fraction, start_book_progression,
+                        created_at, updated_at)
+                 VALUES (1, 'highlight', 'ch1.xhtml', 0, 10, 2, 'a', 'b', 'c', 0.1, 0.1,
+                         1000, 1000)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_and_migrate(&path).unwrap();
+
+        // The old rows survived, with their positions intact.
+        let offset: i64 = conn
+            .query_row(
+                "SELECT char_offset FROM positions WHERE book_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(offset, 42, "the stored position did not survive");
+
+        // And both start at revision 1 with nothing synced, which is what
+        // "dirty" is: revision > COALESCE(synced, 0).
+        let (revision, synced): (i64, Option<i64>) = conn
+            .query_row(
+                "SELECT a.revision, a.synced_revision FROM annotations a WHERE a.id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(revision, 1);
+        assert_eq!(synced, None);
+        assert!(
+            revision > synced.unwrap_or(0),
+            "an old mark looks already synced"
+        );
+
+        let position_revision: i64 = conn
+            .query_row(
+                "SELECT revision FROM positions WHERE book_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(position_revision, 1);
+
+        // Nothing was invented about where it syncs to.
+        let rows: i64 = conn
+            .query_row("SELECT count(*) FROM book_sync", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "a book with no catalog was given a service");
+
+        drop(conn);
         std::fs::remove_dir_all(&dir).ok();
     }
 
