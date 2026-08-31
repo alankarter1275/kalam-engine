@@ -223,9 +223,27 @@ proptest = "1"
 [profile.dev]
 # stylo is slow in unoptimized builds; keep debug-friendly but usable
 opt-level = 1
+# Line tables, not the full DWARF. Measured on chapbook-viewer: the debug
+# binary was 739 MB, of which 682 MB was debug info, and it is written to
+# disk again on every relink. With this and the dependency override below
+# it is 73 MB with 19 MB of debug info — a tenth of the bytes through the
+# filesystem each build.
+#
+# What survives is what gets used: `.debug_line` still resolves a
+# backtrace frame to `crates/…/foo.rs:214`, so panics, `#[should_panic]`
+# and RUST_BACKTRACE read exactly as before. What goes is variable and
+# type DWARF — stepping in a debugger and printing locals. If you are
+# reaching for gdb on chapbook's own code, build that crate with
+# `--config 'profile.dev.debug=2'`.
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
+# Dependencies get none at all. Nobody steps into stylo, icu or wgpu from
+# here, and their debug info is the overwhelming majority of it — this is
+# the half of the saving that costs nothing anyone would notice. Frames
+# through a dependency still carry symbol names, only not file and line.
+debug = false
 
 [profile.release]
 lto = "thin"
