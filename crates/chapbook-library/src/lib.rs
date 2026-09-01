@@ -10,6 +10,7 @@
 
 mod db;
 mod restore;
+mod shelf;
 
 use std::path::{Path, PathBuf};
 
@@ -22,6 +23,7 @@ use chapbook_core::{
 
 use crate::db::db_err;
 pub use crate::restore::{restore_position, RestoreTier};
+pub use crate::shelf::{BookQuery, Collection, CollectionId, CollectionRef, ReadingState, Sort};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BookId(pub i64);
@@ -47,11 +49,36 @@ pub struct BookRecord {
     /// Cover image on disk, captured at import. `None` if the book had
     /// none — not every CBZ or PDF does.
     pub cover_path: Option<PathBuf>,
+    /// The series the book claims, and where in it. Off the publication's
+    /// own metadata at import, so `None` is both "no series" and "a book
+    /// whose file never said" — which the shelf treats the same way.
+    pub series: Option<String>,
+    pub series_index: Option<f64>,
+    /// When the reader reached the end, if they have. See
+    /// [`Self::state`].
+    pub finished_at: Option<i64>,
     /// When the position was last written: "recently read", and `None` for
     /// a book that has never been opened.
     pub last_read: Option<i64>,
     /// How far through, 0.0..=1.0, from the stored position.
     pub progress: Option<f64>,
+    /// The collections this book is in, by the time a shelf sees it.
+    /// Attached in one query per page of results, not one per book.
+    pub collections: Vec<CollectionRef>,
+}
+
+impl BookRecord {
+    /// Which of the three piles a shelf puts this book in.
+    ///
+    /// Only `Finished` is stored; the other two are the presence or
+    /// absence of a reading position, which is already here.
+    pub fn state(&self) -> ReadingState {
+        match (self.finished_at, self.last_read) {
+            (Some(_), _) => ReadingState::Finished,
+            (None, Some(_)) => ReadingState::Reading,
+            (None, None) => ReadingState::Unread,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -295,14 +322,17 @@ impl Library {
             .unwrap_or_else(|| fallback_title.to_owned());
         let tx = self.conn.transaction().map_err(db_err)?;
         tx.execute(
-            "INSERT INTO books (title, language, identifier, file_path, source_path, fingerprint, added_at)
-             VALUES (?1, ?2, ?3, '', ?4, ?5, strftime('%s','now'))",
+            "INSERT INTO books (title, language, identifier, file_path, source_path,
+                    fingerprint, series, series_index, added_at)
+             VALUES (?1, ?2, ?3, '', ?4, ?5, ?6, ?7, strftime('%s','now'))",
             params![
                 title,
                 metadata.language,
                 metadata.identifier,
                 source_label,
-                fingerprint
+                fingerprint,
+                metadata.series,
+                metadata.series_index,
             ],
         )
         .map_err(db_err)?;
@@ -363,105 +393,51 @@ impl Library {
             .map_err(db_err)?;
         }
 
+        // The search index, in the same transaction as the row it
+        // indexes: a book that exists but cannot be found is worse than a
+        // failed import, and this is the only write site.
+        tx.execute(
+            "INSERT INTO book_search (rowid, title, authors, series)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id,
+                title,
+                metadata.authors.join(" "),
+                metadata.series.clone().unwrap_or_default(),
+            ],
+        )
+        .map_err(db_err)?;
+
         tx.commit().map_err(db_err)?;
         Ok(BookId(id))
     }
 
-    /// All (non-deleted) books, optionally filtered by a substring match
-    /// on title or author, newest first.
+    /// All (non-deleted) books, optionally narrowed by a search over
+    /// title, authors and series, newest first.
+    ///
+    /// The two named shapes over [`Library::query`], which is where
+    /// anything more specific goes.
+    ///
+    /// Note that `filter` is a *search*, not a substring: it matches whole
+    /// words with a prefix, so "brid" finds *The Bridge* and "ridge" no
+    /// longer does. That is the trade for matching "bronte" against
+    /// Brontë, which the substring version could not do — see the v7
+    /// migration.
     pub fn books(&self, filter: Option<&str>) -> Result<Vec<BookRecord>> {
-        self.query_books(filter, Order::Added, None)
+        self.query(&BookQuery {
+            search: filter,
+            ..Default::default()
+        })
     }
 
     /// Books in the order a shelf wants them: what you were reading last,
     /// then what you added last for anything never opened.
-    ///
-    /// Its own method rather than a flag on [`Self::books`] because the two
-    /// answer different questions — a listing wants a stable order, a shelf
-    /// wants the book you are in the middle of to be first.
     pub fn recent(&self, limit: Option<usize>) -> Result<Vec<BookRecord>> {
-        self.query_books(None, Order::Read, limit)
-    }
-
-    fn query_books(
-        &self,
-        filter: Option<&str>,
-        order: Order,
-        limit: Option<usize>,
-    ) -> Result<Vec<BookRecord>> {
-        let pattern = filter.map(|f| format!("%{f}%"));
-        // One statement for the whole record. Position used to be a second
-        // query per book, which a shelf turns from a nicety into an N+1.
-        let sql = format!(
-            "SELECT DISTINCT b.id, b.title, b.language, b.identifier, b.file_path,
-                    b.fingerprint, b.added_at, b.cover_path,
-                    p.updated_at, p.book_progression
-             FROM books b
-             LEFT JOIN positions p ON p.book_id = b.id
-             LEFT JOIN book_authors ba ON ba.book_id = b.id
-             LEFT JOIN authors a ON a.id = ba.author_id
-             WHERE b.deleted = 0
-               AND (?1 IS NULL OR b.title LIKE ?1 OR a.name LIKE ?1)
-             ORDER BY {}
-             LIMIT ?2",
-            order.sql()
-        );
-        let mut stmt = self.conn.prepare(&sql).map_err(db_err)?;
-        let cap = limit.map_or(-1, |n| n as i64);
-        let rows = stmt
-            .query_map(params![pattern, cap], |row| {
-                Ok(BookRecord {
-                    id: BookId(row.get(0)?),
-                    title: row.get(1)?,
-                    authors: Vec::new(),
-                    language: row.get(2)?,
-                    identifier: row.get(3)?,
-                    file_path: PathBuf::from(row.get::<_, String>(4)?),
-                    fingerprint: row.get(5)?,
-                    added_at: row.get(6)?,
-                    cover_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
-                    last_read: row.get(8)?,
-                    progress: row.get(9)?,
-                })
-            })
-            .map_err(db_err)?;
-        let mut books: Vec<BookRecord> = rows.collect::<rusqlite::Result<_>>().map_err(db_err)?;
-        self.attach_authors(&mut books)?;
-        Ok(books)
-    }
-
-    /// Fill in authors for a whole page of records in one query.
-    ///
-    /// The per-book version was fine for `lib ls` and is a hundred round
-    /// trips for a shelf of a hundred books.
-    fn attach_authors(&self, books: &mut [BookRecord]) -> Result<()> {
-        if books.is_empty() {
-            return Ok(());
-        }
-        let ids: Vec<String> = books.iter().map(|b| b.id.0.to_string()).collect();
-        let sql = format!(
-            "SELECT ba.book_id, a.name FROM authors a
-             JOIN book_authors ba ON ba.author_id = a.id
-             WHERE ba.book_id IN ({})
-             ORDER BY ba.book_id, ba.position",
-            ids.join(",")
-        );
-        let mut stmt = self.conn.prepare(&sql).map_err(db_err)?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(db_err)?;
-        let mut by_book: std::collections::HashMap<i64, Vec<String>> =
-            std::collections::HashMap::new();
-        for row in rows {
-            let (book_id, name) = row.map_err(db_err)?;
-            by_book.entry(book_id).or_default().push(name);
-        }
-        for book in books {
-            book.authors = by_book.remove(&book.id.0).unwrap_or_default();
-        }
-        Ok(())
+        self.query(&BookQuery {
+            sort: Sort::Read,
+            limit,
+            ..Default::default()
+        })
     }
 
     fn authors_of(&self, id: BookId) -> Result<Vec<String>> {
@@ -551,37 +527,22 @@ impl Library {
 
     /// One book record by id.
     pub fn book(&self, id: BookId) -> Result<Option<BookRecord>> {
+        let sql = format!(
+            "SELECT {}
+             FROM books b
+             LEFT JOIN positions p ON p.book_id = b.id
+             WHERE b.id = ?1 AND b.deleted = 0",
+            crate::shelf::RECORD_COLUMNS
+        );
         let record = self
             .conn
-            .query_row(
-                "SELECT b.id, b.title, b.language, b.identifier, b.file_path,
-                        b.fingerprint, b.added_at, b.cover_path,
-                        p.updated_at, p.book_progression
-                 FROM books b
-                 LEFT JOIN positions p ON p.book_id = b.id
-                 WHERE b.id = ?1 AND b.deleted = 0",
-                params![id.0],
-                |row| {
-                    Ok(BookRecord {
-                        id: BookId(row.get(0)?),
-                        title: row.get(1)?,
-                        authors: Vec::new(),
-                        language: row.get(2)?,
-                        identifier: row.get(3)?,
-                        file_path: PathBuf::from(row.get::<_, String>(4)?),
-                        fingerprint: row.get(5)?,
-                        added_at: row.get(6)?,
-                        cover_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
-                        last_read: row.get(8)?,
-                        progress: row.get(9)?,
-                    })
-                },
-            )
+            .query_row(&sql, params![id.0], crate::shelf::record_from_row)
             .optional()
             .map_err(db_err)?;
         match record {
             Some(mut record) => {
                 record.authors = self.authors_of(record.id)?;
+                record.collections = self.collections_of(record.id)?;
                 Ok(Some(record))
             }
             None => Ok(None),
@@ -1263,36 +1224,6 @@ fn home() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|dir| !dir.as_os_str().is_empty())
-}
-
-/// How [`Library::books`] and [`Library::recent`] sort.
-#[derive(Debug, Clone, Copy)]
-enum Order {
-    /// Newest addition first: a stable listing.
-    Added,
-    /// The most recent thing that happened to this book, read or added.
-    /// `COALESCE` is what makes an unopened book sort by when it arrived
-    /// instead of falling to the bottom forever.
-    ///
-    /// The second term is not decoration. Every timestamp in this schema
-    /// comes from `strftime('%s','now')`, which is whole seconds, so
-    /// adding a book and opening it — or opening two books quickly — ties.
-    /// On a tie the *read* is the more meaningful event, and without
-    /// saying so the tiebreak falls to `id` and puts the book you were
-    /// reading behind one you have never opened. Found the first time
-    /// anything asked the library for books in reading order.
-    Read,
-}
-
-impl Order {
-    fn sql(self) -> &'static str {
-        match self {
-            Order::Added => "b.added_at DESC, b.id DESC",
-            Order::Read => {
-                "COALESCE(p.updated_at, b.added_at) DESC, (p.updated_at IS NOT NULL) DESC, b.id DESC"
-            }
-        }
-    }
 }
 
 /// A file extension for a cover's media type. Covers are jpeg or png in

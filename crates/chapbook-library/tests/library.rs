@@ -42,6 +42,17 @@ impl FakeBook {
         }
     }
 
+    fn with_series(mut self, series: &str, index: Option<f64>) -> FakeBook {
+        self.metadata.series = Some(series.to_string());
+        self.metadata.series_index = index;
+        self
+    }
+
+    fn by(mut self, authors: &[&str]) -> FakeBook {
+        self.metadata.authors = authors.iter().map(|a| a.to_string()).collect();
+        self
+    }
+
     fn with_cover(mut self, media_type: &str, data: &[u8]) -> FakeBook {
         self.cover = Some(chapbook_core::Resource {
             media_type: media_type.to_string(),
@@ -83,6 +94,7 @@ fn metadata(title: &str) -> BookMetadata {
         identifier: Some("urn:uuid:test".into()),
         description: None,
         format_version: "3.0".into(),
+        ..Default::default()
     }
 }
 
@@ -739,5 +751,301 @@ fn purging_refuses_a_mark_the_reader_still_has() {
         1,
         "a live annotation was purged"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---- Browsing: search, collections, series, reading state ----
+
+/// A shelf with enough in it that narrowing means something.
+fn stocked_shelf() -> (Library, std::path::PathBuf) {
+    let (mut lib, dir) = temp_library();
+    for (file, title, authors, series, index) in [
+        ("a.epub", "Jane Eyre", &["Charlotte Brontë"][..], None, None),
+        ("b.epub", "Villette", &["Charlotte Brontë"][..], None, None),
+        (
+            "c.epub",
+            "The Fellowship of the Ring",
+            &["J. R. R. Tolkien"][..],
+            Some("The Lord of the Rings"),
+            Some(1.0),
+        ),
+        (
+            "d.epub",
+            "The Two Towers",
+            &["J. R. R. Tolkien"][..],
+            Some("The Lord of the Rings"),
+            Some(2.0),
+        ),
+        (
+            "e.epub",
+            "The Hobbit",
+            &["J. R. R. Tolkien"][..],
+            Some("The Lord of the Rings"),
+            None,
+        ),
+    ] {
+        let mut book = FakeBook::new(title).by(authors);
+        if let Some(series) = series {
+            book = book.with_series(series, index);
+        }
+        lib.import(&sample_book(&dir, file, file.as_bytes()), &book)
+            .unwrap();
+    }
+    (lib, dir)
+}
+
+fn titles(books: &[chapbook_library::BookRecord]) -> Vec<&str> {
+    books.iter().map(|b| b.title.as_str()).collect()
+}
+
+/// The reason search is FTS5 and not a better `LIKE`: SQLite folds case
+/// for ASCII only, so the substring version answered nothing to a reader
+/// who could not type the diaeresis in their own author's name.
+#[test]
+fn a_search_matches_an_author_the_reader_cannot_spell() {
+    let (lib, dir) = stocked_shelf();
+
+    let found = lib.books(Some("bronte")).unwrap();
+    assert_eq!(found.len(), 2, "{:?}", titles(&found));
+
+    // And the other direction, for a reader who can.
+    assert_eq!(lib.books(Some("Brontë")).unwrap().len(), 2);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_search_is_every_word_at_once_and_reaches_the_series() {
+    let (lib, dir) = stocked_shelf();
+
+    // Conjunctive: both words have to land, on any of the three fields.
+    assert_eq!(
+        titles(&lib.books(Some("tolk two")).unwrap()),
+        ["The Two Towers"]
+    );
+    // Series is searchable even though no title says "Rings" but two do
+    // — the third, The Hobbit, is reachable only through its series.
+    let rings = lib.books(Some("lord rings hobbit")).unwrap();
+    assert_eq!(titles(&rings), ["The Hobbit"]);
+    // Nothing matches everything.
+    assert!(lib.books(Some("tolkien bronte")).unwrap().is_empty());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A reader typing a real title must not be composing an FTS5 expression:
+/// the hyphen in `Eighty-Four` is `NOT` in that language.
+#[test]
+fn punctuation_a_reader_types_is_text_and_not_syntax() {
+    let (lib, dir) = stocked_shelf();
+
+    // Would be "fellowship NOT ring" if the text went through raw, and
+    // would match nothing.
+    assert_eq!(
+        titles(&lib.books(Some("Fellowship-Ring")).unwrap()),
+        ["The Fellowship of the Ring"]
+    );
+    // Quotes and stars are query syntax; here they are typing.
+    assert!(lib.books(Some("\"")).unwrap().is_empty());
+    assert!(lib.books(Some("*")).unwrap().is_empty());
+    // A search that says nothing narrows to nothing, rather than
+    // silently returning the whole shelf as if it had been ignored.
+    assert!(lib.books(Some("!!!")).unwrap().is_empty());
+    // But an empty box is not a search at all.
+    assert_eq!(lib.books(Some("  ")).unwrap().len(), 5);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_collection_holds_books_and_survives_being_renamed() {
+    let (mut lib, dir) = stocked_shelf();
+    let all = lib.books(None).unwrap();
+    let hobbit = all.iter().find(|b| b.title == "The Hobbit").unwrap().id;
+    let eyre = all.iter().find(|b| b.title == "Jane Eyre").unwrap().id;
+
+    let shelf = lib.create_collection("To Reread").unwrap();
+    // Idempotent on the name: a shell adding to a collection should not
+    // have to ask whether it exists first.
+    assert_eq!(lib.create_collection("To Reread").unwrap(), shelf);
+
+    lib.add_to_collection(hobbit, shelf).unwrap();
+    lib.add_to_collection(eyre, shelf).unwrap();
+    lib.add_to_collection(eyre, shelf).unwrap();
+
+    let listed = lib.collections().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "To Reread");
+    assert_eq!(listed[0].books, 2, "adding twice added one");
+
+    let members = lib
+        .query(&chapbook_library::BookQuery {
+            collection: Some(shelf),
+            sort: chapbook_library::Sort::Title,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(titles(&members), ["Jane Eyre", "The Hobbit"]);
+    // And a record knows what it is in, without a query per book.
+    assert_eq!(members[0].collections.len(), 1);
+    assert_eq!(members[0].collections[0].name, "To Reread");
+
+    lib.rename_collection(shelf, "Favourites").unwrap();
+    assert_eq!(lib.collections().unwrap()[0].name, "Favourites");
+
+    lib.remove_from_collection(eyre, shelf).unwrap();
+    assert_eq!(lib.collections().unwrap()[0].books, 1);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Deleting a collection takes the grouping, not the books — and frees
+/// the name, because a reader who cannot see the old row should not be
+/// told it owns the word.
+#[test]
+fn deleting_a_collection_keeps_the_books_and_frees_the_name() {
+    let (mut lib, dir) = stocked_shelf();
+    let hobbit = lib.books(Some("hobbit")).unwrap()[0].id;
+
+    let first = lib.create_collection("Sci-Fi").unwrap();
+    lib.add_to_collection(hobbit, first).unwrap();
+    lib.delete_collection(first).unwrap();
+
+    assert!(lib.collections().unwrap().is_empty());
+    assert_eq!(lib.books(None).unwrap().len(), 5, "the books stayed");
+    assert!(
+        lib.book(hobbit).unwrap().unwrap().collections.is_empty(),
+        "a deleted collection is not a collection the book is in"
+    );
+
+    let second = lib.create_collection("Sci-Fi").unwrap();
+    assert_ne!(second, first, "a new row, not the dead one");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn series_group_and_sort_with_the_unplaced_volume_last() {
+    let (lib, dir) = stocked_shelf();
+
+    assert_eq!(
+        lib.series().unwrap(),
+        vec![("The Lord of the Rings".to_string(), 3)]
+    );
+
+    let ordered = lib
+        .query(&chapbook_library::BookQuery {
+            series: Some("the lord of the rings"),
+            sort: chapbook_library::Sort::Series,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        titles(&ordered),
+        [
+            "The Fellowship of the Ring",
+            "The Two Towers",
+            // No group-position, so it sorts after everything numbered
+            // rather than ahead of volume one.
+            "The Hobbit"
+        ]
+    );
+
+    // Books in no series come last in a whole-shelf series sort: they are
+    // not a series called nothing.
+    let whole = lib
+        .query(&chapbook_library::BookQuery {
+            sort: chapbook_library::Sort::Series,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(titles(&whole)[3..], ["Jane Eyre", "Villette"]);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Finished is stored, not derived, and the three states are exclusive.
+#[test]
+fn reading_state_separates_never_opened_from_finished_and_reopened() {
+    let (mut lib, dir) = stocked_shelf();
+    let all = lib.books(None).unwrap();
+    let reading = all.iter().find(|b| b.title == "Villette").unwrap().id;
+    let done = all.iter().find(|b| b.title == "Jane Eyre").unwrap().id;
+
+    lib.set_position(reading, &locator_at(10)).unwrap();
+    lib.set_position(done, &locator_at(10)).unwrap();
+    lib.set_finished(done, true).unwrap();
+
+    fn by_state(
+        lib: &Library,
+        state: chapbook_library::ReadingState,
+    ) -> Vec<chapbook_library::BookRecord> {
+        lib.query(&chapbook_library::BookQuery {
+            state: Some(state),
+            sort: chapbook_library::Sort::Title,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    assert_eq!(
+        titles(&by_state(&lib, chapbook_library::ReadingState::Finished)),
+        ["Jane Eyre"]
+    );
+    assert_eq!(
+        titles(&by_state(&lib, chapbook_library::ReadingState::Reading)),
+        ["Villette"]
+    );
+    assert_eq!(
+        by_state(&lib, chapbook_library::ReadingState::Unread).len(),
+        3
+    );
+
+    // Reopening a finished book does not un-finish it — the case a shelf
+    // deriving the state from progress gets wrong.
+    lib.set_position(done, &locator_at(0)).unwrap();
+    assert_eq!(
+        lib.book(done).unwrap().unwrap().state(),
+        chapbook_library::ReadingState::Finished
+    );
+    assert_eq!(
+        titles(&by_state(&lib, chapbook_library::ReadingState::Reading)),
+        ["Villette"]
+    );
+
+    // And finishing twice keeps the first answer to "when".
+    let first = lib.book(done).unwrap().unwrap().finished_at.unwrap();
+    lib.set_finished(done, true).unwrap();
+    assert_eq!(lib.book(done).unwrap().unwrap().finished_at, Some(first));
+
+    lib.set_finished(done, false).unwrap();
+    assert_eq!(
+        lib.book(done).unwrap().unwrap().state(),
+        chapbook_library::ReadingState::Reading
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_long_shelf_pages() {
+    let (lib, dir) = stocked_shelf();
+    let page = |offset| {
+        lib.query(&chapbook_library::BookQuery {
+            sort: chapbook_library::Sort::Title,
+            limit: Some(2),
+            offset,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    assert_eq!(
+        titles(&page(0)),
+        ["Jane Eyre", "The Fellowship of the Ring"]
+    );
+    assert_eq!(titles(&page(2)), ["The Hobbit", "The Two Towers"]);
+    assert_eq!(titles(&page(4)), ["Villette"]);
+    assert!(page(6).is_empty());
+
     std::fs::remove_dir_all(&dir).ok();
 }
