@@ -774,11 +774,28 @@ impl Session {
                     self.book.publication().spine().len() as u64,
                 ),
             };
+            // Computed before the library is borrowed, and only ever
+            // set: reaching the end is a thing that happened, so leaving
+            // the last page does not un-happen it. Clearing is the
+            // reader's own call, through
+            // [`Library::set_finished`](chapbook_library::Library::set_finished).
+            //
+            // Here rather than beside `SessionEvent::BookFinished`,
+            // because that event is only observed by a shell that drains
+            // — and whether a book was finished is not a fact a shell
+            // should have to opt into recording. `save_position` is the
+            // call every shell already makes.
+            let finished = self.at_end_of_book();
             let Some(library) = self.library_mut() else {
                 return;
             };
             if let Err(e) = library.set_position(id, &locator) {
                 log::error!("failed to save position: {e}");
+            }
+            if finished {
+                if let Err(e) = library.set_finished(id, true) {
+                    log::error!("failed to mark the book finished: {e}");
+                }
             }
         }
     }

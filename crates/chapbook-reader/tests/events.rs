@@ -287,3 +287,49 @@ fn the_queue_keeps_one_event_per_subject() {
         session.spine_len()
     );
 }
+
+/// The event says the book was finished; the library is what remembers
+/// it. A shell that never drains events still gets a shelf that knows.
+#[test]
+fn finishing_the_book_is_recorded_on_the_shelf() {
+    // `dir_for` clears the directory, so it is called once and the path
+    // kept: asking again after opening would delete the library.
+    let dir = dir_for("finish-recorded");
+    let mut session = Session::open_with(
+        fixture("epub/minimal.epub").as_str(),
+        SessionConfig::new(fixture_fonts()).with_library_dir(&dir),
+    )
+    .unwrap();
+    session.set_metrics(PageMetrics {
+        size: Size::new(400.0, 600.0),
+        margins: EdgeSizes::uniform(0.0),
+        dpi_scale: 1.0,
+        rotation: Rotation::None,
+    });
+    session.render();
+    let id = session.book_id().expect("a local book reaches the library");
+
+    // Saved part-way through, and not finished: the mark has to come
+    // from where the reader is, not from having saved at all.
+    session.save_position();
+    let library = chapbook_library::Library::open(&dir).unwrap();
+    assert_eq!(
+        library.book(id).unwrap().unwrap().state(),
+        chapbook_library::ReadingState::Reading
+    );
+    drop(library);
+
+    for _ in 0..500 {
+        if !session.next_page() {
+            break;
+        }
+    }
+    session.render();
+    session.save_position();
+
+    let library = chapbook_library::Library::open(&dir).unwrap();
+    assert_eq!(
+        library.book(id).unwrap().unwrap().state(),
+        chapbook_library::ReadingState::Finished
+    );
+}
