@@ -72,11 +72,21 @@
 //! additively, after the shape was proven against AT-SPI, exactly as this
 //! paragraph predicted.
 //!
-//! Search, the table of contents, links and annotations are absent for the
-//! same reason and not for a different one: the Contract tier means what
-//! ships holds still, so this first header carries what a reader shell was
+//! The table of contents, links and annotations are absent for the same
+//! reason and not for a different one: the Contract tier means what ships
+//! holds still, so this first header carries what a reader shell was
 //! *shown* to need by the Android spike's five rungs. All of it is additive
-//! later; none of it is blocked by anything here.
+//! later; none of it is blocked by anything here — the shelf
+//! ([`cb_library_open`] and its neighbours) is the proof, having arrived
+//! exactly that way once an app needed to open onto something other than a
+//! book.
+//!
+//! Two things the shelf deliberately did *not* bring with it. There is no
+//! `cb_library_import`: a session imports the book it opens, so a host
+//! adds to the shelf by reading, and [`cb_session_book_id`] is how it
+//! learns which row that became. And there is no series listing — a row
+//! carries its own series and `CB_SORT_SERIES` groups them, which is what
+//! a browse-by-series screen is built from.
 //!
 //! # The header
 //!
@@ -101,6 +111,7 @@ mod config;
 mod error;
 mod http;
 mod input;
+mod library;
 mod logging;
 mod session;
 
@@ -121,6 +132,7 @@ pub use input::{
     cb_reading_direction, cb_session_apply, cb_session_reading_direction, cb_session_set_tap_zones,
     cb_session_tap_action,
 };
+pub use library::*;
 pub use logging::{cb_log, cb_log_enabled, cb_log_fn, cb_log_level, cb_set_log_callback};
 pub use session::*;
 

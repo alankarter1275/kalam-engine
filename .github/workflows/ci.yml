@@ -95,7 +95,13 @@ jobs:
     # The empty entry is now the EPUB-only profile: no library, and so no
     # rusqlite and no bundled SQLite. It is the smallest thing chapbook
     # builds and the one a browser forces.
-    name: check (chapbook-reader feature matrix)
+    # The C ABI forwards the same feature names verbatim and is checked
+    # in the same configurations, because it has the other half of the
+    # problem: every `cb_library_*` entry point has a body for a build
+    # with no library, and those bodies are compiled nowhere else. A
+    # decline path that stopped compiling would reach a host as a build
+    # failure in their project, not ours.
+    name: check (chapbook-reader and the C ABI, feature matrix)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -117,6 +123,7 @@ jobs:
           toolchain: ${{ env.RUST_PIN }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
+      - run: cargo check -p chapbook-ffi --no-default-features --features "${{ matrix.features }}"
 
   progression-feature:
     # OPDS Progression 1.0 is off by default because the spec is an

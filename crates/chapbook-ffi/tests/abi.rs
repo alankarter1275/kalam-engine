@@ -40,15 +40,21 @@ fn fonts() -> *mut cb_font_source {
     fonts
 }
 
-/// A config with a library dir of this test's own, so nothing here reads or
-/// writes the machine's real library.
-fn config(name: &str) -> *mut cb_config {
-    let config = unsafe { cb_config_new(fonts()) };
-    assert!(!config.is_null(), "config: {}", last_error());
+/// A library directory of this test's own, so nothing here reads or
+/// writes the machine's real library. Cleared on the way in, since the
+/// name is derived and a previous run's rows would otherwise show up.
+fn library_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("chapbook-ffi-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("library dir is creatable");
-    let dir = cstr(&dir.to_string_lossy());
+    dir
+}
+
+/// A config pointed at one of those.
+fn config(name: &str) -> *mut cb_config {
+    let config = unsafe { cb_config_new(fonts()) };
+    assert!(!config.is_null(), "config: {}", last_error());
+    let dir = cstr(&library_dir(name).to_string_lossy());
     assert_eq!(
         unsafe { cb_config_set_library_dir(config, dir.as_ptr()) },
         cb_status::CB_OK
@@ -76,6 +82,26 @@ fn read_string(
     );
     assert!(needed >= 1, "needed always counts the NUL");
 
+    let mut buf = vec![0u8; needed];
+    let rc = call(buf.as_mut_ptr() as *mut c_char, buf.len(), &mut needed);
+    if rc != cb_status::CB_OK {
+        return Err(rc);
+    }
+    assert_eq!(buf.pop(), Some(0), "the callee NUL-terminates");
+    Ok(String::from_utf8(buf).expect("UTF-8 out"))
+}
+
+/// The same idiom for an accessor that may decline before there is
+/// anything to size — a book with no series, a book with no cover. The
+/// probe's status comes back rather than being asserted away.
+fn try_read_string(
+    mut call: impl FnMut(*mut c_char, usize, *mut usize) -> cb_status,
+) -> Result<String, cb_status> {
+    let mut needed: usize = 0;
+    let probe = call(std::ptr::null_mut(), 0, &mut needed);
+    if probe != cb_status::CB_ERR_BUFFER_TOO_SMALL {
+        return Err(probe);
+    }
     let mut buf = vec![0u8; needed];
     let rc = call(buf.as_mut_ptr() as *mut c_char, buf.len(), &mut needed);
     if rc != cb_status::CB_OK {
@@ -1314,4 +1340,430 @@ fn a_chosen_font_survives_a_settings_round_trip() {
     );
 
     unsafe { cb_session_close(session) };
+}
+
+// ---- The shelf ----
+
+/// Open each book once, which is how a book reaches the library, then
+/// hand back the directory they all landed in.
+fn stocked_shelf(name: &str) -> PathBuf {
+    let dir = library_dir(name);
+    for rel in [
+        "epub/minimal.epub",
+        "epub/series.epub",
+        "epub/series-legacy.epub",
+    ] {
+        let config = unsafe { cb_config_new(fonts()) };
+        assert!(!config.is_null(), "config: {}", last_error());
+        let dir = cstr(&dir.to_string_lossy());
+        assert_eq!(
+            unsafe { cb_config_set_library_dir(config, dir.as_ptr()) },
+            cb_status::CB_OK
+        );
+        let path = fixture(rel);
+        let session = unsafe { cb_session_open_path(path.as_ptr(), config) };
+        assert!(!session.is_null(), "open {rel}: {}", last_error());
+        unsafe { cb_session_close(session) };
+    }
+    dir
+}
+
+fn library(name: &str) -> (*mut cb_library, PathBuf) {
+    let dir = stocked_shelf(name);
+    let mut handle: *mut cb_library = std::ptr::null_mut();
+    let path = cstr(&dir.to_string_lossy());
+    assert_eq!(
+        unsafe { cb_library_open(path.as_ptr(), &mut handle) },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert!(!handle.is_null());
+    (handle, dir)
+}
+
+fn shelf(library: *mut cb_library, query: &cb_book_query) -> *mut cb_shelf {
+    let mut shelf: *mut cb_shelf = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { cb_library_query(library, query, &mut shelf) },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert!(!shelf.is_null());
+    shelf
+}
+
+fn shelf_len(shelf: *const cb_shelf) -> usize {
+    let mut len = 0usize;
+    assert_eq!(
+        unsafe { cb_shelf_len(shelf, &mut len) },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    len
+}
+
+fn title_at(shelf: *const cb_shelf, index: usize) -> String {
+    read_string(|buf, cap, needed| unsafe { cb_shelf_title(shelf, index, buf, cap, needed) })
+        .expect("every book has a title")
+}
+
+fn titles(shelf: *const cb_shelf) -> Vec<String> {
+    (0..shelf_len(shelf)).map(|i| title_at(shelf, i)).collect()
+}
+
+/// A zero-initialized query is the whole shelf. A C caller filling in
+/// seven fields to ask for everything is a C caller who will get one of
+/// them wrong.
+#[test]
+fn a_zeroed_query_is_the_whole_shelf() {
+    let (lib, dir) = library("shelf-all");
+    // Exactly what `cb_book_query query = {0};` produces in C.
+    let query = cb_book_query {
+        search: std::ptr::null(),
+        series: std::ptr::null(),
+        collection: 0,
+        state: cb_reading_state::CB_STATE_ANY,
+        sort: cb_sort::CB_SORT_ADDED,
+        limit: 0,
+        offset: 0,
+    };
+    let shelf = shelf(lib, &query);
+    assert_eq!(shelf_len(shelf), 3, "{:?}", titles(shelf));
+
+    unsafe { cb_shelf_free(shelf) };
+    unsafe { cb_library_close(lib) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_row_carries_its_data_and_its_strings_separately() {
+    let (lib, dir) = library("shelf-row");
+    let series = cstr("The Fixture Cycle");
+    let query = cb_book_query {
+        series: series.as_ptr(),
+        sort: cb_sort::CB_SORT_SERIES,
+        ..zeroed_query()
+    };
+    let shelf = shelf(lib, &query);
+    assert_eq!(shelf_len(shelf), 2, "{:?}", titles(shelf));
+
+    // Sorted by position within the series, so #1 comes first.
+    let mut book = unsafe { std::mem::zeroed::<cb_book>() };
+    assert_eq!(
+        unsafe { cb_shelf_book(shelf, 0, &mut book) },
+        cb_status::CB_OK
+    );
+    assert!(book.id > 0);
+    assert!(book.has_series_index && book.series_index == 1.0);
+    assert_eq!(book.state, cb_reading_state::CB_STATE_UNREAD);
+    assert_eq!(book.finished_at, 0, "0 is never, not 1970");
+    assert!(!book.has_progress, "an unopened book has no progress");
+    assert_eq!(book.author_count, 1);
+    assert_eq!(book.collection_count, 0);
+
+    assert_eq!(title_at(shelf, 0), "The Legacy Fixture");
+    let author =
+        read_string(|b, c, n| unsafe { cb_shelf_author(shelf, 0, 0, b, c, n) }).expect("an author");
+    assert_eq!(author, "Ada Fixture");
+    let series_out =
+        try_read_string(|b, c, n| unsafe { cb_shelf_series(shelf, 0, b, c, n) }).expect("a series");
+    assert_eq!(series_out, "The Fixture Cycle");
+    let fingerprint = read_string(|b, c, n| unsafe { cb_shelf_fingerprint(shelf, 0, b, c, n) })
+        .expect("a fingerprint");
+    assert_eq!(fingerprint.len(), 40, "SHA-1 as hex");
+
+    // Past the end is a code, not a read of whatever was there.
+    assert_eq!(
+        unsafe { cb_shelf_book(shelf, 99, &mut book) },
+        cb_status::CB_ERR_INVALID_ARGUMENT
+    );
+    assert_eq!(
+        try_read_string(|b, c, n| unsafe { cb_shelf_author(shelf, 0, 9, b, c, n) }),
+        Err(cb_status::CB_ERR_INVALID_ARGUMENT)
+    );
+
+    unsafe { cb_shelf_free(shelf) };
+    unsafe { cb_library_close(lib) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A book in no series is not a failure to report a series — the
+/// accessor declines and the flag on the row said so first.
+#[test]
+fn an_absent_field_declines_rather_than_returning_an_empty_string() {
+    let (lib, dir) = library("shelf-absent");
+    let search = cstr("minimal");
+    let shelf = shelf(
+        lib,
+        &cb_book_query {
+            search: search.as_ptr(),
+            ..zeroed_query()
+        },
+    );
+    assert_eq!(shelf_len(shelf), 1);
+
+    let mut book = unsafe { std::mem::zeroed::<cb_book>() };
+    assert_eq!(
+        unsafe { cb_shelf_book(shelf, 0, &mut book) },
+        cb_status::CB_OK
+    );
+    assert!(!book.has_series_index);
+    assert!(!book.has_cover);
+    assert_eq!(
+        try_read_string(|b, c, n| unsafe { cb_shelf_series(shelf, 0, b, c, n) }),
+        Err(cb_status::CB_ERR_UNAVAILABLE)
+    );
+    assert_eq!(
+        try_read_string(|b, c, n| unsafe { cb_shelf_cover_path(shelf, 0, b, c, n) }),
+        Err(cb_status::CB_ERR_UNAVAILABLE)
+    );
+    // But the language is there, so the same shape succeeds.
+    assert_eq!(
+        try_read_string(|b, c, n| unsafe { cb_shelf_language(shelf, 0, b, c, n) }).as_deref(),
+        Ok("en")
+    );
+
+    unsafe { cb_shelf_free(shelf) };
+    unsafe { cb_library_close(lib) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The reason the shelf is its own handle and not state on the library:
+/// a search box issues a second query while the first page is still on
+/// screen, and the rows being drawn must not move.
+#[test]
+fn a_second_query_does_not_disturb_the_first() {
+    let (lib, dir) = library("shelf-two");
+    let first = shelf(lib, &zeroed_query());
+    let before = titles(first);
+    assert_eq!(before.len(), 3);
+
+    let search = cstr("legacy");
+    let second = shelf(
+        lib,
+        &cb_book_query {
+            search: search.as_ptr(),
+            ..zeroed_query()
+        },
+    );
+    assert_eq!(shelf_len(second), 1);
+    assert_eq!(titles(first), before, "the first result set moved");
+
+    // And it outlives the library handle, because it owns its rows.
+    unsafe { cb_library_close(lib) };
+    assert_eq!(titles(first), before);
+    unsafe { cb_shelf_free(second) };
+    unsafe { cb_shelf_free(first) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn collections_group_books_and_show_up_on_the_rows() {
+    let (lib, dir) = library("shelf-collections");
+    let all = shelf(lib, &zeroed_query());
+    let mut first = unsafe { std::mem::zeroed::<cb_book>() };
+    assert_eq!(
+        unsafe { cb_shelf_book(all, 0, &mut first) },
+        cb_status::CB_OK
+    );
+    unsafe { cb_shelf_free(all) };
+
+    let name = cstr("To Reread");
+    let mut collection = 0i64;
+    assert_eq!(
+        unsafe { cb_library_create_collection(lib, name.as_ptr(), &mut collection) },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert!(collection > 0);
+    // Idempotent on the name.
+    let mut again = 0i64;
+    assert_eq!(
+        unsafe { cb_library_create_collection(lib, name.as_ptr(), &mut again) },
+        cb_status::CB_OK
+    );
+    assert_eq!(again, collection);
+
+    assert_eq!(
+        unsafe { cb_library_add_to_collection(lib, first.id, collection) },
+        cb_status::CB_OK
+    );
+
+    // The array idiom: probe for the count, then fill.
+    let mut needed = 0usize;
+    assert_eq!(
+        unsafe { cb_library_collections(lib, std::ptr::null_mut(), 0, &mut needed) },
+        cb_status::CB_ERR_BUFFER_TOO_SMALL
+    );
+    assert_eq!(needed, 1);
+    let mut buf = vec![unsafe { std::mem::zeroed::<cb_collection>() }; needed];
+    assert_eq!(
+        unsafe { cb_library_collections(lib, buf.as_mut_ptr(), buf.len(), &mut needed) },
+        cb_status::CB_OK
+    );
+    assert_eq!(buf[0].id, collection);
+    assert_eq!(buf[0].books, 1);
+    assert_eq!(
+        read_string(|b, c, n| unsafe { cb_library_collection_name(lib, collection, b, c, n) })
+            .as_deref(),
+        Ok("To Reread")
+    );
+
+    // Filtering by it finds the one book, and the row names the
+    // collection it is in without a second query per book.
+    let narrowed = shelf(
+        lib,
+        &cb_book_query {
+            collection,
+            ..zeroed_query()
+        },
+    );
+    assert_eq!(shelf_len(narrowed), 1);
+    let mut row = unsafe { std::mem::zeroed::<cb_book>() };
+    assert_eq!(
+        unsafe { cb_shelf_book(narrowed, 0, &mut row) },
+        cb_status::CB_OK
+    );
+    assert_eq!(row.collection_count, 1);
+    let mut id = 0i64;
+    assert_eq!(
+        unsafe { cb_shelf_collection_id(narrowed, 0, 0, &mut id) },
+        cb_status::CB_OK
+    );
+    assert_eq!(id, collection);
+    assert_eq!(
+        read_string(|b, c, n| unsafe { cb_shelf_collection_name(narrowed, 0, 0, b, c, n) })
+            .as_deref(),
+        Ok("To Reread")
+    );
+    unsafe { cb_shelf_free(narrowed) };
+
+    // Deleting takes the grouping and leaves the books.
+    assert_eq!(
+        unsafe { cb_library_delete_collection(lib, collection) },
+        cb_status::CB_OK
+    );
+    // A zero-capacity probe over an empty list is `CB_OK`, not
+    // "too small": nothing is what fits in nothing.
+    assert_eq!(
+        unsafe { cb_library_collections(lib, std::ptr::null_mut(), 0, &mut needed) },
+        cb_status::CB_OK
+    );
+    assert_eq!(needed, 0);
+    let survivors = shelf(lib, &zeroed_query());
+    assert_eq!(shelf_len(survivors), 3);
+    unsafe { cb_shelf_free(survivors) };
+
+    unsafe { cb_library_close(lib) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The join a host needs: the session imported the book, so only it
+/// knows which row that became.
+#[test]
+fn a_session_names_the_row_it_imported() {
+    let dir = library_dir("shelf-join");
+    let config = unsafe { cb_config_new(fonts()) };
+    let dir_c = cstr(&dir.to_string_lossy());
+    assert_eq!(
+        unsafe { cb_config_set_library_dir(config, dir_c.as_ptr()) },
+        cb_status::CB_OK
+    );
+    let path = fixture("epub/minimal.epub");
+    let session = unsafe { cb_session_open_path(path.as_ptr(), config) };
+    assert!(!session.is_null(), "{}", last_error());
+
+    let mut id = 0i64;
+    assert_eq!(
+        unsafe { cb_session_book_id(session, &mut id) },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert!(id > 0);
+
+    // Marking it finished from the shelf side is visible to a query,
+    // which is the round trip a "mark as read" button makes.
+    let mut lib: *mut cb_library = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { cb_library_open(dir_c.as_ptr(), &mut lib) },
+        cb_status::CB_OK
+    );
+    assert_eq!(
+        unsafe { cb_library_set_finished(lib, id, true) },
+        cb_status::CB_OK
+    );
+    let finished = shelf(
+        lib,
+        &cb_book_query {
+            state: cb_reading_state::CB_STATE_FINISHED,
+            ..zeroed_query()
+        },
+    );
+    assert_eq!(shelf_len(finished), 1);
+    let mut row = unsafe { std::mem::zeroed::<cb_book>() };
+    assert_eq!(
+        unsafe { cb_shelf_book(finished, 0, &mut row) },
+        cb_status::CB_OK
+    );
+    assert_eq!(row.id, id);
+    assert!(row.finished_at > 0);
+    unsafe { cb_shelf_free(finished) };
+
+    // And taking a book off the shelf is soft, so the row keeps its id.
+    assert_eq!(unsafe { cb_library_delete_book(lib, id) }, cb_status::CB_OK);
+    let remaining = shelf(lib, &zeroed_query());
+    assert_eq!(shelf_len(remaining), 0);
+    unsafe { cb_shelf_free(remaining) };
+
+    unsafe { cb_library_close(lib) };
+    unsafe { cb_session_close(session) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn shelf_calls_tolerate_null_the_way_the_rest_of_the_abi_does() {
+    // Freeing null is legal, so an error path needs no cascade of tests.
+    unsafe { cb_library_close(std::ptr::null_mut()) };
+    unsafe { cb_shelf_free(std::ptr::null_mut()) };
+
+    let mut len = 0usize;
+    assert_eq!(
+        unsafe { cb_shelf_len(std::ptr::null(), &mut len) },
+        cb_status::CB_ERR_NULL_ARGUMENT
+    );
+    let mut id = 0i64;
+    assert_eq!(
+        unsafe { cb_session_book_id(std::ptr::null(), &mut id) },
+        cb_status::CB_ERR_NULL_ARGUMENT
+    );
+    assert_eq!(
+        unsafe { cb_library_delete_book(std::ptr::null_mut(), 1) },
+        cb_status::CB_ERR_NULL_ARGUMENT
+    );
+    // A query with nowhere to put its answer is refused, not written
+    // through.
+    let mut shelf: *mut cb_shelf = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { cb_library_query(std::ptr::null(), &zeroed_query(), &mut shelf) },
+        cb_status::CB_ERR_NULL_ARGUMENT
+    );
+    assert!(shelf.is_null());
+}
+
+/// What `cb_book_query query = {0};` is in C.
+fn zeroed_query() -> cb_book_query {
+    cb_book_query {
+        search: std::ptr::null(),
+        series: std::ptr::null(),
+        collection: 0,
+        state: cb_reading_state::CB_STATE_ANY,
+        sort: cb_sort::CB_SORT_ADDED,
+        limit: 0,
+        offset: 0,
+    }
 }

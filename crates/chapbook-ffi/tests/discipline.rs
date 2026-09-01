@@ -117,7 +117,13 @@ fn nothing_hands_out_memory_the_host_would_have_to_free() {
         !header.contains("char *cb_") && !header.contains("char* cb_"),
         "an entry point returns an owned string; use the buf/cap/needed idiom instead"
     );
-    for destructor in ["cb_session_close", "cb_config_free", "cb_font_source_free"] {
+    for destructor in [
+        "cb_session_close",
+        "cb_config_free",
+        "cb_font_source_free",
+        "cb_library_close",
+        "cb_shelf_free",
+    ] {
         assert!(
             header.contains(destructor),
             "{destructor} is missing: every handle this ABI hands out needs one"
