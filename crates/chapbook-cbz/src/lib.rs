@@ -224,6 +224,14 @@ impl ComicBook {
             if let Some(title) = info.display_title() {
                 metadata.title = Some(title);
             }
+            // The same two fields the display title is built from, kept
+            // apart as well: a shelf groups by series and sorts by number,
+            // and it cannot get either back out of "Series #3: Title".
+            // `Number` is a string in the schema and taggers put
+            // `Annual 1` and `HS` in it, so an unparseable one is simply
+            // no position, the way a series with no number is.
+            metadata.series = info.series;
+            metadata.series_index = info.number.as_deref().and_then(|n| n.trim().parse().ok());
             metadata.authors = info.credits;
             metadata.description = info.summary;
             metadata.language = info.language;

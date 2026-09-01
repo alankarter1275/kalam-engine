@@ -114,12 +114,15 @@ impl Book {
         ReadingDirection,
     ) {
         let md = epub.metadata();
+        let (series, series_index) = series_of(md);
         let metadata = BookMetadata {
             title: md.title().map(|t| t.value().to_string()),
             authors: md.creators().map(|c| c.value().to_string()).collect(),
             language: md.language().map(|l| l.value().to_string()),
             identifier: md.identifier().map(|i| i.value().to_string()),
             description: md.description().map(|d| d.value().to_string()),
+            series,
+            series_index,
             format_version: md.version_str().to_string(),
         };
 
@@ -297,5 +300,57 @@ fn convert_toc(entry: &EpubTocEntry<'_>, spine: &[SpineItem]) -> TocEntry {
         fragment,
         spine_index,
         children: entry.iter().map(|c| convert_toc(&c, spine)).collect(),
+    }
+}
+
+/// The series a package says it belongs to, and where in it.
+///
+/// Two spellings, because a reader's shelf holds both. EPUB 3 has
+/// `belongs-to-collection`, refined by `collection-type` to say whether the
+/// collection is a series or a boxed `set`, and by `group-position` to say
+/// where. EPUB 2 has no vocabulary for it at all, so Calibre's
+/// `calibre:series` pair became the de-facto one, and it is what most of an
+/// existing library is tagged with.
+///
+/// Precedence is EPUB 3 first: a file carrying both was written by a tool
+/// that knew the standard spelling and kept the legacy one for older
+/// readers, so the standard one is the considered answer.
+///
+/// A collection typed as anything other than `series` — `set`, the other
+/// value the spec defines — is skipped rather than taken: a shelf that
+/// groups a boxed set as a series puts the omnibus and its own volumes in
+/// the same row. An *untyped* collection is taken, because the type
+/// refinement is optional and plenty of real books omit it.
+fn series_of(md: rbook::epub::metadata::EpubMetadata<'_>) -> (Option<String>, Option<f64>) {
+    for entry in md.by_property("belongs-to-collection") {
+        let refinements = entry.refinements();
+        let kind = refinements.by_property("collection-type").next();
+        if kind.is_some_and(|k| k.value() != "series") {
+            continue;
+        }
+        let name = entry.value().trim();
+        if name.is_empty() {
+            continue;
+        }
+        let index = refinements
+            .by_property("group-position")
+            .next()
+            .and_then(|p| p.value().trim().parse().ok());
+        return (Some(name.to_string()), index);
+    }
+
+    let name = md
+        .by_property("calibre:series")
+        .next()
+        .map(|e| e.value().trim())
+        .filter(|name| !name.is_empty());
+    let index = md
+        .by_property("calibre:series_index")
+        .next()
+        .and_then(|e| e.value().trim().parse().ok());
+    // An index without a series has nothing to index into.
+    match name {
+        Some(name) => (Some(name.to_string()), index),
+        None => (None, None),
     }
 }

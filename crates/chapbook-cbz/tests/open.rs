@@ -39,6 +39,10 @@ fn comicinfo_supplies_the_metadata() {
         md.description.as_deref(),
         Some("Three plates in primary colors.")
     );
+    // And they survive separately, because a shelf that groups by series
+    // cannot get one back out of the composed title.
+    assert_eq!(md.series.as_deref(), Some("Cogs & Levers"));
+    assert_eq!(md.series_index, Some(3.0));
 }
 
 #[test]

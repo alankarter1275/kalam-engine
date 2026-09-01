@@ -122,6 +122,7 @@ impl StreamedComic {
                 identifier: entry.identifier.clone().or_else(|| Some(entry.id.clone())),
                 description: entry.summary.clone(),
                 format_version: "opds-pse".into(),
+                ..BookMetadata::default()
             },
             last_read: stream.pse_last_read,
             client,

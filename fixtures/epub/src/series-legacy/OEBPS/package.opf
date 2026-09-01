@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="pub-id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="pub-id">urn:uuid:3c5b7a02-1f10-4e3c-9e40-chapbook0008</dc:identifier>
+    <dc:title>The Legacy Fixture</dc:title>
+    <dc:creator>Ada Fixture</dc:creator>
+    <dc:language>en</dc:language>
+    <!-- EPUB 2 has no vocabulary for a series, so this pair is what a
+         library tagged before EPUB 3 actually carries. -->
+    <meta name="calibre:series" content="The Fixture Cycle"/>
+    <meta name="calibre:series_index" content="1"/>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="css" href="style.css" media-type="text/css"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>
