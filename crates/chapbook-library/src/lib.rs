@@ -303,16 +303,29 @@ impl Library {
     ) -> Result<BookId> {
         let metadata = publication.metadata();
 
-        if let Some(existing) = self
+        // Deliberately not filtered by `deleted`. [`Self::delete_book`]
+        // is soft so that a book removed and added back finds its own
+        // annotations again — and it did not, because this lookup could
+        // not see the row holding them and made a second one with the
+        // same fingerprint. Re-adding a removed book un-removes it.
+        if let Some((existing, deleted)) = self
             .conn
             .query_row(
-                "SELECT id FROM books WHERE fingerprint = ?1 AND deleted = 0",
+                "SELECT id, deleted FROM books WHERE fingerprint = ?1",
                 params![fingerprint],
-                |row| row.get::<_, i64>(0),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? != 0)),
             )
             .optional()
             .map_err(db_err)?
         {
+            if deleted {
+                self.conn
+                    .execute(
+                        "UPDATE books SET deleted = 0 WHERE id = ?1",
+                        params![existing],
+                    )
+                    .map_err(db_err)?;
+            }
             return Ok(BookId(existing));
         }
 

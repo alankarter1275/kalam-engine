@@ -1027,6 +1027,35 @@ fn reading_state_separates_never_opened_from_finished_and_reopened() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The claim `delete_book` has made since it was written, now actually
+/// tested: soft-deleting keeps the annotations *and* re-adding the file
+/// gets them back. It did not — the fingerprint lookup could not see the
+/// removed row and made a second one beside it.
+#[test]
+fn re_adding_a_removed_book_returns_the_same_record() {
+    let (mut lib, dir) = temp_library();
+    let path = sample_book(&dir, "returning.epub", b"bytes");
+    let id = lib.import(&path, &FakeBook::new("Returning")).unwrap();
+    lib.add_annotation(
+        id,
+        AnnotationKind::Bookmark,
+        &locator_at(10),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+
+    lib.delete_book(id).unwrap();
+    let again = lib.import(&path, &FakeBook::new("Returning")).unwrap();
+
+    assert_eq!(again, id, "a second row would orphan the annotations");
+    assert_eq!(lib.books(None).unwrap().len(), 1, "and not two rows");
+    assert_eq!(lib.annotations(id).unwrap().len(), 1);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn a_long_shelf_pages() {
     let (lib, dir) = stocked_shelf();
