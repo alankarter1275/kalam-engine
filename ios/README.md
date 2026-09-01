@@ -76,6 +76,19 @@ they were bought with:
   the view's own bounds, no rotation) — a rotating shell maps the rects
   the same way it maps its pixels.
 
+`Library` is the shelf: `books(_:)` over a `Query` — search, collection,
+series, reading state, sort, paging — plus collection management and
+"mark as read". It sits beside a session rather than replacing it: a
+book reaches the library by being *opened*, so an app's "add to library"
+is a read and `Session.bookID()` says which row that became. Two notes
+that shape how an app holds it. It is not `Sendable` for the same reason
+`Session` is not, but unlike a session it may be held *while* one is
+open — the database is WAL, and two connections is the ordinary way to
+draw a shelf while a book is being read. And a `Query`'s rows are copied
+out rather than left behind a cursor, because a search field issues a
+query per keystroke and the list being drawn must not move underneath
+the draw.
+
 A book opened by descriptor **keeps its place**: the engine adopts it
 into the library by a fingerprint of its bytes, so position, annotations
 and per-book settings persist with no path ever crossing. The app's half
