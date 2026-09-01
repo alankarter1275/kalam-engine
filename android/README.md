@@ -91,6 +91,16 @@ Both produce a complete, installable app that dies on the device, and
   library by content fingerprint. What the engine cannot do is reopen the
   file — take a persistable URI permission and re-resolve it on launch,
   before constructing the session.
+- **`Library` is the shelf**, and it is what turns those fingerprints
+  into a browsable list: `books(BookQuery)` over search, collection,
+  series, reading state, sort and paging, plus collections and "mark as
+  read". A book gets there by being *opened*, so an app's "add to
+  library" is a `Session.open`/`openFd` and `Session.bookId()` names the
+  row it created. `Book.fingerprint` is the key to store a URI grant
+  under: it identifies the file across a reinstall, while the id
+  identifies the reader's history of it. A `Library` may be held while a
+  session is open — the database is WAL — but like a session it belongs
+  to one thread at a time.
 
 Release `.so` size, for the record: 16.4 MB arm64 with CBZ and PDF built
 in. The answers when it matters are feature flags and per-ABI bundle
