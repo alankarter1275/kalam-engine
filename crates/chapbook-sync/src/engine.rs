@@ -32,10 +32,10 @@
 //! than by adding a code path.
 
 use chapbook_annotations::{
-    from_annotation, to_annotation, AnnotationContainer, ContainerError, Mark,
+    from_annotation, to_annotation, Annotation, AnnotationContainer, ContainerError, Mark,
 };
 use chapbook_core::{LayeredLocator, Quote};
-use chapbook_library::{BookId, Library, PositionPush, SyncTargets};
+use chapbook_library::{AnnotationSync, BookId, Library, PositionPush, SyncTargets};
 use chapbook_opds::progression::{
     from_progression, to_progression, Device, ProgressionUpdate, RefusalReason,
 };
@@ -102,8 +102,12 @@ pub struct AnnotationReport {
     pub deleted: usize,
     /// Pulled from the container as marks this device had not seen.
     pub adopted: usize,
-    /// Edits the container refused because its copy had moved. Nothing was
-    /// overwritten; the local edit still owes a write.
+    /// Conflicts settled by re-reading the container and writing again —
+    /// see [`SyncEngine::merge_edit`] for what "settled" costs each side.
+    pub merged: usize,
+    /// Edits still outstanding after a merge was attempted: a third write
+    /// landed between the re-read and the retry. Nothing was overwritten;
+    /// the local edit still owes a write, and the next pass tries again.
     pub conflicts: usize,
     /// The container could not be reached. Whatever had already been
     /// pushed when it failed stands; the rest still owes a write.
@@ -363,7 +367,14 @@ impl SyncEngine {
                             self.library.purge_annotation(pending.id)?;
                             report.deleted += 1;
                         }
-                        Err(ContainerError::Conflict { .. }) => report.conflicts += 1,
+                        Err(ContainerError::Conflict { .. }) => {
+                            if self.merge_delete(&iri, &pending)? {
+                                report.deleted += 1;
+                                report.merged += 1;
+                            } else {
+                                report.conflicts += 1;
+                            }
+                        }
                         Err(e) => return Err(SyncError::Container(e.to_string())),
                     }
                 }
@@ -397,8 +408,24 @@ impl SyncEngine {
                                 report.created += 1;
                             }
                         }
-                        // Its copy moved. Leave ours dirty and say so.
-                        Err(ContainerError::Conflict { .. }) => report.conflicts += 1,
+                        // Its copy moved. Settle it rather than counting it
+                        // — the refusal is the container telling us to look
+                        // again, and it hands back its copy for exactly that.
+                        Err(ContainerError::Conflict { .. }) => {
+                            let iri = remote_iri
+                                .as_deref()
+                                .expect("only a write to a known IRI can be refused");
+                            match self.merge_edit(book, iri, &pending, &mark, &document)? {
+                                // Nothing went over the wire, so nothing is
+                                // counted as written — only as settled.
+                                EditMerge::Agreed | EditMerge::Vanished => report.merged += 1,
+                                EditMerge::Rewrote => {
+                                    report.updated += 1;
+                                    report.merged += 1;
+                                }
+                                EditMerge::StillRefused => report.conflicts += 1,
+                            }
+                        }
                         // Deleted out from under us: the local row is
                         // pointing at an IRI that will never exist again,
                         // so let it go rather than retry forever.
@@ -480,6 +507,111 @@ impl SyncEngine {
             .unwrap_or_else(|| container_url.to_string()))
     }
 
+    /// Answer a refused edit without discarding either side.
+    ///
+    /// A 412 says the container's copy moved since this device last read
+    /// it. The refusal carries that copy but no entity tag to write
+    /// against, so settling one always costs a re-read — and what the read
+    /// finds decides the rest.
+    ///
+    /// Same content: two devices made the same edit, there is nothing to
+    /// choose, and the row is simply marked as agreeing with the container.
+    ///
+    /// Different content: both are words a reader typed, and neither comes
+    /// back once dropped, so both survive. The container's copy is filed
+    /// here as a mark of its own — it pushes as a create on the next pass,
+    /// which is what puts it back within reach of the device that wrote it
+    /// — and this device's edit keeps the IRI. The reader ends up with two
+    /// marks over the same words, which is visible and reversible. A silent
+    /// overwrite is neither.
+    ///
+    /// Returns whether it settled. One retry is a merge; a refusal on the
+    /// retry means a third write landed in between, and looping on that is
+    /// a fight rather than a reconcile.
+    fn merge_edit(
+        &mut self,
+        book: BookId,
+        iri: &str,
+        pending: &AnnotationSync,
+        ours: &Mark,
+        document: &Annotation,
+    ) -> Result<EditMerge, SyncError> {
+        let stored = match self.container.get(iri) {
+            Ok(stored) => stored,
+            // Gone between the refusal and the re-read. The row points at
+            // an IRI that will never be minted again, so let it go — the
+            // same answer the write path already gives a tombstone.
+            Err(ContainerError::Gone) => {
+                self.library.delete_annotation(pending.id)?;
+                self.library.purge_annotation(pending.id)?;
+                return Ok(EditMerge::Vanished);
+            }
+            Err(e) => return Err(SyncError::Container(e.to_string())),
+        };
+
+        let theirs = from_annotation(&stored.annotation);
+        if same_content(&theirs, ours) {
+            self.library.mark_annotation_synced(
+                pending.id,
+                pending.revision,
+                &stored.iri,
+                stored.etag.as_deref(),
+            )?;
+            return Ok(EditMerge::Agreed);
+        }
+
+        self.library.add_annotation(
+            book,
+            theirs.kind,
+            &theirs.start,
+            theirs.end.as_ref(),
+            theirs.text.as_deref(),
+            theirs.color.as_deref(),
+        )?;
+
+        match self.container.update(iri, document, stored.etag.as_deref()) {
+            Ok(written) => {
+                self.library.mark_annotation_synced(
+                    pending.id,
+                    pending.revision,
+                    &written.iri,
+                    written.etag.as_deref(),
+                )?;
+                Ok(EditMerge::Rewrote)
+            }
+            Err(ContainerError::Conflict { .. }) => Ok(EditMerge::StillRefused),
+            Err(e) => Err(SyncError::Container(e.to_string())),
+        }
+    }
+
+    /// Answer a refused delete by re-reading for a fresh tag and deleting
+    /// again.
+    ///
+    /// Deliberately not symmetric with [`Self::merge_edit`], which keeps
+    /// both sides. Removing a mark is a reader's terminal instruction about
+    /// it, and a tag that moved is not a reason to keep something they
+    /// said to get rid of — the device that edited it and the device that
+    /// deleted it belong to the same reader. Preserving the losing edit
+    /// here would mean answering "delete this" by putting it back.
+    fn merge_delete(&mut self, iri: &str, pending: &AnnotationSync) -> Result<bool, SyncError> {
+        let stored = match self.container.get(iri) {
+            Ok(stored) => stored,
+            Err(ContainerError::Gone) => {
+                self.library.purge_annotation(pending.id)?;
+                return Ok(true);
+            }
+            Err(e) => return Err(SyncError::Container(e.to_string())),
+        };
+        match self.container.delete(iri, stored.etag.as_deref()) {
+            Ok(()) | Err(ContainerError::Gone) => {
+                self.library.purge_annotation(pending.id)?;
+                Ok(true)
+            }
+            Err(ContainerError::Conflict { .. }) => Ok(false),
+            Err(e) => Err(SyncError::Container(e.to_string())),
+        }
+    }
+
     fn mark_of(&self, book: BookId, annotation_id: i64) -> Result<Option<Mark>, SyncError> {
         Ok(self
             .library
@@ -496,6 +628,34 @@ impl SyncEngine {
                 modified: Some(iso8601(a.updated_at)),
             }))
     }
+}
+
+/// What settling a refused edit came to. Separate from the report because
+/// only some of these put anything on the wire, and a count of writes that
+/// includes the ones that did not happen is not a count of anything.
+enum EditMerge {
+    /// The container already held what we were going to write.
+    Agreed,
+    /// The two edits differed; the container's was kept here as its own
+    /// mark and ours was written over it there.
+    Rewrote,
+    /// The IRI was gone by the time we looked again.
+    Vanished,
+    /// A third write landed between the re-read and the retry.
+    StillRefused,
+}
+
+/// Whether two marks say the same thing.
+///
+/// Content only: `created` and `modified` are stamped by whoever wrote the
+/// document and differ between two devices that made the identical edit,
+/// which is precisely the case this exists to recognise.
+fn same_content(a: &Mark, b: &Mark) -> bool {
+    a.kind == b.kind
+        && a.start == b.start
+        && a.end == b.end
+        && a.text == b.text
+        && a.color == b.color
 }
 
 /// A container is somebody else's, and a `next` chain has no promised end.
