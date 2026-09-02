@@ -1,0 +1,34 @@
+.chapter {
+  font-family: serif;
+}
+
+h1 {
+  text-align: center;
+  page-break-after: avoid;
+}
+
+p {
+  margin: 0;
+  text-indent: 1.2em;
+}
+
+p.first {
+  text-indent: 0;
+}
+
+.note {
+  color: #8b0000;
+}
+
+blockquote {
+  margin: 1em 2em;
+  font-style: italic;
+}
+
+.keep-with-next {
+  break-after: avoid;
+}
+
+.page-break-before {
+  page-break-before: always;
+}

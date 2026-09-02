@@ -8,6 +8,7 @@ app that exercises the flow real readers live or die on.
 | `Chapbook/` | The Swift package: `Session`, sources, input, rendering, custody helpers |
 | `demo/` | A hand-rolled `.app`: picker once, bookmark stored, cold resolve forever after |
 | `build-xcframework.sh` | Rust staticlibs → `Chapbook.xcframework` (device, simulator, macOS slices) |
+| `typecheck-slices.sh` | The iOS slices compiled — the half `swift test` cannot run |
 
 The package wraps `chapbook.h` — the Contract-tier C ABI from
 `crates/chapbook-ffi` — which travels inside the XCFramework with a
@@ -21,6 +22,7 @@ keeps it honest.
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim aarch64-apple-darwin
 ./build-xcframework.sh          # required first; the package binds its output
 cd Chapbook && swift test       # runs natively on the macOS slice
+./typecheck-slices.sh           # the iOS slices, which swift test cannot run
 ./demo/build.sh                 # simulator .app, no Xcode project
 ```
 
@@ -28,6 +30,11 @@ The XCFramework is a build product, not checked in. It is an XCFramework
 by *necessity*: the device and simulator libraries are both arm64,
 differing only in a Mach-O load command, and `lipo` refuses to fat them.
 The macOS slice exists so `swift test` needs no simulator.
+
+Those four are the `apple` job in CI, in that order, and that is the whole
+gate: nothing else in the workspace compiles a line of Swift. Run them
+before pushing anything under `ios/` — a Linux runner will not catch a
+package that does not build, and for a while nothing did.
 
 Two Mac traps, both cheap once written down: spell simulator compiles
 `xcrun -sdk iphonesimulator swiftc` (bare `swiftc -sdk` leaves the
@@ -75,6 +82,19 @@ they were bought with:
   page space and the view's logical coordinates coincide (metrics from
   the view's own bounds, no rotation) — a rotating shell maps the rects
   the same way it maps its pixels.
+
+`Library` is the shelf: `books(_:)` over a `Query` — search, collection,
+series, reading state, sort, paging — plus collection management and
+"mark as read". It sits beside a session rather than replacing it: a
+book reaches the library by being *opened*, so an app's "add to library"
+is a read and `Session.bookID()` says which row that became. Two notes
+that shape how an app holds it. It is not `Sendable` for the same reason
+`Session` is not, but unlike a session it may be held *while* one is
+open — the database is WAL, and two connections is the ordinary way to
+draw a shelf while a book is being read. And a `Query`'s rows are copied
+out rather than left behind a cursor, because a search field issues a
+query per keystroke and the list being drawn must not move underneath
+the draw.
 
 A book opened by descriptor **keeps its place**: the engine adopts it
 into the library by a fingerprint of its bytes, so position, annotations

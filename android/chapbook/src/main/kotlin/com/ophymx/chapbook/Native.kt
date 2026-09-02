@@ -94,4 +94,64 @@ internal object Native {
 
     /** Four floats per rect covering a locator range on this page. */
     external fun rangeRects(handle: Long, start: Int, end: Int): FloatArray
+
+    // The shelf. Two handles, matching the C ABI's: a library connection
+    // and one query's rows held still. The query crosses flattened,
+    // because a struct crossing JNI is a Java class the Rust side would
+    // have to name by signature — a link error nothing checks.
+
+    /** 0 on failure; an empty [dir] asks for the platform default, which Android has none of. */
+    external fun libraryOpen(dir: String): Long
+
+    external fun libraryClose(handle: Long)
+
+    /**
+     * 0 on failure. Empty strings and zeros mean "do not narrow", so the
+     * all-defaults call is the whole shelf.
+     */
+    external fun libraryQuery(
+        handle: Long,
+        search: String,
+        series: String,
+        collection: Long,
+        state: Int,
+        sort: Int,
+        limit: Int,
+        offset: Int,
+    ): Long
+
+    external fun shelfFree(handle: Long)
+
+    /** `-1` for a bad handle, so "empty" and "broken" differ. */
+    external fun shelfLen(handle: Long): Int
+
+    /** `[id, addedAt, lastRead, finishedAt, state, authorCount, collectionCount]`. */
+    external fun shelfBook(handle: Long, index: Int): LongArray
+
+    /** `[progress, seriesIndex]`, each `-1` when absent. */
+    external fun shelfBookFractions(handle: Long, index: Int): FloatArray
+
+    external fun shelfTitle(handle: Long, index: Int): String
+    external fun shelfAuthor(handle: Long, index: Int, author: Int): String
+    external fun shelfSeries(handle: Long, index: Int): String
+    external fun shelfFingerprint(handle: Long, index: Int): String
+    external fun shelfFilePath(handle: Long, index: Int): String
+    external fun shelfCoverPath(handle: Long, index: Int): String
+    external fun shelfCollectionId(handle: Long, index: Int, which: Int): Long
+    external fun shelfCollectionName(handle: Long, index: Int, which: Int): String
+
+    /** `[id, bookCount, id, bookCount, ...]`, oldest first. */
+    external fun libraryCollections(handle: Long): LongArray
+
+    external fun libraryCollectionName(handle: Long, collection: Long): String
+    external fun libraryCreateCollection(handle: Long, name: String): Long
+    external fun libraryRenameCollection(handle: Long, collection: Long, name: String): Boolean
+    external fun libraryDeleteCollection(handle: Long, collection: Long): Boolean
+    external fun libraryAddToCollection(handle: Long, book: Long, collection: Long): Boolean
+    external fun libraryRemoveFromCollection(handle: Long, book: Long, collection: Long): Boolean
+    external fun libraryDeleteBook(handle: Long, book: Long): Boolean
+    external fun librarySetFinished(handle: Long, book: Long, finished: Boolean): Boolean
+
+    /** 0 for a book that never reached the library. */
+    external fun sessionBookId(handle: Long): Long
 }

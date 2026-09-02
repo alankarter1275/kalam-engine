@@ -280,6 +280,17 @@ class Session private constructor(private var handle: Long) : AutoCloseable {
         }
     }
 
+    /**
+     * The library row this session's book was imported into, or null for
+     * a book that never reached one — an OPDS stream, or a session opened
+     * without a library directory.
+     *
+     * The join between the reading view and the shelf: opening a book is
+     * what adds it, so this is how an app learns which [Book] it just
+     * created and can put it in a collection, mark it, or find it again.
+     */
+    fun bookId(): Long? = Native.sessionBookId(handle).takeIf { it != 0L }
+
     override fun close() {
         if (handle != 0L) {
             Native.close(handle)

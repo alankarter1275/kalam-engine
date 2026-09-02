@@ -443,7 +443,7 @@ pub fn opds_get(url: &str, out: &Path) -> Result<String> {
 /// EPUB, so importing a comic died inside the zip reader.
 pub fn lib_import(book_path: &Path) -> Result<String> {
     let book = open_publication(book_path)?;
-    let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir()?)?;
+    let mut lib = open_library()?;
     let id = lib.import(book_path, book.as_ref())?;
     let record = lib.book(id)?.expect("just imported");
     Ok(format!(
@@ -455,27 +455,43 @@ pub fn lib_import(book_path: &Path) -> Result<String> {
     ))
 }
 
-pub fn lib_rm(id: i64) -> Result<String> {
-    let mut lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir()?)?;
-    let Some(record) = lib.book(chapbook_library::BookId(id))? else {
-        return Err(chapbook_core::ChapbookError::Library(format!(
-            "no book #{id} in the library"
-        )));
-    };
-    lib.delete_book(chapbook_library::BookId(id))?;
-    Ok(format!(
-        "removed #{id} \"{}\" (annotations kept: a re-import finds them again)\n",
-        record.title
-    ))
-}
-
-pub fn lib_ls() -> Result<String> {
-    let lib = chapbook_library::Library::open(&chapbook_library::Library::default_dir()?)?;
-    // `recent` rather than `books`: a person running `lib ls` is looking
-    // for what they were reading, the same thing a shelf shows.
-    let books = lib.recent(None)?;
+/// The shelf, narrowed however the caller asked.
+///
+/// The default sort is `read` rather than `added`: someone running
+/// `lib ls` is looking for what they were reading, which is the same
+/// thing a shelf shows first.
+pub fn lib_ls(
+    search: Option<&str>,
+    collection: Option<&str>,
+    series: Option<&str>,
+    state: Option<chapbook_library::ReadingState>,
+    sort: chapbook_library::Sort,
+    limit: Option<usize>,
+) -> Result<String> {
+    let lib = open_library()?;
+    let collection = collection
+        .map(|name| named_collection(&lib, name))
+        .transpose()?;
+    let books = lib.query(&chapbook_library::BookQuery {
+        search,
+        collection,
+        series,
+        state,
+        sort,
+        limit,
+        offset: 0,
+    })?;
     if books.is_empty() {
-        return Ok("library is empty — chapbook lib import <book>\n".into());
+        // Distinguish "nothing here" from "nothing matched": the second
+        // is a filter to relax, and telling a reader to import a book
+        // when they have fifty is unhelpful.
+        let narrowed =
+            search.is_some() || collection.is_some() || series.is_some() || state.is_some();
+        return Ok(if narrowed {
+            "nothing on the shelf matches\n".into()
+        } else {
+            "library is empty — chapbook lib import <book>\n".into()
+        });
     }
     let mut out = String::new();
     for book in books {
@@ -483,10 +499,17 @@ pub fn lib_ls() -> Result<String> {
         if !book.authors.is_empty() {
             out.push_str(&format!(" — {}", book.authors.join(", ")));
         }
-        // Progress rides on the record now. It used to be a query per
-        // book, which was fine here and quadratic for anything larger.
-        if let Some(progress) = book.progress {
-            out.push_str(&format!("  [{:.0}%]", progress * 100.0));
+        if let Some(series) = &book.series {
+            out.push_str(&format!("  [{series}"));
+            if let Some(index) = book.series_index {
+                out.push_str(&format!(" #{}", trim_index(index)));
+            }
+            out.push(']');
+        }
+        out.push_str(&format!("  {}", describe_state(&book)));
+        if !book.collections.is_empty() {
+            let names: Vec<&str> = book.collections.iter().map(|c| c.name.as_str()).collect();
+            out.push_str(&format!("  {{{}}}", names.join(", ")));
         }
         if book.cover_path.is_some() {
             out.push_str("  (cover)");
@@ -494,6 +517,223 @@ pub fn lib_ls() -> Result<String> {
         out.push('\n');
     }
     Ok(out)
+}
+
+/// Everything the library holds about one book, including the parts
+/// `ls` has no room for.
+pub fn lib_show(id: i64) -> Result<String> {
+    let lib = open_library()?;
+    let id = chapbook_library::BookId(id);
+    let book = require_book(&lib, id)?;
+
+    let mut out = String::new();
+    out.push_str(&format!("#{}  {}\n", book.id.0, book.title));
+    if !book.authors.is_empty() {
+        out.push_str(&format!("  authors      {}\n", book.authors.join(", ")));
+    }
+    if let Some(series) = &book.series {
+        let position = book
+            .series_index
+            .map(|i| format!(" #{}", trim_index(i)))
+            .unwrap_or_default();
+        out.push_str(&format!("  series       {series}{position}\n"));
+    }
+    if let Some(language) = &book.language {
+        out.push_str(&format!("  language     {language}\n"));
+    }
+    if let Some(identifier) = &book.identifier {
+        out.push_str(&format!("  identifier   {identifier}\n"));
+    }
+    out.push_str(&format!("  state        {}\n", describe_state(&book)));
+    out.push_str(&format!("  fingerprint  {}\n", book.fingerprint));
+    // Empty for an adopted book: the platform owns the file and the
+    // shell owns the means of reaching it again.
+    out.push_str(&format!(
+        "  file         {}\n",
+        if book.file_path.as_os_str().is_empty() {
+            "(adopted — the shell holds the handle)".to_string()
+        } else {
+            book.file_path.display().to_string()
+        }
+    ));
+    if let Some(cover) = &book.cover_path {
+        out.push_str(&format!("  cover        {}\n", cover.display()));
+    }
+    if !book.collections.is_empty() {
+        let names: Vec<&str> = book.collections.iter().map(|c| c.name.as_str()).collect();
+        out.push_str(&format!("  collections  {}\n", names.join(", ")));
+    }
+    out.push_str(&format!("  annotations  {}\n", lib.annotations(id)?.len()));
+
+    // Never the URLs themselves: a service URL may embed a per-user key,
+    // and this prints to a terminal that scrolls into a bug report.
+    let targets = lib.sync_targets(id)?;
+    let services = [
+        ("position", targets.progression_url.is_some()),
+        ("annotations", targets.annotation_container.is_some()),
+    ]
+    .iter()
+    .filter(|(_, present)| *present)
+    .map(|(name, _)| *name)
+    .collect::<Vec<_>>();
+    out.push_str(&format!(
+        "  syncs        {}\n",
+        if services.is_empty() {
+            "nothing (sideloaded)".to_string()
+        } else {
+            services.join(", ")
+        }
+    ));
+    Ok(out)
+}
+
+pub fn lib_rm(id: i64) -> Result<String> {
+    let mut lib = open_library()?;
+    let id = chapbook_library::BookId(id);
+    let record = require_book(&lib, id)?;
+    lib.delete_book(id)?;
+    Ok(format!(
+        "removed #{} \"{}\" (annotations kept: a re-import finds them again)\n",
+        id.0, record.title
+    ))
+}
+
+pub fn lib_finish(id: i64, finished: bool) -> Result<String> {
+    let mut lib = open_library()?;
+    let id = chapbook_library::BookId(id);
+    let record = require_book(&lib, id)?;
+    lib.set_finished(id, finished)?;
+    Ok(format!(
+        "#{} \"{}\" is {}\n",
+        id.0,
+        record.title,
+        if finished { "finished" } else { "unfinished" }
+    ))
+}
+
+pub fn lib_series() -> Result<String> {
+    let lib = open_library()?;
+    let series = lib.series()?;
+    if series.is_empty() {
+        return Ok("no book on the shelf names a series\n".into());
+    }
+    let mut out = String::new();
+    for (name, count) in series {
+        out.push_str(&format!("{count:>4}  {name}\n"));
+    }
+    Ok(out)
+}
+
+pub fn lib_collections() -> Result<String> {
+    let lib = open_library()?;
+    let collections = lib.collections()?;
+    if collections.is_empty() {
+        return Ok("no collections — chapbook lib collection new <name>\n".into());
+    }
+    let mut out = String::new();
+    for collection in collections {
+        out.push_str(&format!("{:>4}  {}\n", collection.books, collection.name));
+    }
+    Ok(out)
+}
+
+pub fn lib_collection_new(name: &str) -> Result<String> {
+    let mut lib = open_library()?;
+    let id = lib.create_collection(name)?;
+    Ok(format!("collection #{} \"{name}\"\n", id.0))
+}
+
+pub fn lib_collection_rename(name: &str, new_name: &str) -> Result<String> {
+    let mut lib = open_library()?;
+    let id = named_collection(&lib, name)?;
+    lib.rename_collection(id, new_name)?;
+    Ok(format!("\"{name}\" is now \"{new_name}\"\n"))
+}
+
+pub fn lib_collection_rm(name: &str) -> Result<String> {
+    let mut lib = open_library()?;
+    let id = named_collection(&lib, name)?;
+    lib.delete_collection(id)?;
+    Ok(format!("removed \"{name}\" (the books stayed)\n"))
+}
+
+/// Creating the collection if it does not exist: `create_collection` is
+/// idempotent on the name, and asking someone to declare a shelf before
+/// putting a book on it is a step with no question behind it.
+pub fn lib_collection_add(name: &str, id: i64) -> Result<String> {
+    let mut lib = open_library()?;
+    let book = chapbook_library::BookId(id);
+    let record = require_book(&lib, book)?;
+    let collection = lib.create_collection(name)?;
+    lib.add_to_collection(book, collection)?;
+    Ok(format!("#{id} \"{}\" is in \"{name}\"\n", record.title))
+}
+
+pub fn lib_collection_remove(name: &str, id: i64) -> Result<String> {
+    let mut lib = open_library()?;
+    let book = chapbook_library::BookId(id);
+    let record = require_book(&lib, book)?;
+    let collection = named_collection(&lib, name)?;
+    lib.remove_from_collection(book, collection)?;
+    Ok(format!("#{id} \"{}\" is out of \"{name}\"\n", record.title))
+}
+
+fn open_library() -> Result<chapbook_library::Library> {
+    chapbook_library::Library::open(&chapbook_library::Library::default_dir()?)
+}
+
+fn require_book(
+    lib: &chapbook_library::Library,
+    id: chapbook_library::BookId,
+) -> Result<chapbook_library::BookRecord> {
+    lib.book(id)?.ok_or_else(|| {
+        chapbook_core::ChapbookError::Library(format!("no book #{} in the library", id.0))
+    })
+}
+
+/// Collections are addressed by name here rather than by id: a person
+/// typing at a terminal knows the name they gave it, and the id is not
+/// printed anywhere they would have looked.
+fn named_collection(
+    lib: &chapbook_library::Library,
+    name: &str,
+) -> Result<chapbook_library::CollectionId> {
+    lib.collections()?
+        .into_iter()
+        .find(|c| c.name.eq_ignore_ascii_case(name))
+        .map(|c| c.id)
+        .ok_or_else(|| {
+            chapbook_core::ChapbookError::Library(format!(
+                "no collection \"{name}\" — chapbook lib collection ls"
+            ))
+        })
+}
+
+/// "reading 42%", "finished", "unread" — the state with the progress
+/// that qualifies it, where there is one.
+fn describe_state(book: &chapbook_library::BookRecord) -> String {
+    let percent = book
+        .progress
+        .map(|p| format!(" {:.0}%", p * 100.0))
+        .unwrap_or_default();
+    match book.state() {
+        chapbook_library::ReadingState::Unread => "unread".to_string(),
+        chapbook_library::ReadingState::Reading => format!("reading{percent}"),
+        // The progress of a finished book is where the reader is now,
+        // which may be the beginning again — so it is not shown beside
+        // a word it would contradict.
+        chapbook_library::ReadingState::Finished => "finished".to_string(),
+    }
+}
+
+/// `2` rather than `2.0`, but `2.5` intact: series positions are whole
+/// numbers except when they are not.
+fn trim_index(index: f64) -> String {
+    if index.fract() == 0.0 {
+        format!("{index:.0}")
+    } else {
+        format!("{index}")
+    }
 }
 
 /// Convert between reading positions and EPUB CFIs. Encode with

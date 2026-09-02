@@ -128,3 +128,33 @@ fn page_progression_direction_comes_off_the_spine() {
         "the same book, read from the other edge"
     );
 }
+
+/// EPUB 3's `belongs-to-collection`, with both the traps a real package
+/// sets: a boxed `set` listed first, and a stale Calibre pair alongside.
+#[test]
+fn a_series_is_read_from_the_collection_the_package_calls_a_series() {
+    let book = Book::open(&fixture("series.epub")).expect("fixture EPUB should open");
+    let md = book.metadata();
+    assert_eq!(md.series.as_deref(), Some("The Fixture Cycle"));
+    assert_eq!(md.series_index, Some(2.5), "group-position is fractional");
+}
+
+/// EPUB 2 has no vocabulary for a series, so Calibre's is what most of an
+/// existing library carries and the reader has to speak it.
+#[test]
+fn an_epub_2_series_is_read_from_calibres_spelling() {
+    let book = Book::open(&fixture("series-legacy.epub")).expect("fixture EPUB should open");
+    let md = book.metadata();
+    assert_eq!(md.series.as_deref(), Some("The Fixture Cycle"));
+    assert_eq!(md.series_index, Some(1.0));
+}
+
+/// The ordinary case: most books belong to no series at all, and must not
+/// be given one.
+#[test]
+fn a_book_in_no_series_is_in_no_series() {
+    let md = minimal();
+    let md = md.metadata();
+    assert_eq!(md.series, None);
+    assert_eq!(md.series_index, None);
+}

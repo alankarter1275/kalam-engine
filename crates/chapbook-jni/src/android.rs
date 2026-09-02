@@ -15,7 +15,7 @@ use chapbook_reader::chapbook_core::{
 };
 use chapbook_reader::{Session, SessionConfig};
 use jni::objects::{JClass, JObject, JString};
-use jni::sys::{jboolean, jfloat, jfloatArray, jint, jintArray, jlong, jstring};
+use jni::sys::{jboolean, jfloat, jfloatArray, jint, jintArray, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 
 // ---- Handles ----
@@ -909,4 +909,583 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_conformance(
     .run()
     .to_string();
     string_out(&env, &report)
+}
+
+// ---- The shelf ----
+//
+// Two more handles, matching the C ABI's shape rather than inventing a
+// second one: a library connection, and one query's rows held still.
+// The rows are their own handle for the reason the C ABI's are — a shelf
+// UI holds a page of results while the reader types in a search box, and
+// a last-query slot on the library would invalidate what is being drawn.
+//
+// Nothing here constructs a Java object. Every field crosses as a
+// primitive or a `String`, indexed, exactly like the text surface above:
+// building a Kotlin data class from Rust means naming its constructor
+// signature in a string, which is a link error nothing checks.
+
+/// A library, as a `jlong`. 0 is the failure value.
+fn library_handle(library: chapbook_reader::chapbook_library::Library) -> jlong {
+    Box::into_raw(Box::new(library)) as jlong
+}
+
+/// # Safety
+/// `handle` must have come from [`library_handle`] and not yet been closed.
+unsafe fn library<'a>(handle: jlong) -> Option<&'a mut chapbook_reader::chapbook_library::Library> {
+    (handle as *mut chapbook_reader::chapbook_library::Library).as_mut()
+}
+
+/// # Safety
+/// `handle` must have come from `libraryQuery` and not yet been freed.
+unsafe fn shelf<'a>(
+    handle: jlong,
+) -> Option<&'a Vec<chapbook_reader::chapbook_library::BookRecord>> {
+    (handle as *const Vec<chapbook_reader::chapbook_library::BookRecord>).as_ref()
+}
+
+/// # Safety
+/// As [`shelf`], plus an index the caller got from `shelfLen`.
+unsafe fn row<'a>(
+    handle: jlong,
+    index: jint,
+) -> Option<&'a chapbook_reader::chapbook_library::BookRecord> {
+    if index < 0 {
+        return None;
+    }
+    unsafe { shelf(handle) }.and_then(|books| books.get(index as usize))
+}
+
+/// Open (creating if needed) the library at `dir`; an empty `dir` means
+/// this platform's default, which on Android is an error — the app knows
+/// its own container and has to say it. 0 if it could not be opened.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryOpen(
+    mut env: JNIEnv,
+    _class: JClass,
+    dir: JString,
+) -> jlong {
+    use chapbook_reader::chapbook_library::Library;
+    let dir = string_in(&mut env, &dir).filter(|d| !d.is_empty());
+    let path = match dir {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => match Library::default_dir() {
+            Ok(path) => path,
+            Err(e) => {
+                log::error!("no default library location: {e}");
+                return 0;
+            }
+        },
+    };
+    match Library::open(&path) {
+        Ok(library) => library_handle(library),
+        Err(e) => {
+            log::error!("could not open the library at {}: {e}", path.display());
+            0
+        }
+    }
+}
+
+/// Close a library. Tolerates 0, so a failed open needs no special case.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryClose(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle != 0 {
+        // SAFETY: a handle from `libraryOpen`, closed once.
+        drop(unsafe { Box::from_raw(handle as *mut chapbook_reader::chapbook_library::Library) });
+    }
+}
+
+/// Run a query and hold its rows; 0 if it failed. Free with `shelfFree`.
+///
+/// The arguments are the query flattened, because a struct crossing JNI
+/// is a Java class this file would have to name by signature. Empty
+/// strings and zeros mean "do not narrow", so the all-defaults call is
+/// the whole shelf — the same property the C ABI's zero-initialized
+/// struct has.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryQuery(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    search: JString,
+    series: JString,
+    collection: jlong,
+    state: jint,
+    sort: jint,
+    limit: jint,
+    offset: jint,
+) -> jlong {
+    use chapbook_reader::chapbook_library::{BookQuery, CollectionId, ReadingState, Sort};
+
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    let search = string_in(&mut env, &search).filter(|s| !s.is_empty());
+    let series = string_in(&mut env, &series).filter(|s| !s.is_empty());
+    let state = match state {
+        1 => Some(ReadingState::Unread),
+        2 => Some(ReadingState::Reading),
+        3 => Some(ReadingState::Finished),
+        _ => None,
+    };
+    let sort = match sort {
+        1 => Sort::Read,
+        2 => Sort::Title,
+        3 => Sort::Author,
+        4 => Sort::Series,
+        _ => Sort::Added,
+    };
+    let query = BookQuery {
+        search: search.as_deref(),
+        series: series.as_deref(),
+        collection: (collection != 0).then_some(CollectionId(collection)),
+        state,
+        sort,
+        limit: (limit > 0).then_some(limit as usize),
+        offset: offset.max(0) as usize,
+    };
+    match library.query(&query) {
+        Ok(books) => Box::into_raw(Box::new(books)) as jlong,
+        Err(e) => {
+            log::error!("shelf query failed: {e}");
+            0
+        }
+    }
+}
+
+/// Release a shelf. Tolerates 0.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfFree(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle != 0 {
+        // SAFETY: a handle from `libraryQuery`, freed once.
+        drop(unsafe {
+            Box::from_raw(handle as *mut Vec<chapbook_reader::chapbook_library::BookRecord>)
+        });
+    }
+}
+
+/// How many rows; `-1` for a bad handle, so "empty" and "broken" are
+/// different answers.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfLen(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    match unsafe { shelf(handle) } {
+        Some(books) => books.len() as jint,
+        None => -1,
+    }
+}
+
+/// One row's numbers, in one crossing: `[id, addedAt, lastRead,
+/// finishedAt, state, authorCount, collectionCount]`. Timestamps are Unix
+/// seconds with 0 meaning never; `state` is 1 unread, 2 reading, 3
+/// finished. Empty for a bad handle or index.
+///
+/// Packed rather than one call per field because a shelf of a hundred
+/// books would otherwise make seven hundred JNI crossings to draw once.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfBook(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jlongArray {
+    use chapbook_reader::chapbook_library::ReadingState;
+    let Some(book) = (unsafe { row(handle, index) }) else {
+        return long_array_out(&env, &[]);
+    };
+    let state = match book.state() {
+        ReadingState::Unread => 1,
+        ReadingState::Reading => 2,
+        ReadingState::Finished => 3,
+    };
+    long_array_out(
+        &env,
+        &[
+            book.id.0,
+            book.added_at,
+            book.last_read.unwrap_or(0),
+            book.finished_at.unwrap_or(0),
+            state,
+            book.authors.len() as jlong,
+            book.collections.len() as jlong,
+        ],
+    )
+}
+
+/// One row's fractions: `[progress, seriesIndex]`, each `-1` when the
+/// book has none. Empty for a bad handle or index.
+///
+/// A negative sentinel rather than NaN: NaN survives the crossing but
+/// `-1.0` is what a Kotlin `takeIf` reads cleanly, and neither a
+/// progress nor a series position is ever negative.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfBookFractions(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jfloatArray {
+    let Some(book) = (unsafe { row(handle, index) }) else {
+        return float_array_out(&env, &[]);
+    };
+    float_array_out(
+        &env,
+        &[
+            book.progress.unwrap_or(-1.0) as jfloat,
+            book.series_index.unwrap_or(-1.0) as jfloat,
+        ],
+    )
+}
+
+/// One row's title; `""` for a bad handle or index.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfTitle(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let title = unsafe { row(handle, index) }
+        .map(|book| book.title.clone())
+        .unwrap_or_default();
+    string_out(&env, &title)
+}
+
+/// One row's author, by index within the row — the order the book lists
+/// them. `""` past the end.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfAuthor(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+    author: jint,
+) -> jstring {
+    let name = unsafe { row(handle, index) }
+        .filter(|_| author >= 0)
+        .and_then(|book| book.authors.get(author as usize).cloned())
+        .unwrap_or_default();
+    string_out(&env, &name)
+}
+
+/// One row's series; `""` for a book in none, which is most of them.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfSeries(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let series = unsafe { row(handle, index) }
+        .and_then(|book| book.series.clone())
+        .unwrap_or_default();
+    string_out(&env, &series)
+}
+
+/// One row's edition fingerprint — the SHA-1 of the file's bytes, hex.
+///
+/// The key an app maps its own `content://` grant to: it identifies the
+/// *file* across a reinstall, while the id identifies the reader's
+/// history of it.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfFingerprint(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let fingerprint = unsafe { row(handle, index) }
+        .map(|book| book.fingerprint.clone())
+        .unwrap_or_default();
+    string_out(&env, &fingerprint)
+}
+
+/// The library's own copy of the file, or `""` for an adopted book — one
+/// the library holds a record of and no copy of, because the platform
+/// owns the file and the app owns the grant that reaches it.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfFilePath(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let path = unsafe { row(handle, index) }
+        .map(|book| book.file_path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    string_out(&env, &path)
+}
+
+/// The cover kept at import, so a shelf need not reopen every book to
+/// draw one. `""` when the book had none.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfCoverPath(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let path = unsafe { row(handle, index) }
+        .and_then(|book| book.cover_path.as_ref())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    string_out(&env, &path)
+}
+
+/// The id of one collection this row is in; 0 past the end.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfCollectionId(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+    which: jint,
+) -> jlong {
+    unsafe { row(handle, index) }
+        .filter(|_| which >= 0)
+        .and_then(|book| book.collections.get(which as usize))
+        .map(|collection| collection.id.0)
+        .unwrap_or(0)
+}
+
+/// The name of one collection this row is in; `""` past the end.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_shelfCollectionName(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+    which: jint,
+) -> jstring {
+    let name = unsafe { row(handle, index) }
+        .filter(|_| which >= 0)
+        .and_then(|book| book.collections.get(which as usize))
+        .map(|collection| collection.name.clone())
+        .unwrap_or_default();
+    string_out(&env, &name)
+}
+
+/// Every collection as `[id, bookCount, id, bookCount, ...]`, oldest
+/// first. Names come from `libraryCollectionName`, since a `String[]`
+/// and a `long[]` cannot cross as one array.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryCollections(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlongArray {
+    let Some(library) = (unsafe { library(handle) }) else {
+        return long_array_out(&env, &[]);
+    };
+    match library.collections() {
+        Ok(collections) => {
+            let flat: Vec<jlong> = collections
+                .iter()
+                .flat_map(|c| [c.id.0, c.books as jlong])
+                .collect();
+            long_array_out(&env, &flat)
+        }
+        Err(e) => {
+            log::error!("could not list collections: {e}");
+            long_array_out(&env, &[])
+        }
+    }
+}
+
+/// One collection's name by id; `""` if no live collection has it.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryCollectionName(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    collection: jlong,
+) -> jstring {
+    let name = unsafe { library(handle) }
+        .and_then(|library| library.collections().ok())
+        .and_then(|collections| {
+            collections
+                .into_iter()
+                .find(|c| c.id.0 == collection)
+                .map(|c| c.name)
+        })
+        .unwrap_or_default();
+    string_out(&env, &name)
+}
+
+/// Make a collection, or return the one that already has this name; 0 on
+/// failure. Idempotent, so an app need not ask first.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryCreateCollection(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    name: JString,
+) -> jlong {
+    let Some(name) = string_in(&mut env, &name) else {
+        return 0;
+    };
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    match library.create_collection(&name) {
+        Ok(collection) => collection.0,
+        Err(e) => {
+            log::error!("could not create a collection: {e}");
+            0
+        }
+    }
+}
+
+/// Rename a collection. `false` if it did not happen.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryRenameCollection(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    collection: jlong,
+    name: JString,
+) -> jboolean {
+    use chapbook_reader::chapbook_library::CollectionId;
+    let Some(name) = string_in(&mut env, &name) else {
+        return 0;
+    };
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    ok(library.rename_collection(CollectionId(collection), &name))
+}
+
+/// Delete a collection. The books stay; only the grouping goes.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryDeleteCollection(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    collection: jlong,
+) -> jboolean {
+    use chapbook_reader::chapbook_library::CollectionId;
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    ok(library.delete_collection(CollectionId(collection)))
+}
+
+/// Put a book in a collection. Doing it twice is not a failure.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryAddToCollection(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    book: jlong,
+    collection: jlong,
+) -> jboolean {
+    use chapbook_reader::chapbook_library::{BookId, CollectionId};
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    ok(library.add_to_collection(BookId(book), CollectionId(collection)))
+}
+
+/// Take a book out of a collection. Doing it twice is not a failure.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryRemoveFromCollection(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    book: jlong,
+    collection: jlong,
+) -> jboolean {
+    use chapbook_reader::chapbook_library::{BookId, CollectionId};
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    ok(library.remove_from_collection(BookId(book), CollectionId(collection)))
+}
+
+/// Take a book off the shelf. Soft: the row keeps its id, its position
+/// and its annotations, so adding the same file back is the same book.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_libraryDeleteBook(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    book: jlong,
+) -> jboolean {
+    use chapbook_reader::chapbook_library::BookId;
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    ok(library.delete_book(BookId(book)))
+}
+
+/// Mark a book finished, or take the mark back.
+///
+/// A session records this itself on reaching the end, so this is for the
+/// other direction: the "mark as read" a reader taps for a book they
+/// finished elsewhere, and the undo.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_librarySetFinished(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    book: jlong,
+    finished: jboolean,
+) -> jboolean {
+    use chapbook_reader::chapbook_library::BookId;
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    ok(library.set_finished(BookId(book), finished != 0))
+}
+
+/// The library row this session's book was imported into; 0 for a book
+/// that never reached the library (an OPDS stream, or a session opened
+/// without a library directory).
+///
+/// The join between the reading view and the shelf: the session did the
+/// importing, so only it knows which row that became.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_sessionBookId(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    unsafe { session(handle) }
+        .and_then(|session| session.book_id())
+        .map(|id| id.0)
+        .unwrap_or(0)
+}
+
+fn long_array_out(env: &JNIEnv, values: &[jlong]) -> jlongArray {
+    let Ok(array) = env.new_long_array(values.len() as i32) else {
+        return JObject::null().into_raw();
+    };
+    if env.set_long_array_region(&array, 0, values).is_err() {
+        return JObject::null().into_raw();
+    }
+    array.into_raw()
+}
+
+/// A library write's outcome as a `jboolean`, with the reason logged
+/// rather than thrown: none of these failures is one a shelf can act on,
+/// and logcat is where an Android defect gets read.
+fn ok(result: chapbook_reader::chapbook_core::Result<()>) -> jboolean {
+    match result {
+        Ok(()) => 1,
+        Err(e) => {
+            log::error!("library write failed: {e}");
+            0
+        }
+    }
 }

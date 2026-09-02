@@ -79,6 +79,57 @@ jobs:
       - run: cargo check -p chapbook-layout --target aarch64-linux-android
       - run: cargo check -p chapbook-layout --target aarch64-apple-ios
 
+  apple:
+    # The Swift package, on the only host that can judge it. Every other
+    # job here runs on Linux, so until this one existed `ios/` was the one
+    # host binding no gate compiled — and it landed broken: `#require`
+    # expands its argument into a closure the outer `try` does not cover,
+    # so the test target did not build. A Mac was the only thing that
+    # could say so, which is the whole argument for the runner cost.
+    #
+    # Three slices, because they fail differently. `swift test` runs the
+    # macOS one natively and is the only *runtime* evidence that the C ABI
+    # works from Swift at all — the job above proves the Rust compiles for
+    # Apple, not that anything can call it. The two iOS slices are
+    # typechecked rather than run: PageAccessibility puts its UIKit half
+    # behind `canImport(UIKit)`, which a macOS build never compiles, so
+    # without the device typecheck that file is half-gated.
+    #
+    # Apple silicon is required, not incidental: build-xcframework.sh
+    # names aarch64 for all three slices, and `swift test` runs the macOS
+    # one on the runner's own architecture. `-latest` has been arm64 since
+    # macos-14.
+    name: swift test + iOS typecheck (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          targets: >-
+            aarch64-apple-ios,
+            aarch64-apple-ios-sim,
+            aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      # Three release staticlibs, then the XCFramework around them. The
+      # slow step by a wide margin — stylo compiled once per slice — and
+      # the reason the cache above earns its place here more than anywhere.
+      - run: ./ios/build-xcframework.sh
+      # The gate: the shelf and the session driven against the real
+      # boundary, on the macOS slice, with no simulator in the loop.
+      - run: swift test
+        working-directory: ios/Chapbook
+      # What `swift test` structurally cannot reach: the UIKit half of
+      # PageAccessibility, and Swift 6 concurrency on both iOS slices. A
+      # script rather than a block scalar here, so the same check a
+      # contributor runs is the one CI runs.
+      - run: ./ios/typecheck-slices.sh
+      # The only link check for a slice that is not macOS: the demo has to
+      # resolve every symbol Swift names against the simulator staticlib. A
+      # header that drifted from the library it ships beside passes both
+      # steps above and fails here.
+      - run: ./ios/demo/build.sh
+
   reader-features:
     # chapbook-reader's formats are separately compilable, and a device
     # build turns off what its hardware will never open. Nothing in the
@@ -95,7 +146,13 @@ jobs:
     # The empty entry is now the EPUB-only profile: no library, and so no
     # rusqlite and no bundled SQLite. It is the smallest thing chapbook
     # builds and the one a browser forces.
-    name: check (chapbook-reader feature matrix)
+    # The C ABI forwards the same feature names verbatim and is checked
+    # in the same configurations, because it has the other half of the
+    # problem: every `cb_library_*` entry point has a body for a build
+    # with no library, and those bodies are compiled nowhere else. A
+    # decline path that stopped compiling would reach a host as a build
+    # failure in their project, not ours.
+    name: check (chapbook-reader and the C ABI, feature matrix)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -117,6 +174,7 @@ jobs:
           toolchain: ${{ env.RUST_PIN }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
+      - run: cargo check -p chapbook-ffi --no-default-features --features "${{ matrix.features }}"
 
   progression-feature:
     # OPDS Progression 1.0 is off by default because the spec is an

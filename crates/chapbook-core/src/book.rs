@@ -33,6 +33,22 @@ pub struct BookMetadata {
     pub language: Option<String>,
     pub identifier: Option<String>,
     pub description: Option<String>,
+    /// The series this book belongs to, when it says so.
+    ///
+    /// A shelf groups by it and sorts within it, which is why it sits here
+    /// rather than being left to a librarian to type in. EPUB 3 spells it
+    /// `belongs-to-collection` refined by `collection-type`; EPUB 2 — most
+    /// of what a reader already owns — carries Calibre's `calibre:series`
+    /// instead, and both are read.
+    pub series: Option<String>,
+    /// Where in the series this one falls.
+    ///
+    /// Fractional deliberately: a novella between books two and three is
+    /// conventionally 2.5, and both `group-position` and
+    /// `calibre:series_index` allow it. `None` with a `series` set is
+    /// ordinary — plenty of books name their series and not their place in
+    /// it — and sorts after everything numbered.
+    pub series_index: Option<f64>,
     /// Format-specific version string (e.g. `"3.0"` for an EPUB 3 package).
     pub format_version: String,
 }

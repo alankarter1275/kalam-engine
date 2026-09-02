@@ -91,3 +91,42 @@ pub(crate) unsafe fn str_out(
     }
     cb_status::CB_OK
 }
+
+/// Write a slice into a caller array, `str_out`'s two-call idiom for
+/// fixed-size items: `needed` is set on every path, a zero-capacity call
+/// sizes, and nothing crosses owned.
+pub(crate) unsafe fn slice_out<T: Copy>(
+    items: &[T],
+    buf: *mut T,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    if !needed.is_null() {
+        // SAFETY: caller-provided out-pointer, checked non-null.
+        unsafe { *needed = items.len() };
+    }
+    if cap < items.len() {
+        return if cap == 0 && buf.is_null() {
+            // The sizing call. Not an error worth a message.
+            cb_status::CB_ERR_BUFFER_TOO_SMALL
+        } else {
+            fail(
+                cb_status::CB_ERR_BUFFER_TOO_SMALL,
+                format!("buffer holds {cap} items, {} needed", items.len()),
+            )
+        };
+    }
+    if items.is_empty() {
+        return cb_status::CB_OK;
+    }
+    if buf.is_null() {
+        return fail(
+            cb_status::CB_ERR_NULL_ARGUMENT,
+            "buffer is null but capacity is not zero",
+        );
+    }
+    // SAFETY: `cap >= items.len()` was just checked, and the regions
+    // cannot overlap — `items` is this crate's, `buf` the caller's.
+    unsafe { std::ptr::copy_nonoverlapping(items.as_ptr(), buf, items.len()) };
+    cb_status::CB_OK
+}

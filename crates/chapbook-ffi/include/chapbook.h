@@ -298,6 +298,74 @@ typedef uint32_t cb_action_outcome;
 #endif // __cplusplus
 
 /**
+ * How far through a book the reader is.
+ *
+ * `CB_STATE_ANY` is a query saying "do not narrow by state"; a row never
+ * reports it.
+ */
+enum cb_reading_state
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    CB_STATE_ANY = 0,
+    /**
+     * Never opened.
+     */
+    CB_STATE_UNREAD = 1,
+    /**
+     * Opened, not finished — what a "continue reading" row wants.
+     */
+    CB_STATE_READING = 2,
+    /**
+     * Reached the end at least once, whatever the position says now.
+     */
+    CB_STATE_FINISHED = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum cb_reading_state cb_reading_state;
+#else
+typedef uint32_t cb_reading_state;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
+ * How a query orders its rows.
+ */
+enum cb_sort
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * Newest addition first: a stable listing, and the zero value.
+     */
+    CB_SORT_ADDED = 0,
+    /**
+     * The most recent thing that happened to this book, read or added —
+     * what a shelf shows first.
+     */
+    CB_SORT_READ = 1,
+    CB_SORT_TITLE = 2,
+    /**
+     * First author, then title. A book with no author sorts last.
+     */
+    CB_SORT_AUTHOR = 3,
+    /**
+     * Series, then position within it. Books in no series sort last.
+     */
+    CB_SORT_SERIES = 4,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum cb_sort cb_sort;
+#else
+typedef uint32_t cb_sort;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * Severity, matching `log`'s own ordering so the numbers are not a second
  * thing to remember.
  *
@@ -511,9 +579,23 @@ typedef struct cb_font_source cb_font_source;
 typedef struct cb_http_response cb_http_response;
 
 /**
+ * An open library. Opaque.
+ *
+ * Movable between threads, never used from two at once — the same rule
+ * as [`cb_session`], and for a stricter reason: the SQLite connection
+ * underneath is not shareable at all.
+ */
+typedef struct cb_library cb_library;
+
+/**
  * An open book. Opaque.
  */
 typedef struct cb_session cb_session;
+
+/**
+ * One query's rows, held still until freed. Opaque.
+ */
+typedef struct cb_shelf cb_shelf;
 
 /**
  * One request header, borrowed for the duration of the callback.
@@ -608,6 +690,107 @@ typedef void (*cb_http_download_fn)(const struct cb_http_request *request,
  * engine's lifetimes.
  */
 typedef void (*cb_http_finalize_fn)(void *user);
+
+/**
+ * What to list, and in what order. Zero-initialize for the whole shelf.
+ */
+typedef struct cb_book_query {
+    /**
+     * Free text over title, authors and series, or null for no text
+     * filter. Whole words matched by prefix, folded for case *and*
+     * accents — "bronte" finds Brontë. Text holding nothing searchable
+     * (punctuation alone) matches no book rather than every book.
+     */
+    const char *search;
+    /**
+     * Only this series, matched exactly but case-folded, or null for
+     * any. The value comes from a row, not from typing.
+     */
+    const char *series;
+    /**
+     * Only books in this collection; 0 for any.
+     */
+    int64_t collection;
+    cb_reading_state state;
+    cb_sort sort;
+    /**
+     * How many rows to return; 0 for all of them.
+     */
+    size_t limit;
+    /**
+     * How many to skip — the other half of paging a long shelf.
+     */
+    size_t offset;
+} cb_book_query;
+
+/**
+ * One shelf row's plain data. The strings are beside it: see
+ * [`cb_shelf_title`] and its neighbours.
+ *
+ * Timestamps are Unix seconds, and 0 means *never* rather than 1970 —
+ * no row here is from before the epoch.
+ */
+typedef struct cb_book {
+    /**
+     * The library id. Stable across re-imports and re-anchoring, and
+     * what every other call in this module takes.
+     */
+    int64_t id;
+    int64_t added_at;
+    /**
+     * When the position was last written; 0 for a book never opened.
+     */
+    int64_t last_read;
+    /**
+     * When the reader reached the end; 0 if they have not.
+     */
+    int64_t finished_at;
+    /**
+     * How far through, 0.0..=1.0. Meaningful only when `has_progress`.
+     *
+     * Not what `state` is derived from, and not a substitute for it: a
+     * book skimmed to the last page reads 1.0 without being finished,
+     * and a finished book reopened reads near 0 without being unread.
+     */
+    double progress;
+    /**
+     * Where in its series. Meaningful only when `has_series_index`, and
+     * fractional on purpose — a novella between books two and three is
+     * conventionally 2.5.
+     */
+    double series_index;
+    cb_reading_state state;
+    /**
+     * Authors, read with [`cb_shelf_author`].
+     */
+    size_t author_count;
+    /**
+     * Collections, read with [`cb_shelf_collection_id`] and
+     * [`cb_shelf_collection_name`].
+     */
+    size_t collection_count;
+    bool has_progress;
+    bool has_series_index;
+    /**
+     * Whether [`cb_shelf_cover_path`] has anything to give. Not every
+     * CBZ or PDF carries a cover, and a shelf falls back to a title
+     * card.
+     */
+    bool has_cover;
+} cb_book;
+
+/**
+ * One collection: a named set of books.
+ */
+typedef struct cb_collection {
+    int64_t id;
+    int64_t added_at;
+    /**
+     * How many books are in it. A list of shelf names that does not say
+     * how many books are on each is a list of words.
+     */
+    size_t books;
+} cb_collection;
 
 /**
  * Receives one diagnostic.
@@ -1014,6 +1197,254 @@ cb_action cb_char_default_action(uint32_t codepoint);
 cb_status cb_session_apply(struct cb_session *session,
                            cb_action action,
                            cb_action_outcome *outcome);
+
+/**
+ * Open (creating if needed) the library at `dir`.
+ *
+ * Pass null for `dir` to use this platform's own location — the same one
+ * [`cb_library_default_dir`] reports, and the same one a session opened
+ * without [`cb_config_set_library_dir`](crate::cb_config_set_library_dir)
+ * uses. On a platform with no such convention (Android, iOS, wasm) a null
+ * `dir` is an error rather than a guess: a sandbox knows its own answer
+ * and has to say it.
+ */
+cb_status cb_library_open(const char *dir, struct cb_library **out);
+
+/**
+ * Close a library. Accepts null.
+ */
+void cb_library_close(struct cb_library *library);
+
+/**
+ * Where this platform keeps a per-user library, as a path.
+ *
+ * `CB_ERR_UNAVAILABLE` where there is no convention to follow — every
+ * mobile and wasm target, and any Unix with no `HOME`. That is not a
+ * gap: a sandboxed platform knows its own container and passes it to
+ * [`cb_library_open`] or
+ * [`cb_config_set_library_dir`](crate::cb_config_set_library_dir).
+ */
+cb_status cb_library_default_dir(char *buf, size_t cap, size_t *needed);
+
+/**
+ * Run a query and hold its rows. Free the result with [`cb_shelf_free`].
+ *
+ * An empty shelf is `CB_OK` with a length of zero, not an error: a
+ * filter matching nothing is an answer.
+ */
+cb_status cb_library_query(const struct cb_library *library,
+                           const struct cb_book_query *query,
+                           struct cb_shelf **out);
+
+/**
+ * Release a shelf. Accepts null.
+ */
+void cb_shelf_free(struct cb_shelf *shelf);
+
+/**
+ * How many rows the shelf holds.
+ */
+cb_status cb_shelf_len(const struct cb_shelf *shelf, size_t *len);
+
+/**
+ * One row's plain data, by index. `CB_ERR_INVALID_ARGUMENT` past the end.
+ */
+cb_status cb_shelf_book(const struct cb_shelf *shelf, size_t index, struct cb_book *book);
+
+/**
+ * One row's title. Caller-allocates; see
+ * [`cb_last_error_message`](crate::cb_last_error_message) for the
+ * two-call idiom.
+ */
+cb_status cb_shelf_title(const struct cb_shelf *shelf,
+                         size_t index,
+                         char *buf,
+                         size_t cap,
+                         size_t *needed);
+
+/**
+ * One row's author, by index within that row — the order the book lists
+ * them, which is not alphabetical and is not arbitrary.
+ * `CB_ERR_INVALID_ARGUMENT` past `author_count`.
+ */
+cb_status cb_shelf_author(const struct cb_shelf *shelf,
+                          size_t index,
+                          size_t author,
+                          char *buf,
+                          size_t cap,
+                          size_t *needed);
+
+/**
+ * One row's series. `CB_ERR_UNAVAILABLE` for a book in none, which is
+ * most of them and is not a failure.
+ */
+cb_status cb_shelf_series(const struct cb_shelf *shelf,
+                          size_t index,
+                          char *buf,
+                          size_t cap,
+                          size_t *needed);
+
+/**
+ * One row's language tag. `CB_ERR_UNAVAILABLE` if the book declares none.
+ */
+cb_status cb_shelf_language(const struct cb_shelf *shelf,
+                            size_t index,
+                            char *buf,
+                            size_t cap,
+                            size_t *needed);
+
+/**
+ * One row's publication identifier — an ISBN, a UUID, whatever the book
+ * declared. `CB_ERR_UNAVAILABLE` if it declared none.
+ */
+cb_status cb_shelf_identifier(const struct cb_shelf *shelf,
+                              size_t index,
+                              char *buf,
+                              size_t cap,
+                              size_t *needed);
+
+/**
+ * One row's edition fingerprint: the SHA-1 of the file's bytes, hex.
+ *
+ * The key a host maps its own handle to — an Android `content://` grant,
+ * an iOS security-scoped bookmark — because it is what identifies the
+ * *file* across a reinstall, while the id identifies the reader's
+ * history of it.
+ */
+cb_status cb_shelf_fingerprint(const struct cb_shelf *shelf,
+                               size_t index,
+                               char *buf,
+                               size_t cap,
+                               size_t *needed);
+
+/**
+ * The library's own copy of the file.
+ *
+ * Empty for an *adopted* book — one the library holds a record of and no
+ * copy of, because the platform owns the file and the host owns the
+ * means of reaching it again. An empty answer is `CB_OK`: the row is
+ * fine and the host is the one that knows how to open it.
+ */
+cb_status cb_shelf_file_path(const struct cb_shelf *shelf,
+                             size_t index,
+                             char *buf,
+                             size_t cap,
+                             size_t *needed);
+
+/**
+ * The cover image on disk, kept at import so a shelf need not reopen
+ * every book to draw one. `CB_ERR_UNAVAILABLE` when `has_cover` is
+ * false.
+ */
+cb_status cb_shelf_cover_path(const struct cb_shelf *shelf,
+                              size_t index,
+                              char *buf,
+                              size_t cap,
+                              size_t *needed);
+
+/**
+ * The id of one collection this row is in, by index within the row.
+ */
+cb_status cb_shelf_collection_id(const struct cb_shelf *shelf,
+                                 size_t index,
+                                 size_t which,
+                                 int64_t *id);
+
+/**
+ * The name of one collection this row is in, by the same index.
+ */
+cb_status cb_shelf_collection_name(const struct cb_shelf *shelf,
+                                   size_t index,
+                                   size_t which,
+                                   char *buf,
+                                   size_t cap,
+                                   size_t *needed);
+
+/**
+ * Take a book off the shelf.
+ *
+ * Soft: the row keeps its id, its annotations and its position, so
+ * adding the same file back is the same book with its marks intact.
+ */
+cb_status cb_library_delete_book(struct cb_library *library, int64_t book);
+
+/**
+ * Mark a book finished, or take the mark back.
+ *
+ * A session records this itself when the reader reaches the end, so a
+ * host needs it for the other direction: the "mark as read" a reader
+ * taps on a book they finished elsewhere, and the undo. Marking twice
+ * keeps the first timestamp.
+ */
+cb_status cb_library_set_finished(struct cb_library *library, int64_t book, bool finished);
+
+/**
+ * The library row the open session is reading.
+ *
+ * The join between the reading view and the shelf: a session *imports*
+ * the book it opens, so this is how a host learns which row that became
+ * — to record where it syncs to, or to find it again in a query.
+ *
+ * `CB_ERR_UNAVAILABLE` for a book that never reached the library: an
+ * OPDS page stream, or a session built without one.
+ */
+cb_status cb_session_book_id(const struct cb_session *session, int64_t *book);
+
+/**
+ * Every collection, oldest first, into a caller-allocated array.
+ *
+ * The same two-call idiom as the string accessors: ask with a zero
+ * capacity to learn the count, allocate, ask again.
+ */
+cb_status cb_library_collections(const struct cb_library *library,
+                                 struct cb_collection *buf,
+                                 size_t cap,
+                                 size_t *needed);
+
+/**
+ * One collection's name, by id. `CB_ERR_UNAVAILABLE` if no live
+ * collection has that id.
+ */
+cb_status cb_library_collection_name(const struct cb_library *library,
+                                     int64_t collection,
+                                     char *buf,
+                                     size_t cap,
+                                     size_t *needed);
+
+/**
+ * Make a collection, or return the one that already has this name.
+ *
+ * Idempotent on the name: a host putting a book on "Sci-Fi" should not
+ * have to ask first whether "Sci-Fi" exists.
+ */
+cb_status cb_library_create_collection(struct cb_library *library, const char *name, int64_t *id);
+
+/**
+ * Rename a collection.
+ */
+cb_status cb_library_rename_collection(struct cb_library *library,
+                                       int64_t collection,
+                                       const char *name);
+
+/**
+ * Delete a collection. The books stay; only the grouping goes, and the
+ * name becomes available again.
+ */
+cb_status cb_library_delete_collection(struct cb_library *library, int64_t collection);
+
+/**
+ * Put a book in a collection. Doing it twice is not an error.
+ */
+cb_status cb_library_add_to_collection(struct cb_library *library,
+                                       int64_t book,
+                                       int64_t collection);
+
+/**
+ * Take a book out of a collection. Doing it twice is not an error.
+ */
+cb_status cb_library_remove_from_collection(struct cb_library *library,
+                                            int64_t book,
+                                            int64_t collection);
 
 /**
  * Send the engine's diagnostics to `callback` at `max_level` and above.

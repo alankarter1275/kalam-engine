@@ -216,6 +216,103 @@ const MIGRATIONS: &[&str] = &[
     CREATE UNIQUE INDEX idx_annotations_remote ON annotations(remote_iri)
         WHERE remote_iri IS NOT NULL;
     ",
+    // v7
+    "
+    -- What a book belongs to, and how far through it the reader got.
+    --
+    -- Everything here is a *browsing* fact. v4 gave the shelf a cover and
+    -- v6 gave it sync; what it still could not do is answer the three
+    -- questions a reader asks of a shelf that has grown past one screen:
+    -- what is this part of, what have I finished, and where is the one I
+    -- am thinking of.
+
+    -- A series is the book's own claim about itself, off its metadata,
+    -- so it is a column rather than a table: nothing else refers to it,
+    -- and two books in \"the same\" series agree only as far as their
+    -- publishers spelled it the same way. Normalizing that into rows
+    -- would promise an identity the data does not have.
+    ALTER TABLE books ADD COLUMN series TEXT;
+    -- Fractional, because a novella between books two and three is 2.5 in
+    -- every catalogue that has one. NULL beside a set series is ordinary
+    -- and sorts last, not first: an unplaced volume is not volume zero.
+    ALTER TABLE books ADD COLUMN series_index REAL;
+    CREATE INDEX idx_books_series ON books(series) WHERE series IS NOT NULL;
+
+    -- When the reader reached the end. NULL is \"not finished\", which is
+    -- what every existing row means, so there is nothing to backfill.
+    --
+    -- A flag and not a derivation. Progress can say 1.0 for a book
+    -- skimmed to the last page, and a book genuinely finished and then
+    -- reopened has its progress reset to the beginning by the next
+    -- position write - so a shelf deriving \"finished\" from progress gets
+    -- it wrong in both directions. It is also a fact about the reader,
+    -- not about the file: it survives a re-anchor and a changed edition,
+    -- both of which move every locator.
+    ALTER TABLE books ADD COLUMN finished_at INTEGER;
+
+    -- A named set of books. One concept, whether the reader's app calls
+    -- it a shelf, a collection or a tag: all three are a name with books
+    -- in it, and a library that models them separately makes the reader
+    -- choose which drawer a word goes in before knowing what the drawers
+    -- do.
+    --
+    -- Soft-deleted like everything else here, for the reason the module
+    -- doc gives: nothing syncs collections today, and the schema should
+    -- not be what makes that a redesign.
+    CREATE TABLE collections (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0
+    );
+    -- Unique among the living only: a reader who deletes \"Sci-Fi\" and
+    -- makes it again should not be told the name is taken by a row they
+    -- cannot see.
+    CREATE UNIQUE INDEX idx_collections_name ON collections(name)
+        WHERE deleted = 0;
+
+    CREATE TABLE book_collections (
+        book_id INTEGER NOT NULL REFERENCES books(id),
+        collection_id INTEGER NOT NULL REFERENCES collections(id),
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (book_id, collection_id)
+    );
+    -- The primary key already serves \"what is this book in\"; this is the
+    -- other direction, \"what is in this collection\", which is the one a
+    -- shelf filters by.
+    CREATE INDEX idx_book_collections_members
+        ON book_collections(collection_id, book_id);
+
+    -- Search, as a reader means it.
+    --
+    -- The previous answer was `title LIKE '%x%' OR name LIKE '%x%'`,
+    -- which cannot use an index and, worse, cannot match: SQLite's LIKE
+    -- folds case for ASCII only, so a shelf holding Charlotte Brontë
+    -- answers nothing to \"bronte\", and a reader who cannot type the
+    -- diaeresis cannot find their own book. `remove_diacritics 2` is the
+    -- fix and is the whole reason this is FTS5 rather than a better LIKE.
+    --
+    -- Contentless would save the copy, but the copy is three short
+    -- strings per book and an ordinary table is one that DELETE and
+    -- UPDATE work on normally. The rows are maintained in Rust rather
+    -- than by triggers because the authors of a book live one join away
+    -- and a trigger would have to be written three times over three
+    -- tables to see them.
+    CREATE VIRTUAL TABLE book_search USING fts5(
+        title, authors, series,
+        tokenize = 'unicode61 remove_diacritics 2'
+    );
+    INSERT INTO book_search (rowid, title, authors, series)
+    SELECT b.id,
+           b.title,
+           COALESCE((SELECT group_concat(a.name, ' ')
+                       FROM authors a
+                       JOIN book_authors ba ON ba.author_id = a.id
+                      WHERE ba.book_id = b.id), ''),
+           COALESCE(b.series, '')
+      FROM books b;
+    ",
 ];
 
 pub(crate) fn open_and_migrate(path: &std::path::Path) -> Result<Connection> {
@@ -418,6 +515,77 @@ mod tests {
             .query_row("SELECT count(*) FROM book_sync", [], |row| row.get(0))
             .unwrap();
         assert_eq!(rows, 0, "a book with no catalog was given a service");
+
+        drop(conn);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A library that predates the shelf has to come out of the
+    /// migration *findable*. The columns are the easy half; the search
+    /// index is the half that can silently do nothing, because an empty
+    /// FTS table is a perfectly valid FTS table and every query against
+    /// it succeeds and returns nothing.
+    #[test]
+    fn books_added_before_the_search_index_are_in_it() {
+        let dir = scratch("search-backfill");
+        let path = dir.join("library.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let upto_v6 = MIGRATIONS[..6].join("\n");
+            conn.execute_batch(&format!(
+                "BEGIN;\n{upto_v6}\nPRAGMA user_version = 6;\nCOMMIT;"
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO books (id, title, file_path, fingerprint, added_at)
+                 VALUES (1, 'Villette', '/books/1.epub', 'abc123', 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO authors (id, name) VALUES (1, 'Charlotte Brontë')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO book_authors (book_id, author_id, position) VALUES (1, 1, 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open_and_migrate(&path).unwrap();
+
+        // The book kept everything it had, and gained the columns with
+        // the meaning an untouched row is supposed to have.
+        let (title, series, finished): (String, Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT title, series, finished_at FROM books WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "Villette");
+        assert_eq!(series, None, "nothing invented a series");
+        assert_eq!(finished, None, "an old book is not a finished book");
+
+        // And it is findable, by its title and by the author it took a
+        // join to reach — including without the diaeresis, which is the
+        // whole reason the index exists.
+        for query in [
+            "\"Villette\"*",
+            "\"bronte\"*",
+            "\"charlotte\"* AND \"villette\"*",
+        ] {
+            let hits: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM book_search WHERE book_search MATCH ?1",
+                    [query],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(hits, 1, "{query} found nothing");
+        }
 
         drop(conn);
         std::fs::remove_dir_all(&dir).ok();

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="urn:uuid:3c5b7a02-1f10-4e3c-9e40-chapbook0008"/>
+  </head>
+  <docTitle><text>The Legacy Fixture</text></docTitle>
+  <navMap>
+    <navPoint id="np1" playOrder="1">
+      <navLabel><text>Chapter One</text></navLabel>
+      <content src="chapter1.xhtml"/>
+    </navPoint>
+    <navPoint id="np2" playOrder="2">
+      <navLabel><text>Chapter Two</text></navLabel>
+      <content src="chapter2.xhtml"/>
+    </navPoint>
+  </navMap>
+</ncx>
