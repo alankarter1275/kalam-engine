@@ -123,6 +123,13 @@ enum LibCommand {
         /// Library id, as shown by `lib ls`
         id: i64,
     },
+    /// Add books from a catalog, with the services they sync to
+    Add {
+        /// A catalog feed URL, as `opds ls` takes
+        url: String,
+        /// Add every entry whose title contains this
+        matching: String,
+    },
     /// Reconcile positions and marks with the services books came from
     Sync {
         /// One book, by the id `lib ls` shows. Omit for every book that
@@ -250,6 +257,7 @@ fn main() -> ExitCode {
             )),
             LibCommand::Show { id } => print(commands::lib_show(id)),
             LibCommand::Rm { id } => print(commands::lib_rm(id)),
+            LibCommand::Add { url, matching } => print(commands::lib_add(&url, &matching)),
             LibCommand::Sync { id } => print(commands::lib_sync(id)),
             LibCommand::Finish { id, undo } => print(commands::lib_finish(id, !undo)),
             LibCommand::Series => print(commands::lib_series()),

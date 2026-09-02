@@ -1047,3 +1047,118 @@ fn mint_device_id() -> String {
         &hex[20..32]
     )
 }
+
+/// Add books from a catalog: download, import, and record where they sync.
+///
+/// The missing half of `lib sync`. A book learns its services from the
+/// catalog entry it came from and from nowhere else — in both protocols
+/// the URL *is* the publication's identity — so a book that arrives any
+/// other way has nothing to reconcile against. `lib import` takes a path
+/// and cannot know any of that; this is the door that can.
+///
+/// Matched on a title substring rather than an id, because `opds ls`
+/// prints titles and an id nobody has seen is not an address a person can
+/// use.
+pub fn lib_add(feed_url: &str, matching: &str) -> Result<String> {
+    let client = opds_client(feed_url);
+    let feed = client.fetch(feed_url).map_err(describe_opds_error)?;
+
+    let needle = matching.to_lowercase();
+    let matched: Vec<&chapbook_opds::Entry> = feed
+        .entries
+        .iter()
+        .filter(|entry| entry.title.to_lowercase().contains(&needle))
+        .collect();
+    if matched.is_empty() {
+        return Err(chapbook_core::ChapbookError::Opds(format!(
+            "no entry in this feed has \"{matching}\" in its title ({} were offered)",
+            feed.entries.len()
+        )));
+    }
+
+    // Staging, and nothing more: the library copies what it imports into
+    // its own `books/`, so a download kept anywhere else is a second copy
+    // of every book that was ever added.
+    let staging = std::env::temp_dir().join(format!("chapbook-add-{}", std::process::id()));
+    std::fs::create_dir_all(&staging).map_err(|e| {
+        chapbook_core::ChapbookError::Library(format!("cannot make {}: {e}", staging.display()))
+    })?;
+
+    let mut lib = open_library()?;
+    let mut out = String::new();
+    for entry in matched {
+        let Some(acquisition) = entry.links.iter().find(|link| {
+            link.rel
+                .iter()
+                .any(|rel| rel.starts_with(chapbook_opds::REL_ACQ_PREFIX))
+        }) else {
+            out.push_str(&format!("\"{}\" has nothing to download\n", entry.title));
+            continue;
+        };
+
+        let file = staging.join(format!("{}.epub", file_stem_for(&entry.id)));
+        client
+            .download(
+                &chapbook_opds::resolve_url(feed_url, &acquisition.href),
+                &file,
+            )
+            .map_err(describe_opds_error)?;
+
+        let publication = open_publication(&file)?;
+        let id = lib.import(&file, publication.as_ref())?;
+        drop(publication);
+        let _ = std::fs::remove_file(&file);
+
+        // The parser already resolved these against the request URL — that
+        // is the crate's invariant, and a catalog does serve relative hrefs
+        // (progression links come back root-relative). Resolving again is a
+        // no-op on an absolute URL and is here so a service URL can never
+        // reach `set_sync_targets` as a path.
+        let (progression, container) = chapbook_sync::targets_of(entry);
+        let progression = progression.map(|href| chapbook_opds::resolve_url(feed_url, &href));
+        let container = container.map(|href| chapbook_opds::resolve_url(feed_url, &href));
+        lib.set_sync_targets(id, progression.as_deref(), container.as_deref())?;
+
+        let services = [
+            ("position", progression.is_some()),
+            ("annotations", container.is_some()),
+        ]
+        .iter()
+        .filter(|(_, present)| *present)
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "added #{} \"{}\" — syncs {}\n",
+            id.0,
+            entry.title,
+            if services.is_empty() {
+                "nothing (the catalog advertised no service)".to_string()
+            } else {
+                services.join(", ")
+            }
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&staging);
+    Ok(out)
+}
+
+/// A filename for a catalog id, which is opaque and may hold anything —
+/// comic-server ids carry slashes and dots.
+fn file_stem_for(id: &str) -> String {
+    let cleaned: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('-');
+    if trimmed.is_empty() {
+        "book".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
