@@ -34,6 +34,8 @@ chapbook-render-tinyskia = { workspace = true }
 # The dev CLI is a desktop process: it wants the bundled transport.
 chapbook-opds = { workspace = true, features = ["ureq"] }
 chapbook-library = { workspace = true }
+# `lib sync` drives the reconcile loop; ureq for the same reason as above.
+chapbook-sync = { workspace = true, features = ["ureq"] }
 mezzotint = { workspace = true }
 clap = { workspace = true }
 cosmic-text = { workspace = true }
