@@ -54,11 +54,18 @@ private func metrics() -> PageMetrics {
     #expect(image.width == w && image.height == h)
 }
 
-@Test func aBadPathIsAnErrorWithASentence() {
+@Test func aBadPathIsAnErrorWithASentence() throws {
+    // Scratch, not the default: a configuration with no library
+    // directory falls back to the platform's own, which on macOS is the
+    // developer's real library — and the fallback opens it before the
+    // book's path is found wanting.
+    let library = try scratchLibrary("bad-path")
+    defer { try? FileManager.default.removeItem(at: library) }
+
     #expect(throws: ChapbookError.self) {
         try Session(
             source: .path(URL(fileURLWithPath: "/nonexistent/book.epub")),
-            configuration: SessionConfiguration(fonts: fonts()))
+            configuration: SessionConfiguration(fonts: fonts(), libraryDirectory: library))
     }
 }
 

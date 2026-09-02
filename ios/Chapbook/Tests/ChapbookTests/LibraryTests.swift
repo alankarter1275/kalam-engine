@@ -88,7 +88,7 @@ private func stocked(_ name: String) throws -> URL {
     // Idempotent on the name.
     #expect(try library.createCollection(named: "To Reread") == shelf)
 
-    let first = try #require(library.books().first)
+    let first = try #require(try library.books().first)
     try library.add(book: first.id, to: shelf)
 
     let listed = try library.collections()
@@ -113,7 +113,7 @@ private func stocked(_ name: String) throws -> URL {
     let session = try Session(
         source: .path(fixtures.appendingPathComponent("epub/minimal.epub")),
         configuration: SessionConfiguration(fonts: fonts(), libraryDirectory: dir))
-    let id = try #require(session.bookID())
+    let id = try #require(try session.bookID())
 
     let library = try Library(directory: dir)
     try library.setFinished(true, book: id)
