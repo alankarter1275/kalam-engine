@@ -155,17 +155,35 @@ not exist), FB2.
 
 The library is SQLite, bundled, and stays SQLite everywhere — replacing
 it per-platform would make the storage layer unshareable, which is the
-point of having one. The schema is already sync-shaped (`updated_at` on
-positions, soft deletes on the user tables), so a shell can mirror it
-into a sync service with no migration. One sync client exists: OPDS
-Progression 1.0 in `opds-client`, behind a non-default `progression`
-feature because the spec is an unreleased draft (INTEROP.md §6). It
-speaks the protocol and nothing more — binding it to chapbook positions
-is not built, and the open question is identity, not wire format, since
-a progression service is addressed by a per-publication URL while the
-library keys books by edition fingerprint. kosync and annotation
-interchange (W3C Web Annotation Protocol, which is where the OPDS
-maintainers point for annotations) remain backlog.
+point of having one. The schema is sync-shaped and now sync-bearing:
+`updated_at` on positions, soft deletes on the user tables, and a
+`book_sync` row per book holding the services it answers to and the
+revision each was last told about. Two protocols stand on it.
+`opds-client` speaks OPDS Progression 1.0 for positions, behind a
+non-default `progression` feature because the spec is an unreleased
+draft (INTEROP.md §6); `chapbook-annotations` speaks the W3C Web
+Annotation Protocol for marks, which is where the OPDS maintainers
+point. `chapbook-sync` is the loop between those two and the library —
+it owns its own connection rather than the session's, holds no schedule
+because when to sync is the shell's call, and never belongs on a UI
+thread.
+
+Identity was the open question and is now answered in one direction,
+which is the half worth stating precisely. In both protocols the URL
+*is* the publication's identity, while the library keys books by edition
+fingerprint; `chapbook_sync::targets_of` closes that gap for a book
+downloaded from a catalog, reading the two service links off the entry
+and recording them against the book's row. A book that arrives as bare
+bytes — sideloaded, or adopted from a descriptor — has no entry and so
+no service, and nothing maps a fingerprint back to one. That direction
+is still open, and it is a product question before it is a protocol one.
+
+What is *not* built is the reach. `chapbook lib sync` drives it from the
+terminal, and that is the whole of it: the engine is absent from the C
+ABI, from the JNI binding and from the Swift package, and
+`chapbook-reader` does not re-export it, so every shell that is not
+itself Rust holds a library it has no way to reconcile. kosync remains
+backlog.
 
 Three conclusions here are load-bearing for every host and worth
 restating wherever a shell author looks:

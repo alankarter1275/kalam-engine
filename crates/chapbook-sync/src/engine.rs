@@ -48,7 +48,9 @@ pub enum SyncError {
     Library(String),
     Progression(String),
     Container(String),
-    /// The book is not in the library, or has no services to talk to.
+    /// The book has no services to talk to, is not in the library, or has
+    /// been removed from the shelf — three ways of having nothing to
+    /// reconcile, and none of them a failure of this run.
     NotSyncable(BookId),
 }
 
@@ -167,6 +169,15 @@ impl SyncEngine {
 
     /// Reconcile one book: position first, then marks.
     pub fn sync_book(&mut self, book: BookId) -> Result<BookReport, SyncError> {
+        // A book that is not on the shelf does not sync, whichever door
+        // asked. [`Self::sync_all`] never offers one — its query filters
+        // removed books — and a caller naming an id directly has to get the
+        // same answer, or the two doors disagree about what the library
+        // holds. `book` reports `None` for a removed row as well as an
+        // absent one, which is exactly the distinction that matters here.
+        if self.library.book(book)?.is_none() {
+            return Err(SyncError::NotSyncable(book));
+        }
         let targets = self.library.sync_targets(book)?;
         if targets.progression_url.is_none() && targets.annotation_container.is_none() {
             return Err(SyncError::NotSyncable(book));
@@ -296,6 +307,15 @@ impl SyncEngine {
         if self.library.position_needs_push(book)? {
             // Both moved since they last agreed. Overwriting would throw
             // away where this reader is.
+            //
+            // A guard rather than the ordinary path, and worth saying which:
+            // `sync_position` pushes first whenever the local position is
+            // dirty, so a genuine two-sided disagreement is answered by the
+            // service and comes back as `Refused`, not from here. This fires
+            // only if the two dirty predicates ever disagree —
+            // `positions_needing_push` filters removed books and
+            // `position_needs_push` does not, which is why `sync_book`
+            // refuses a removed book before either is asked.
             return Ok(PositionReport::Conflict);
         }
 

@@ -543,6 +543,7 @@ dependencies = [
  "chapbook-pdf",
  "chapbook-reader",
  "chapbook-render-tinyskia",
+ "chapbook-sync",
  "clap",
  "cosmic-text",
  "image",

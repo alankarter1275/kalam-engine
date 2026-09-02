@@ -826,3 +826,339 @@ fn render_image_book(
         out.display()
     ))
 }
+
+// ---- lib sync ----
+
+/// Reconcile one book, or every book with a service, against what its
+/// catalog already holds.
+///
+/// The engine holds no schedule and this is the whole of the CLI's: a
+/// person typed the word. That is the honest shape for a terminal, and it
+/// is why nothing here retries — a failed book says so and the next
+/// invocation tries again.
+///
+/// Books are walked one at a time rather than through `sync_all`, because
+/// the `Authorization` is per origin and a shelf can hold books from two
+/// catalogs. `sync_all` shares one credential across the batch, which is
+/// right for a shell with one account and wrong for a terminal pointed at
+/// whatever is running locally.
+pub fn lib_sync(id: Option<i64>) -> Result<String> {
+    let dir = chapbook_library::Library::default_dir()?;
+    let library = chapbook_library::Library::open(&dir)?;
+
+    let books = match id {
+        Some(id) => {
+            let id = chapbook_library::BookId(id);
+            require_book(&library, id)?;
+            vec![id]
+        }
+        None => library.books_with_sync_targets()?,
+    };
+
+    // An empty shelf and a shelf where nothing syncs are different
+    // problems, and telling someone to sync when no book has a service
+    // sends them to the wrong one.
+    if books.is_empty() {
+        return Ok("no book in the library has a service to sync with\n\
+             a book learns one from the catalog entry it was downloaded from\n"
+            .to_string());
+    }
+
+    let mut engine = chapbook_sync::SyncEngine::new(
+        library,
+        std::sync::Arc::new(chapbook_opds::UreqHttp::new()),
+        device(&dir)?,
+    );
+
+    let mut out = String::new();
+    let (mut synced, mut failed, mut sideloaded) = (0usize, 0usize, 0usize);
+    for book in books {
+        let title = engine
+            .library()
+            .book(book)?
+            .map(|record| record.title)
+            .unwrap_or_else(|| "(gone)".to_string());
+        let targets = engine.library().sync_targets(book)?;
+        authorize(&mut engine, &targets);
+
+        out.push_str(&format!("#{} \"{}\"\n", book.0, title));
+        match engine.sync_book(book) {
+            Ok(report) => {
+                synced += 1;
+                out.push_str(&format!(
+                    "  {:<12} {}\n",
+                    "position",
+                    describe_position(&report.position)
+                ));
+                out.push_str(&format!(
+                    "  {:<12} {}\n",
+                    "marks",
+                    describe_marks(&report.annotations)
+                ));
+            }
+            // Having no service is a fact about the book, not a failure of
+            // this run — a sideloaded book is the ordinary case, and naming
+            // it "failed" sends someone looking for a broken network. Same
+            // words `lib show` uses, so the two agree.
+            Err(chapbook_sync::SyncError::NotSyncable(_)) => {
+                sideloaded += 1;
+                out.push_str(&format!("  {:<12} nothing (sideloaded)\n", "syncs"));
+            }
+            Err(e) => {
+                failed += 1;
+                out.push_str(&format!("  {:<12} {e}\n", "failed"));
+            }
+        }
+    }
+
+    let mut tally = vec![format!("{synced} synced")];
+    if failed > 0 {
+        tally.push(format!("{failed} failed"));
+    }
+    if sideloaded > 0 {
+        tally.push(format!("{sideloaded} with no service"));
+    }
+    out.push_str(&format!("\n{}\n", tally.join(", ")));
+    Ok(out)
+}
+
+/// The `Authorization` for the origin this book's services live on.
+///
+/// Same store and same shape as `opds_client`: the environment here, a
+/// platform keychain in a real shell. Keyed by origin so a service URL's
+/// per-user path never becomes part of a key — which is also why the URL
+/// itself is never printed.
+fn authorize(engine: &mut chapbook_sync::SyncEngine, targets: &chapbook_library::SyncTargets) {
+    use chapbook_core::{CredentialLookup, CredentialStore, Freshness};
+
+    let Some(url) = targets
+        .progression_url
+        .as_deref()
+        .or(targets.annotation_container.as_deref())
+    else {
+        return;
+    };
+    if let Some(key) = chapbook_core::CredentialKey::http_origin(url) {
+        if let CredentialLookup::Found(credential) =
+            chapbook_core::EnvCredentials.get(&key, Freshness::Cached)
+        {
+            engine.set_authorization(credential.authorization);
+        }
+    }
+}
+
+fn describe_position(report: &chapbook_sync::PositionReport) -> String {
+    use chapbook_sync::PositionReport::*;
+    match report {
+        Idle => "idle (nothing moved on either side)".to_string(),
+        Pushed => "pushed".to_string(),
+        Pulled => "pulled".to_string(),
+        // Not a failure: the service holds something newer, and saying so
+        // is the difference between "try again" and "you lost a page".
+        Refused(why) => format!("refused, the service is ahead ({why})"),
+        Conflict => "conflict — both moved, nothing overwritten".to_string(),
+        Failed(why) => format!("failed: {why}"),
+    }
+}
+
+fn describe_marks(report: &chapbook_sync::AnnotationReport) -> String {
+    let mut parts = Vec::new();
+    for (count, name) in [
+        (report.created, "created"),
+        (report.updated, "updated"),
+        (report.deleted, "deleted"),
+        (report.adopted, "adopted"),
+        (report.conflicts, "in conflict"),
+    ] {
+        if count > 0 {
+            parts.push(format!("{count} {name}"));
+        }
+    }
+    if parts.is_empty() {
+        parts.push("idle".to_string());
+    }
+    if let Some(why) = &report.failed {
+        parts.push(format!("container failed: {why}"));
+    }
+    parts.join(", ")
+}
+
+/// The device this CLI is, minted once and kept beside the library.
+///
+/// `Device` is host-owned identity — chapbook-sync neither generates nor
+/// persists one — and a fresh id per run would turn "last read on …" into
+/// a list of strangers. It lives in the library directory rather than a
+/// config dir so it travels with the library it names.
+fn device(dir: &Path) -> Result<chapbook_opds::progression::Device> {
+    let path = dir.join("device");
+    let id = match std::fs::read_to_string(&path) {
+        Ok(existing) if !existing.trim().is_empty() => existing.trim().to_string(),
+        _ => {
+            let id = mint_device_id();
+            std::fs::write(&path, &id).map_err(|e| {
+                chapbook_core::ChapbookError::Library(format!(
+                    "cannot write the device id to {}: {e}",
+                    path.display()
+                ))
+            })?;
+            id
+        }
+    };
+    Ok(chapbook_opds::progression::Device {
+        id,
+        name: "chapbook-cli".to_string(),
+    })
+}
+
+/// 16 bytes from the OS, shaped as a v4 `urn:uuid:`.
+///
+/// Read straight from `/dev/urandom` rather than through a crate: this is
+/// the only random number the CLI ever wants, and a dependency for it
+/// would travel into every build that links the workspace.
+fn mint_device_id() -> String {
+    let mut bytes = [0u8; 16];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))
+        .is_err()
+    {
+        // No `/dev` to read: hash what varies instead. Thinner entropy
+        // than a UUID deserves, but it is minted once and written down,
+        // and refusing to sync over it would serve nobody.
+        let seed = format!("{:?}-{}", std::time::SystemTime::now(), std::process::id());
+        let hex = chapbook_library::Library::fingerprint_of_bytes(seed.as_bytes());
+        for (slot, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks(2)) {
+            *slot = std::str::from_utf8(pair)
+                .ok()
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                .unwrap_or(0);
+        }
+    }
+    // Version 4, variant 1: a `urn:uuid:` a service reads is entitled to
+    // parse as one.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "urn:uuid:{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// Add books from a catalog: download, import, and record where they sync.
+///
+/// The missing half of `lib sync`. A book learns its services from the
+/// catalog entry it came from and from nowhere else — in both protocols
+/// the URL *is* the publication's identity — so a book that arrives any
+/// other way has nothing to reconcile against. `lib import` takes a path
+/// and cannot know any of that; this is the door that can.
+///
+/// Matched on a title substring rather than an id, because `opds ls`
+/// prints titles and an id nobody has seen is not an address a person can
+/// use.
+pub fn lib_add(feed_url: &str, matching: &str) -> Result<String> {
+    let client = opds_client(feed_url);
+    let feed = client.fetch(feed_url).map_err(describe_opds_error)?;
+
+    let needle = matching.to_lowercase();
+    let matched: Vec<&chapbook_opds::Entry> = feed
+        .entries
+        .iter()
+        .filter(|entry| entry.title.to_lowercase().contains(&needle))
+        .collect();
+    if matched.is_empty() {
+        return Err(chapbook_core::ChapbookError::Opds(format!(
+            "no entry in this feed has \"{matching}\" in its title ({} were offered)",
+            feed.entries.len()
+        )));
+    }
+
+    // Staging, and nothing more: the library copies what it imports into
+    // its own `books/`, so a download kept anywhere else is a second copy
+    // of every book that was ever added.
+    let staging = std::env::temp_dir().join(format!("chapbook-add-{}", std::process::id()));
+    std::fs::create_dir_all(&staging).map_err(|e| {
+        chapbook_core::ChapbookError::Library(format!("cannot make {}: {e}", staging.display()))
+    })?;
+
+    let mut lib = open_library()?;
+    let mut out = String::new();
+    for entry in matched {
+        let Some(acquisition) = entry.links.iter().find(|link| {
+            link.rel
+                .iter()
+                .any(|rel| rel.starts_with(chapbook_opds::REL_ACQ_PREFIX))
+        }) else {
+            out.push_str(&format!("\"{}\" has nothing to download\n", entry.title));
+            continue;
+        };
+
+        let file = staging.join(format!("{}.epub", file_stem_for(&entry.id)));
+        client
+            .download(
+                &chapbook_opds::resolve_url(feed_url, &acquisition.href),
+                &file,
+            )
+            .map_err(describe_opds_error)?;
+
+        let publication = open_publication(&file)?;
+        let id = lib.import(&file, publication.as_ref())?;
+        drop(publication);
+        let _ = std::fs::remove_file(&file);
+
+        // The parser already resolved these against the request URL — that
+        // is the crate's invariant, and a catalog does serve relative hrefs
+        // (progression links come back root-relative). Resolving again is a
+        // no-op on an absolute URL and is here so a service URL can never
+        // reach `set_sync_targets` as a path.
+        let (progression, container) = chapbook_sync::targets_of(entry);
+        let progression = progression.map(|href| chapbook_opds::resolve_url(feed_url, &href));
+        let container = container.map(|href| chapbook_opds::resolve_url(feed_url, &href));
+        lib.set_sync_targets(id, progression.as_deref(), container.as_deref())?;
+
+        let services = [
+            ("position", progression.is_some()),
+            ("annotations", container.is_some()),
+        ]
+        .iter()
+        .filter(|(_, present)| *present)
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "added #{} \"{}\" — syncs {}\n",
+            id.0,
+            entry.title,
+            if services.is_empty() {
+                "nothing (the catalog advertised no service)".to_string()
+            } else {
+                services.join(", ")
+            }
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&staging);
+    Ok(out)
+}
+
+/// A filename for a catalog id, which is opaque and may hold anything —
+/// comic-server ids carry slashes and dots.
+fn file_stem_for(id: &str) -> String {
+    let cleaned: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('-');
+    if trimmed.is_empty() {
+        "book".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
