@@ -474,6 +474,23 @@ impl Library {
     /// the same file finds its highlights again. The `deleted` column has
     /// been in the schema since v1 with nothing to set it — a shelf with no
     /// way to remove a book is the thing that noticed.
+    ///
+    /// **Local, and deliberately so.** Nothing here reaches a service. The
+    /// marks this book has already pushed stay in their container, because
+    /// removing a book from *this* shelf is not a statement about the
+    /// reader's other devices — deleting the remote copies would destroy
+    /// highlights everywhere over a tidy-up here. Deleting an individual
+    /// annotation is the action that propagates; this is not.
+    ///
+    /// What it does do is *freeze* the book's remote half: a removed book
+    /// is offered by neither `books_with_sync_targets` nor
+    /// `positions_needing_push`, and `SyncEngine::sync_book` refuses one.
+    /// Anything it still owed a service — a position, a mark, or the
+    /// delete of a mark — stays owed rather than being sent or discarded,
+    /// and resumes if the same file is imported again, which restores the
+    /// row and its sync targets together. The one lasting consequence is a
+    /// mark deleted here and never flushed: its container keeps it until
+    /// the book comes back.
     pub fn delete_book(&mut self, id: BookId) -> Result<()> {
         self.conn
             .execute("UPDATE books SET deleted = 1 WHERE id = ?1", params![id.0])

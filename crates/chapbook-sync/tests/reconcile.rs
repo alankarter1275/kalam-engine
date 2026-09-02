@@ -12,7 +12,7 @@ use chapbook_core::{LayeredLocator, Quote, LOCATOR_VERSION};
 use chapbook_library::{AnnotationKind, BookId, Library};
 use chapbook_opds::http::{HttpClient, HttpError, HttpMethod, HttpRequest, HttpResponse};
 use chapbook_opds::progression::Device;
-use chapbook_sync::{PositionReport, SyncEngine};
+use chapbook_sync::{PositionReport, SyncEngine, SyncError};
 use serde_json::json;
 
 const HOST: &str = "https://library.example.com";
@@ -871,5 +871,91 @@ fn another_books_marks_are_not_adopted_from_a_shared_container() {
             .unwrap(),
         None
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A book off the shelf does not sync, and both doors agree about it.
+///
+/// `sync_all` filters removed books in SQL and always has; `sync_book`
+/// named one directly and went ahead, which mattered because the two dirty
+/// predicates disagree about removed rows — `positions_needing_push`
+/// filters them and `position_needs_push` does not. A removed book with a
+/// dirty position took the pull path and came back `Conflict`, reporting
+/// "both sides moved" about a book that had simply been taken off the
+/// shelf. Worse, a removed book with a *clean* position adopted the
+/// service's, writing a position onto a row the reader had removed.
+#[test]
+fn a_removed_book_does_not_sync_from_either_door() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+    library.delete_book(book).unwrap();
+
+    // Nothing is routed: reaching the network at all is the failure this
+    // is watching for.
+    let http = FakeHttp::default();
+    let mut engine = engine(library, http.clone());
+
+    assert!(
+        engine
+            .library()
+            .books_with_sync_targets()
+            .unwrap()
+            .is_empty(),
+        "sync_all must not offer a removed book"
+    );
+    assert!(
+        matches!(engine.sync_book(book), Err(SyncError::NotSyncable(_))),
+        "sync_book must refuse a removed book"
+    );
+    assert!(
+        http.sent("PUT").is_empty() && http.sent("GET").is_empty(),
+        "a removed book must not reach the network"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Removing a book freezes what it owed a service rather than sending or
+/// discarding it, and importing the same file again thaws it.
+///
+/// This is the half of `delete_book` that is a decision rather than an
+/// oversight: the marks already pushed stay in their container, because
+/// tidying one shelf is not a statement about the reader's other devices.
+#[test]
+fn what_a_removed_book_owed_is_frozen_and_comes_back_with_it() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library.set_position(book, &locator(1200, 0.42)).unwrap();
+    assert!(library.position_needs_push(book).unwrap());
+
+    library.delete_book(book).unwrap();
+    // Owed, not sent and not dropped: the row still says so, and only the
+    // queries that feed a sync decline to offer it.
+    assert!(
+        library.position_needs_push(book).unwrap(),
+        "the debt survives the removal"
+    );
+    assert!(library.positions_needing_push().unwrap().is_empty());
+
+    // The same file back is the same book — `record` clears `deleted` — so
+    // the targets and the debt are both still there.
+    let path = dir.join("book.epub");
+    let metadata = chapbook_core::BookMetadata {
+        title: Some("Moby-Dick".into()),
+        identifier: Some("urn:isbn:9780000000000".into()),
+        ..Default::default()
+    };
+    let again = library.import(&path, &FakeBook(metadata)).unwrap();
+    assert_eq!(again, book, "the same bytes are the same book");
+    assert_eq!(
+        library.positions_needing_push().unwrap().len(),
+        1,
+        "what it owed is offered again once it is back on the shelf"
+    );
+    assert!(library
+        .sync_targets(book)
+        .unwrap()
+        .progression_url
+        .is_some());
     std::fs::remove_dir_all(&dir).ok();
 }
