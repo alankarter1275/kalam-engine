@@ -102,6 +102,10 @@ pub struct AnnotationReport {
     pub deleted: usize,
     /// Pulled from the container as marks this device had not seen.
     pub adopted: usize,
+    /// Marks this device already had, brought up to date with what another
+    /// device wrote. Distinct from `adopted`: nothing new arrived, an
+    /// existing mark now says something else.
+    pub refreshed: usize,
     /// Conflicts settled by re-reading the container and writing again —
     /// see [`SyncEngine::merge_edit`] for what "settled" costs each side.
     pub merged: usize,
@@ -439,7 +443,13 @@ impl SyncEngine {
             }
         }
 
-        // Pull: anything in the container this device has never seen.
+        // What the push half could not settle, read once: the pull walk
+        // must not adopt over an edit that still owes a write, and the set
+        // changes as the walk adds rows.
+        let owed = self.library.annotations_needing_push(book)?;
+
+        // Pull: anything in the container this device has not seen, and
+        // any change to what it has.
         let listed = self
             .container
             .all(container_url, Some(MAX_CONTAINER_PAGES))
@@ -460,14 +470,53 @@ impl SyncEngine {
             if stored.annotation.target.source != source {
                 continue;
             }
-            if self
-                .library
-                .annotation_by_remote_iri(&stored.iri)?
-                .is_some()
-            {
+            let mark = from_annotation(&stored.annotation);
+
+            // Known here already: this is an edit another device made, not
+            // a mark arriving. Skipping these is what made a container's
+            // changes invisible until this device happened to write into
+            // one and be refused.
+            if let Some(id) = self.library.annotation_by_remote_iri(&stored.iri)? {
+                // Deleted here — including a delete the container has not
+                // been told about yet. A pull must not put it back.
+                let Some(ours) = self.mark_of(book, id)? else {
+                    continue;
+                };
+                if same_content(&mark, &ours) {
+                    continue;
+                }
+                // Ours still owes a write, so both moved. The push half
+                // already had its say about this row *and* already counted
+                // it; adopting now would drop the local edit and counting
+                // again would report one disagreement as two.
+                if owed.iter().any(|pending| pending.id == id) {
+                    continue;
+                }
+                self.library.update_annotation(
+                    id,
+                    mark.kind,
+                    &mark.start,
+                    mark.end.as_ref(),
+                    mark.text.as_deref(),
+                    mark.color.as_deref(),
+                )?;
+                let revision = self
+                    .library
+                    .annotations_needing_push(book)?
+                    .into_iter()
+                    .find(|a| a.id == id)
+                    .map(|a| a.revision)
+                    .unwrap_or(0);
+                self.library.mark_annotation_synced(
+                    id,
+                    revision,
+                    &stored.iri,
+                    stored.etag.as_deref(),
+                )?;
+                report.refreshed += 1;
                 continue;
             }
-            let mark = from_annotation(&stored.annotation);
+
             let id = self.library.add_annotation(
                 book,
                 mark.kind,

@@ -968,6 +968,7 @@ fn describe_marks(report: &chapbook_sync::AnnotationReport) -> String {
         (report.updated, "updated"),
         (report.deleted, "deleted"),
         (report.adopted, "adopted"),
+        (report.refreshed, "refreshed"),
         (report.conflicts, "in conflict"),
     ] {
         if count > 0 {
