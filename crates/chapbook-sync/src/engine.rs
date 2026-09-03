@@ -106,6 +106,14 @@ pub struct AnnotationReport {
     /// device wrote. Distinct from `adopted`: nothing new arrived, an
     /// existing mark now says something else.
     pub refreshed: usize,
+    /// Marks another device deleted, taken off this shelf to match.
+    /// Distinct from `deleted`, which is this device's own deletions
+    /// reaching the container.
+    pub withdrawn: usize,
+    /// The container had more pages than the walk was allowed. The marks
+    /// reported are a prefix of it, and no deletion was inferred, because
+    /// absence from a listing that stopped early is not absence.
+    pub truncated: bool,
     /// Conflicts settled by re-reading the container and writing again —
     /// see [`SyncEngine::merge_edit`] for what "settled" costs each side.
     pub merged: usize,
@@ -361,11 +369,24 @@ impl SyncEngine {
         let source = self.source_iri(book, container_url)?;
         let mut report = AnnotationReport::default();
 
+        // What the container was known to hold before this pass wrote
+        // anything. Only these can be marks it has since dropped: one
+        // created a moment ago and not yet listed is a container that has
+        // not caught up, not a container that deleted it, and withdrawing
+        // on that evidence would throw away a mark this device had just
+        // made.
+        let known_before = self.library.synced_annotations(book)?;
+        // IRIs this pass wrote to, or tried to. A container that answered
+        // a write is a container that still has the mark, whatever its
+        // listing gets round to saying — so this outranks absence.
+        let mut touched: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         for pending in self.library.annotations_needing_push(book)? {
             match (pending.deleted, pending.remote_iri.clone()) {
                 // Deleted here and known there: tell the container, then
                 // let the row go.
                 (true, Some(iri)) => {
+                    touched.insert(iri.clone());
                     match self.container.delete(&iri, pending.remote_etag.as_deref()) {
                         Ok(()) | Err(ContainerError::Gone) => {
                             self.library.purge_annotation(pending.id)?;
@@ -393,6 +414,7 @@ impl SyncEngine {
                     let document = to_annotation(&mark, &source);
                     let result = match &remote_iri {
                         Some(iri) => {
+                            touched.insert(iri.clone());
                             self.container
                                 .update(iri, &document, pending.remote_etag.as_deref())
                         }
@@ -450,11 +472,15 @@ impl SyncEngine {
 
         // Pull: anything in the container this device has not seen, and
         // any change to what it has.
-        let listed = self
+        let listing = self
             .container
             .all(container_url, Some(MAX_CONTAINER_PAGES))
             .map_err(|e| SyncError::Container(e.to_string()))?;
-        for stored in listed {
+        report.truncated = !listing.complete;
+        // Every IRI the container still has for this book. What a complete
+        // listing does *not* mention, another device deleted.
+        let mut present = std::collections::HashSet::new();
+        for stored in listing.items {
             // A container is a container: the Web Annotation Protocol
             // defines no way to ask one for "the annotations on this
             // book", so what comes back is everything in it, for every
@@ -470,6 +496,7 @@ impl SyncEngine {
             if stored.annotation.target.source != source {
                 continue;
             }
+            present.insert(stored.iri.clone());
             let mark = from_annotation(&stored.annotation);
 
             // Known here already: this is an edit another device made, not
@@ -539,6 +566,24 @@ impl SyncEngine {
                 stored.etag.as_deref(),
             )?;
             report.adopted += 1;
+        }
+
+        // Deletions the other direction. Only from a listing that reached
+        // the end: a walk stopped by the page cap has seen a prefix, and
+        // treating what it missed as deleted would take a reader's
+        // highlights away on the strength of a container being large.
+        if listing.complete {
+            for (id, iri) in known_before {
+                if present.contains(&iri) || touched.contains(&iri) {
+                    continue;
+                }
+                // The same pair the push half uses for a tombstone: soft
+                // first so the row is purgeable, then gone. Nothing is owed
+                // to a container that has already dropped it.
+                self.library.delete_annotation(id)?;
+                self.library.purge_annotation(id)?;
+                report.withdrawn += 1;
+            }
         }
 
         Ok(report)

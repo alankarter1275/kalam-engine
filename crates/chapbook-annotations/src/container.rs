@@ -63,6 +63,23 @@ impl std::fmt::Display for ContainerError {
 
 impl std::error::Error for ContainerError {}
 
+/// Everything a walk of a container found, and whether that was all of it.
+///
+/// The completeness is the point of the type. A caller that treats a
+/// listing as the whole container is asking "what is in it", and a walk
+/// that stopped at `limit` cannot answer that — absence from a short
+/// listing means nothing at all, while absence from a complete one means
+/// the annotation is gone. Returning a bare `Vec` let those two be
+/// confused silently, and they are not the same fact.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listing {
+    pub items: Vec<StoredAnnotation>,
+    /// Whether the `next` chain was followed to its end. `false` when
+    /// `limit` stopped the walk, or when a container pointed a page at
+    /// itself.
+    pub complete: bool,
+}
+
 /// An annotation as the container holds it: the document, its IRI, and the
 /// entity tag that makes the next write safe.
 #[derive(Debug, Clone, PartialEq)]
@@ -305,36 +322,42 @@ impl AnnotationContainer {
         })
     }
 
-    /// Every annotation in the container, following pages to the end.
+    /// Every annotation in the container, following pages to the end —
+    /// and whether the end was reached.
     ///
     /// `limit` caps how many pages are walked, because a container is
     /// somebody else's and a runaway `next` chain should not be an
-    /// unbounded loop. `None` means no cap.
+    /// unbounded loop. `None` means no cap. Hitting the cap is reported
+    /// rather than silent: see [`Listing::complete`] for why a caller has
+    /// to know.
     pub fn all(
         &self,
         container_url: &str,
         limit: Option<usize>,
-    ) -> Result<Vec<StoredAnnotation>, ContainerError> {
-        let mut out = Vec::new();
+    ) -> Result<Listing, ContainerError> {
+        let mut items = Vec::new();
         let mut url = container_url.to_string();
         let mut seen = 0usize;
-        loop {
+        let complete = loop {
             let page = self.page(&url)?;
-            out.extend(page.items);
+            items.extend(page.items);
             seen += 1;
             match page.next {
                 Some(next) if limit.is_none_or(|limit| seen < limit) => {
                     // A container that points a page at itself would spin
-                    // forever otherwise.
+                    // forever otherwise. Not an end reached, either: what
+                    // lies past it was never seen.
                     if next == url {
-                        break;
+                        break false;
                     }
                     url = next;
                 }
-                _ => break,
+                // More pages than the cap allows.
+                Some(_) => break false,
+                None => break true,
             }
-        }
-        Ok(out)
+        };
+        Ok(Listing { items, complete })
     }
 
     // ---- plumbing ----

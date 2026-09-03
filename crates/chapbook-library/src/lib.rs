@@ -868,6 +868,29 @@ impl Library {
         rows.collect::<rusqlite::Result<_>>().map_err(db_err)
     }
 
+    /// Every live mark on this book the container has a copy of, as
+    /// `(id, IRI)`.
+    ///
+    /// The set a pull subtracts what it saw from. An IRI here and missing
+    /// from a *complete* listing is a mark another device deleted; missing
+    /// from a listing that stopped early is no evidence of anything, which
+    /// is why the completeness has to travel with the listing.
+    pub fn synced_annotations(&self, id: BookId) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, remote_iri
+                 FROM annotations
+                 WHERE book_id = ?1 AND deleted = 0 AND remote_iri IS NOT NULL
+                 ORDER BY id",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map(params![id.0], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(db_err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(db_err)
+    }
+
     /// Soft-delete an annotation (kept for future sync; never hard-deleted).
     /// Recolor an annotation. `None` hands it back to the reader's theme
     /// color.
