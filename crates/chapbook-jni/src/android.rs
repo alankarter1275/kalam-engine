@@ -13,7 +13,8 @@ use chapbook_reader::chapbook_core::{
     Action, ActionOutcome, EdgeSizes, FontSource, Key, KeyMap, PageMetrics, ReadingDirection,
     Rotation, Size, Source, TapZones,
 };
-use chapbook_reader::{Session, SessionConfig};
+use chapbook_reader::chapbook_core::{ReadingSettings, Theme};
+use chapbook_reader::{Session, SessionConfig, SessionEvent, SettingsScope};
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jintArray, jlong, jlongArray, jstring};
 use jni::JNIEnv;
@@ -32,6 +33,13 @@ struct Shell {
     session: Session,
     zones: TapZones,
     keys: KeyMap,
+    /// Session events drained from the engine and not yet handed to
+    /// Kotlin, plus the message belonging to the last one handed over —
+    /// `nextEvent` packs the numbers into a `jlong` and `eventMessage`
+    /// answers for the string half, because a JNI call per field is the
+    /// expensive shape and an object per event is the verbose one.
+    events: std::collections::VecDeque<SessionEvent>,
+    event_message: Option<String>,
 }
 
 /// A session, as a `jlong` Java holds onto. Null is the failure value, so
@@ -44,6 +52,8 @@ fn into_handle(session: Session) -> jlong {
         session,
         zones,
         keys: KeyMap::default(),
+        events: std::collections::VecDeque::new(),
+        event_message: None,
     };
     Box::into_raw(Box::new(shell)) as jlong
 }
@@ -1488,4 +1498,299 @@ fn ok(result: chapbook_reader::chapbook_core::Result<()>) -> jboolean {
             0
         }
     }
+}
+
+// ---- Background loads ----
+//
+// The half that was missing while this binding shipped `cbz` and `pdf`:
+// image books decode on the loader thread, and without a waker and a
+// poll nothing ever carried the decoded pages to a redraw — a comic
+// opened to its placeholder and stayed there. EPUBs lay out
+// synchronously, which is why the emulator runs never noticed.
+
+/// Install the wake callback: a `java.lang.Runnable` run once per landed
+/// load, **on the loader thread**. It must only get back to the main
+/// thread — `View.post`, a `Handler` — and poke [`pollLoaded`]; touching
+/// a view from inside it is the bug the reference shells' wakers all
+/// exist to prevent. Null clears it.
+///
+/// [`pollLoaded`]: Java_com_ophymx_chapbook_Native_pollLoaded
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_setWaker(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    waker: JObject,
+) {
+    let Some(s) = (unsafe { session(handle) }) else {
+        return;
+    };
+    if waker.is_null() {
+        s.set_waker(|| {});
+        return;
+    }
+    let (Ok(vm), Ok(waker)) = (env.get_java_vm(), env.new_global_ref(waker)) else {
+        return;
+    };
+    s.set_waker(move || {
+        // The loader thread fires many wakes over its life: attach it as a
+        // daemon once and let the JVM detach it when the thread exits,
+        // rather than paying an attach/detach round trip per wake.
+        if let Ok(mut env) = vm.attach_current_thread_permanently() {
+            let _ = env.call_method(waker.as_obj(), "run", "()V", &[]);
+        }
+    });
+}
+
+/// Take delivery of anything the loader finished. Returns whether the
+/// *visible* page changed, and therefore whether a repaint is worth
+/// doing — prefetch landings answer false on purpose.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pollLoaded(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.poll_loaded()) as jboolean
+}
+
+/// Whether any unit is still being loaded — for a shell that wants a
+/// spinner; one that just repaints on wake does not need it.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_hasPendingLoads(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.has_pending_loads()) as jboolean
+}
+
+// ---- Session events ----
+
+/// The next session event, oldest first, packed:
+/// `(kind << 56) | (spine << 28) | page`, or -1 when there is none.
+/// Kinds: 0 unit loaded, 1 unit failed (its message waits in
+/// [`eventMessage`]), 2 position changed, 3 book finished.
+///
+/// [`eventMessage`]: Java_com_ophymx_chapbook_Native_eventMessage
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_nextEvent(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    let Some(shell) = (unsafe { shell(handle) }) else {
+        return -1;
+    };
+    if shell.events.is_empty() {
+        shell.events.extend(shell.session.drain_events());
+    }
+    let Some(event) = shell.events.pop_front() else {
+        return -1;
+    };
+    shell.event_message = None;
+    let (kind, spine, page): (jlong, usize, usize) = match event {
+        SessionEvent::UnitLoaded { spine } => (0, spine, 0),
+        SessionEvent::UnitFailed { spine, message } => {
+            shell.event_message = Some(message);
+            (1, spine, 0)
+        }
+        SessionEvent::PositionChanged { spine, page } => (2, spine, page),
+        SessionEvent::BookFinished => (3, 0, 0),
+    };
+    (kind << 56) | ((spine as jlong & 0x0fff_ffff) << 28) | (page as jlong & 0x0fff_ffff)
+}
+
+/// The message belonging to the event [`nextEvent`] just returned — a
+/// unit failure's reason, for a person to read. Null for every other
+/// kind. Replaced by the next call.
+///
+/// [`nextEvent`]: Java_com_ophymx_chapbook_Native_nextEvent
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_eventMessage(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    match unsafe { shell(handle) }.and_then(|s| s.event_message.take()) {
+        Some(message) => string_out(&env, &message),
+        None => JObject::null().into_raw(),
+    }
+}
+
+// ---- The rest of the reading model ----
+
+/// How many spine units the book has — the denominator of "ch 2/8".
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_spineLen(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    unsafe { session(handle) }.map_or(-1, |s| s.spine_len() as jint)
+}
+
+/// How many pages the current unit laid out to; 0 until metrics arrive.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pageCount(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    unsafe { session(handle) }.map_or(-1, |s| s.page_count() as jint)
+}
+
+/// What kind of book: 0 EPUB, 1 comic, 2 PDF — the difference between a
+/// title bar saying "ch" and one saying "pg".
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_bookKind(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    use chapbook_reader::chapbook_core::BookKind;
+    unsafe { session(handle) }.map_or(-1, |s| match s.kind() {
+        BookKind::Epub => 0,
+        BookKind::Comic => 1,
+        BookKind::Pdf => 2,
+    })
+}
+
+// ---- Settings ----
+//
+// The C ABI's lesson, kept: a flat setter cannot carry the font family,
+// so the family travels on its own calls and the flat setter preserves
+// whatever family is in force rather than clearing it.
+
+/// The current settings, flattened:
+/// `[base_font_px, line_height, justify, publisher_styles, theme]`,
+/// booleans as 0/1 and the theme as 0 light, 1 sepia, 2 dark.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_settings(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jfloatArray {
+    let values: Vec<jfloat> = unsafe { session(handle) }
+        .map(|s| {
+            let settings = s.settings();
+            vec![
+                settings.base_font_px,
+                settings.line_height,
+                settings.justify as u8 as jfloat,
+                settings.publisher_styles as u8 as jfloat,
+                match settings.theme {
+                    Theme::Light => 0.0,
+                    Theme::Sepia => 1.0,
+                    Theme::Dark => 2.0,
+                },
+            ]
+        })
+        .unwrap_or_default();
+    float_array_out(&env, &values)
+}
+
+/// Replace the scalar settings, preserving the font family. `thisBook`
+/// scopes the change to the open book instead of the reader default;
+/// both persist through the library when the session has one.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_setSettings(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    base_font_px: jfloat,
+    line_height: jfloat,
+    justify: jboolean,
+    publisher_styles: jboolean,
+    theme: jint,
+    this_book: jboolean,
+) {
+    let Some(s) = (unsafe { session(handle) }) else {
+        return;
+    };
+    let settings = ReadingSettings {
+        base_font_px,
+        line_height,
+        justify: justify != 0,
+        publisher_styles: publisher_styles != 0,
+        theme: match theme {
+            1 => Theme::Sepia,
+            2 => Theme::Dark,
+            _ => Theme::Light,
+        },
+        ..s.settings().clone()
+    };
+    let scope = if this_book != 0 {
+        SettingsScope::ThisBook
+    } else {
+        SettingsScope::Global
+    };
+    s.set_settings(settings, scope);
+}
+
+/// The reader's chosen typeface, or null for the publisher's.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_fontFamily(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    match unsafe { session(handle) }.and_then(|s| s.settings().font_family.clone()) {
+        Some(family) => string_out(&env, &family),
+        None => JObject::null().into_raw(),
+    }
+}
+
+/// Choose a typeface by family name — one of [`fontFamilies`]' answers —
+/// or null to give the publisher's back.
+///
+/// [`fontFamilies`]: Java_com_ophymx_chapbook_Native_fontFamilies
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_setFontFamily(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    family: JString,
+    this_book: jboolean,
+) {
+    let Some(s) = (unsafe { session(handle) }) else {
+        return;
+    };
+    let family = if family.is_null() {
+        None
+    } else {
+        string_in(&mut env, &family)
+    };
+    let scope = if this_book != 0 {
+        SettingsScope::ThisBook
+    } else {
+        SettingsScope::Global
+    };
+    s.set_font_family(family, scope);
+}
+
+/// Every family the session's font database offers — what a picker lists.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_fontFamilies(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jni::sys::jobjectArray {
+    let families = unsafe { session(handle) }
+        .map(|s| s.font_families())
+        .unwrap_or_default();
+    let Ok(class) = env.find_class("java/lang/String") else {
+        return JObject::null().into_raw();
+    };
+    let Ok(array) = env.new_object_array(families.len() as jint, class, JObject::null()) else {
+        return JObject::null().into_raw();
+    };
+    for (index, family) in families.iter().enumerate() {
+        let Ok(value) = env.new_string(family) else {
+            continue;
+        };
+        let _ = env.set_object_array_element(&array, index as jint, value);
+    }
+    array.into_raw()
 }
