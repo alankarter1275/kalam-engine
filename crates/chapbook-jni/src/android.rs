@@ -2069,8 +2069,12 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_syncRequestBook(
 }
 
 /// The next report, flattened: `[kind, book, position, created, updated,
-/// deleted, adopted, refreshed, merged, conflicts, books]`, or an empty
-/// array when none waits. Kinds: 0 book, 1 book failed, 2 finished;
+/// deleted, adopted, refreshed, merged, conflicts, books, withdrawn,
+/// truncated]`, or an empty array when none waits. The last two ride at
+/// the end so the indices before them never moved: `withdrawn` is
+/// another device's deletions arriving, `truncated` is 1 when the
+/// container had more pages than one pass reads — no deletion was
+/// inferred from a listing that stopped early. Kinds: 0 book, 1 book failed, 2 finished;
 /// positions: 0 idle, 1 pushed, 2 pulled, 3 refused, 4 conflict,
 /// 5 failed. The strings ride [`syncDetail`] and [`syncMarksError`].
 ///
@@ -2094,7 +2098,7 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_syncNext(
     };
     sync.detail = None;
     sync.marks_error = None;
-    let mut values = [0 as jlong; 11];
+    let mut values = [0 as jlong; 13];
     match event {
         SyncEvent::Book(report) => {
             values[0] = 0;
@@ -2121,6 +2125,8 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_syncNext(
             values[7] = marks.refreshed as jlong;
             values[8] = marks.merged as jlong;
             values[9] = marks.conflicts as jlong;
+            values[11] = marks.withdrawn as jlong;
+            values[12] = marks.truncated as jlong;
             sync.marks_error = marks.failed;
         }
         SyncEvent::Failed { book, reason } => {

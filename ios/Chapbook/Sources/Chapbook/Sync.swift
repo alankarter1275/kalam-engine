@@ -63,12 +63,22 @@ public enum SyncReport: Hashable, Sendable {
         /// Marks: already known here, brought up to date with what
         /// another device wrote.
         public let marksRefreshed: Int
+        /// Marks: another device's deletions arriving — taken off this
+        /// shelf because a complete container listing no longer holds
+        /// them. Distinct from `marksDeleted`, this device's own
+        /// deletions reaching the container.
+        public let marksWithdrawn: Int
         /// Marks: conflicts settled by re-reading the container — both
         /// edits survive, nothing overwritten.
         public let marksMerged: Int
         /// Marks: still owing a write after a merge was attempted. The
         /// next pass tries again.
         public let marksConflicts: Int
+        /// The container had more pages than one pass reads: the pull
+        /// saw a prefix and no deletion was inferred, so a mark another
+        /// device removed may still be sitting here. Changes what the
+        /// counts above mean, which is why it is worth showing.
+        public let listingTruncated: Bool
         /// The container could not be reached; whatever was pushed before
         /// it failed stands. `nil` when the mark half ran to the end.
         public let marksError: String?
@@ -189,8 +199,10 @@ public final class SyncWorker {
                     marksDeleted: report.marks_deleted,
                     marksAdopted: report.marks_adopted,
                     marksRefreshed: report.marks_refreshed,
+                    marksWithdrawn: report.marks_withdrawn,
                     marksMerged: report.marks_merged,
                     marksConflicts: report.marks_conflicts,
+                    listingTruncated: report.listing_truncated,
                     marksError: report.marks_error.map { String(cString: $0) }))
         case CB_SYNC_BOOK_FAILED:
             return .bookFailed(

@@ -129,12 +129,22 @@ pub struct cb_sync_report {
     /// Marks: already known here, brought up to date with what another
     /// device wrote.
     pub marks_refreshed: usize,
+    /// Marks: another device's deletions arriving — taken off this shelf
+    /// because a complete container listing no longer holds them.
+    /// Distinct from `marks_deleted`, which is this device's own
+    /// deletions reaching the container.
+    pub marks_withdrawn: usize,
     /// Marks: conflicts settled by re-reading the container — both edits
     /// survive, nothing overwritten.
     pub marks_merged: usize,
     /// Marks: still owing a write after a merge was attempted. The next
     /// pass tries again.
     pub marks_conflicts: usize,
+    /// The container had more pages than one pass reads, so the pull saw
+    /// a prefix and no deletion was inferred — a mark another device
+    /// removed may still be sitting here. Worth saying to the reader,
+    /// because it changes what the counts above mean.
+    pub listing_truncated: bool,
     /// The container could not be reached; whatever was pushed before it
     /// failed stands. Null when the mark half ran to the end.
     pub marks_error: *const c_char,
@@ -420,8 +430,10 @@ pub unsafe extern "C" fn cb_sync_next(sync: *mut cb_sync, out: *mut cb_sync_repo
                 marks_deleted: 0,
                 marks_adopted: 0,
                 marks_refreshed: 0,
+                marks_withdrawn: 0,
                 marks_merged: 0,
                 marks_conflicts: 0,
+                listing_truncated: false,
                 marks_error: std::ptr::null(),
                 books: 0,
             };
@@ -449,8 +461,10 @@ pub unsafe extern "C" fn cb_sync_next(sync: *mut cb_sync, out: *mut cb_sync_repo
                     report.marks_deleted = marks.deleted;
                     report.marks_adopted = marks.adopted;
                     report.marks_refreshed = marks.refreshed;
+                    report.marks_withdrawn = marks.withdrawn;
                     report.marks_merged = marks.merged;
                     report.marks_conflicts = marks.conflicts;
+                    report.listing_truncated = marks.truncated;
                     if let Some(why) = &marks.failed {
                         report.marks_error = keep(why);
                     }
