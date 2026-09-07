@@ -28,10 +28,11 @@ internal sealed class FakeTransport : HttpTransport
     /// <summary>Set from the ABI's finalizer when the engine lets go.</summary>
     internal int Released;
 
-    // `protected` and not `protected internal`: outside the declaring
-    // assembly the internal half is invisible, so this is what an override
-    // of it looks like from a host's own code.
-    protected override void OnReleased() => Interlocked.Increment(ref Released);
+    // `protected internal` here only because this assembly is
+    // internals-visible for the layout gate. A host, which is not, writes
+    // `protected override` — outside the declaring assembly the internal
+    // half is invisible and C# refuses to widen it.
+    protected internal override void OnReleased() => Interlocked.Increment(ref Released);
 
     /// <summary>What to answer, by URL. Anything unlisted is a 404.</summary>
     internal Dictionary<string, (ushort Status, string ContentType, string Body)> Answers { get; }

@@ -91,6 +91,29 @@ worker closing, or a configuration disposed without ever being opened.
 A host that built something for the engine's sake releases it there,
 which is the only moment nothing is still inside a callback.
 
+## The layout gate
+
+`LayoutTests` reads the checked-in header back and compares every struct
+this binding passes by value against it, field for field and in order. It
+is the .NET half of what `chapbook-ffi/tests/header.rs` does for the Rust
+half.
+
+It exists because disabling runtime marshalling catches a *non-blittable*
+field and nothing else. It cannot see a field **inserted into the middle**
+of a struct — and that is not hypothetical: `cb_sync_report` grew
+`marks_withdrawn` after `marks_refreshed` and `listing_truncated` after
+`marks_conflicts`, and a binding still holding the old shape read every
+later field from the wrong offset, reporting plausible numbers rather than
+crashing. Two behavioural tests happened to catch it; this one names the
+struct and the field.
+
+`cb_abi_version()` could not have helped. It reports the workspace
+version, which has not moved since the ABI was written, so two builds with
+incompatible struct layouts answer with the same number. Until that
+changes, the only real defence is building the binding and the DLL from
+the same checkout — which is what `build-native.ps1` and the CI job do —
+plus this gate for when somebody does not.
+
 ## Testing sync without a server
 
 `Chapbook.Tests` fakes the transport rather than opening a socket, and
@@ -103,7 +126,7 @@ unreachable service is one book's problem and not the batch's, a book
 that has left the shelf is *reported* rather than silently skipped, and
 the waker fires on the worker's thread and not the caller's.
 
-## Five things the ABI does not say out loud
+## Six things the ABI does not say out loud
 
 Each of these was found by a test in `Chapbook.Tests` failing, and each is
 a bug a host would otherwise ship.
@@ -130,6 +153,13 @@ a bug a host would otherwise ship.
   that persists and does nothing else; the header does not carry it, so
   `Suspend()` — which also closes the database and drops the caches — is
   the only way to leave a bookmark. Disposing a session does not save.
+- **`SyncReport` counts two different deletions.** `MarksDeleted` is this
+  device's own deletions reaching the container; `MarksWithdrawn` is
+  another device's arriving, taken off this shelf because a complete
+  listing no longer holds them. And `ListingTruncated` says the pull saw
+  only a prefix, so no deletion was inferred — which means zero
+  withdrawals from a truncated listing is not evidence that nothing was
+  withdrawn.
 - **Pixels are premultiplied RGBA, not BGRA.** Windows imaging is mostly
   BGRA, including a `WriteableBitmap`'s back buffer, so a host either
   swizzles or asks its surface for RGBA. Getting it wrong renders a page

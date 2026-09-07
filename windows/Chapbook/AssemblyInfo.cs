@@ -12,3 +12,9 @@ using System.Runtime.CompilerServices;
 // the conversion happens once, in the public types, rather than invisibly
 // at ninety call sites.
 [assembly: DisableRuntimeMarshalling]
+
+// The test project reads the `Native*` structs by reflection and compares
+// them field for field against the checked-in header. They are internal
+// because nothing outside this assembly should name a raw layout, and the
+// gate that keeps those layouts honest is the one exception.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Chapbook.Tests")]

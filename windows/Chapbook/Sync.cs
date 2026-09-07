@@ -66,11 +66,24 @@ public enum PositionOutcome : uint
 /// <param name="MarksDeleted">Deletes carried out on the container.</param>
 /// <param name="MarksAdopted">Pulled down as marks this device had not seen.</param>
 /// <param name="MarksRefreshed">Already known here, brought up to date.</param>
+/// <param name="MarksWithdrawn">
+/// Another device's deletions arriving — taken off this shelf because a
+/// complete container listing no longer holds them. Distinct from
+/// <paramref name="MarksDeleted"/>, which is this device's own deletions
+/// reaching the container.
+/// </param>
 /// <param name="MarksMerged">
 /// Conflicts settled by re-reading the container — both edits survive and
 /// nothing was overwritten.
 /// </param>
 /// <param name="MarksConflicts">Still owing a write. The next pass tries again.</param>
+/// <param name="ListingTruncated">
+/// The container had more pages than one pass reads, so the pull saw a
+/// prefix and inferred no deletion: a mark another device removed may
+/// still be sitting here. Worth telling the reader, because it changes
+/// what <paramref name="MarksWithdrawn"/> means — zero withdrawals from a
+/// truncated listing is not evidence that nothing was withdrawn.
+/// </param>
 /// <param name="MarksError">
 /// The container could not be reached; whatever was pushed before it
 /// failed stands. <c>null</c> when the mark half ran to the end.
@@ -89,8 +102,10 @@ public readonly record struct SyncReport(
     int MarksDeleted,
     int MarksAdopted,
     int MarksRefreshed,
+    int MarksWithdrawn,
     int MarksMerged,
     int MarksConflicts,
+    bool ListingTruncated,
     string? MarksError,
     int Books);
 
@@ -229,8 +244,10 @@ public sealed class SyncWorker : IDisposable
             (int)r.MarksDeleted,
             (int)r.MarksAdopted,
             (int)r.MarksRefreshed,
+            (int)r.MarksWithdrawn,
             (int)r.MarksMerged,
             (int)r.MarksConflicts,
+            r.ListingTruncated != 0,
             r.MarksError == 0 ? null : Marshal.PtrToStringUTF8(r.MarksError),
             (int)r.Books);
     }
@@ -292,8 +309,10 @@ internal struct NativeSyncReport
     public nuint MarksDeleted;
     public nuint MarksAdopted;
     public nuint MarksRefreshed;
+    public nuint MarksWithdrawn;
     public nuint MarksMerged;
     public nuint MarksConflicts;
+    public byte ListingTruncated;
     public nint MarksError;
     public nuint Books;
 }
