@@ -37,6 +37,17 @@ mod worker;
 pub use engine::{AnnotationReport, BookReport, PositionReport, SyncEngine, SyncError, SyncResult};
 pub use worker::{SyncCommand, SyncEvent, SyncWorker};
 
+// What a caller constructing an engine has to name: `SyncEngine::new`
+// takes a `Device` and an `HttpClient`, and a custom transport's write
+// half speaks `HttpMethod`. Re-exported so that caller depends on this
+// crate alone rather than chasing the types through two more.
+pub use chapbook_opds::http::HttpMethod;
+pub use chapbook_opds::progression::Device;
+/// The bundled desktop transport, for callers that want the default.
+#[cfg(feature = "ureq")]
+pub use chapbook_opds::UreqHttp;
+pub use chapbook_opds::{HttpClient, HttpError, HttpRequest, HttpResponse};
+
 use chapbook_annotations::REL_ANNOTATION_SERVICE;
 use chapbook_opds::progression::REL_PROGRESSION;
 use chapbook_opds::Entry;

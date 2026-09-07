@@ -22,6 +22,11 @@ crate-type = ["cdylib", "rlib"]
 # `opds` stays off: it is the only feature that pulls in TLS, and the
 # trust-store question is not settled here (see `android/README.md`).
 chapbook-reader = { workspace = true, features = ["library", "cbz", "pdf", "svg", "mathml"] }
+# Deliberately without `ureq`: a bundled TLS stack would trust
+# webpki-roots and ignore Android's user CAs, enterprise roots and
+# network security config. The transport comes from Kotlin, over the
+# platform's own networking — which is also the C ABI's answer.
+chapbook-sync = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

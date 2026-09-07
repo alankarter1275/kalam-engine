@@ -744,6 +744,130 @@ pub unsafe extern "C" fn cb_library_set_finished(
     })
 }
 
+/// Record where a book syncs: its OPDS Progression endpoint and its Web
+/// Annotation container, either or both, null to hold none.
+///
+/// This is where a book *learns* its services, and the only place it
+/// can: in both protocols the URL is the publication's identity, so a
+/// host that downloaded from a catalog records the two service links off
+/// the entry it downloaded — a sideloaded book has no entry and so no
+/// services. Both URLs are opaque and may embed a per-user key: never
+/// log them, and key any credential by origin, not by the URL.
+///
+/// Calling again replaces both values; two nulls make the book local
+/// again without touching what it still owes (a removed service simply
+/// stops being asked).
+#[no_mangle]
+pub unsafe extern "C" fn cb_library_set_sync_targets(
+    library: *mut cb_library,
+    book: i64,
+    progression_url: *const c_char,
+    annotation_container: *const c_char,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        with_library!((library, book, progression_url, annotation_container) {
+            use chapbook_reader::chapbook_library::BookId;
+            clear_last_error();
+            let library = library_mut!(library);
+            // Null is "no service", not an error — unlike every other
+            // string this module takes, absence is half the point here.
+            let progression = if progression_url.is_null() {
+                None
+            } else {
+                // SAFETY: the header's contract.
+                match unsafe { crate::abi::str_in(progression_url, "progression_url") } {
+                    Some(url) => Some(url),
+                    None => return cb_status::CB_ERR_INVALID_UTF8,
+                }
+            };
+            let container = if annotation_container.is_null() {
+                None
+            } else {
+                // SAFETY: the header's contract.
+                match unsafe { crate::abi::str_in(annotation_container, "annotation_container") } {
+                    Some(url) => Some(url),
+                    None => return cb_status::CB_ERR_INVALID_UTF8,
+                }
+            };
+            match library.inner.set_sync_targets(BookId(book), progression, container) {
+                Ok(()) => cb_status::CB_OK,
+                Err(e) => crate::error::from_error(&e),
+            }
+        })
+    })
+}
+
+/// The progression service this book syncs its position to.
+/// `CB_ERR_UNAVAILABLE` when it has none — the ordinary state of a
+/// sideloaded book, not an error worth surfacing.
+#[no_mangle]
+pub unsafe extern "C" fn cb_library_sync_progression_url(
+    library: *const cb_library,
+    book: i64,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        with_library!((library, book, buf, cap, needed) {
+            clear_last_error();
+            sync_target(library, book, buf, cap, needed, |targets| {
+                targets.progression_url
+            })
+        })
+    })
+}
+
+/// The Web Annotation container this book syncs its marks with.
+/// `CB_ERR_UNAVAILABLE` when it has none.
+#[no_mangle]
+pub unsafe extern "C" fn cb_library_sync_annotation_container(
+    library: *const cb_library,
+    book: i64,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        with_library!((library, book, buf, cap, needed) {
+            clear_last_error();
+            sync_target(library, book, buf, cap, needed, |targets| {
+                targets.annotation_container
+            })
+        })
+    })
+}
+
+/// The one shape of both target getters: look up, pick a field, answer
+/// absence honestly.
+#[cfg(feature = "library")]
+unsafe fn sync_target(
+    library: *const cb_library,
+    book: i64,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+    pick: impl FnOnce(chapbook_reader::chapbook_library::SyncTargets) -> Option<String>,
+) -> cb_status {
+    use chapbook_reader::chapbook_library::BookId;
+    // SAFETY: a handle from `cb_library_open`, not yet closed.
+    let Some(library) = (unsafe { library.as_ref() }) else {
+        return fail(cb_status::CB_ERR_NULL_ARGUMENT, "library is null");
+    };
+    let targets = match library.inner.sync_targets(BookId(book)) {
+        Ok(targets) => targets,
+        Err(e) => return crate::error::from_error(&e),
+    };
+    let Some(url) = pick(targets) else {
+        return fail(
+            cb_status::CB_ERR_UNAVAILABLE,
+            format!("book #{book} has no such service"),
+        );
+    };
+    // SAFETY: the header's contract for the buffer triple.
+    unsafe { str_out(&url, buf, cap, needed) }
+}
+
 /// The library row the open session is reading.
 ///
 /// The join between the reading view and the shelf: a session *imports*

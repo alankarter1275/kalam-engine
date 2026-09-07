@@ -79,7 +79,8 @@
 //! later; none of it is blocked by anything here — the shelf
 //! ([`cb_library_open`] and its neighbours) is the proof, having arrived
 //! exactly that way once an app needed to open onto something other than a
-//! book.
+//! book, and sync ([`cb_sync_open`] and its neighbours) arrived the same
+//! way once the desktop application had shown the shape a driver needs.
 //!
 //! Two things the shelf deliberately did *not* bring with it. There is no
 //! `cb_library_import`: a session imports the book it opens, so a host
@@ -114,6 +115,7 @@ mod input;
 mod library;
 mod logging;
 mod session;
+mod sync;
 
 pub use config::{
     cb_config, cb_config_free, cb_config_new, cb_config_set_cache_budget,
@@ -124,8 +126,9 @@ pub use config::{
 pub use error::cb_status;
 pub use http::{
     cb_config_set_http_transport, cb_http_download_fn, cb_http_finalize_fn, cb_http_get_fn,
-    cb_http_header, cb_http_request, cb_http_response, cb_http_response_append_body,
-    cb_http_response_fail, cb_http_response_set_content_type, cb_http_response_set_status,
+    cb_http_header, cb_http_request, cb_http_response, cb_http_response_add_header,
+    cb_http_response_append_body, cb_http_response_fail, cb_http_response_set_content_type,
+    cb_http_response_set_status, cb_http_send_fn,
 };
 pub use input::{
     cb_action, cb_action_outcome, cb_char_default_action, cb_key, cb_key_default_action,
@@ -135,6 +138,10 @@ pub use input::{
 pub use library::*;
 pub use logging::{cb_log, cb_log_enabled, cb_log_fn, cb_log_level, cb_set_log_callback};
 pub use session::*;
+pub use sync::{
+    cb_sync, cb_sync_close, cb_sync_kind, cb_sync_next, cb_sync_open, cb_sync_position,
+    cb_sync_report, cb_sync_request_all, cb_sync_request_book,
+};
 
 /// The version of this ABI, as `major * 10000 + minor * 100 + patch`.
 ///
@@ -189,6 +196,10 @@ pub enum cb_capability {
     /// Block MathML renders natively. Without it every `<math>` takes the
     /// EPUB altimg/alttext fallback.
     CB_CAP_MATHML = 64,
+    /// Positions and marks reconcile with a book's services. Without it
+    /// `cb_sync_open` declines and the library is read and written only
+    /// locally.
+    CB_CAP_SYNC = 128,
 }
 
 /// A bitmask of [`cb_capability`].
@@ -210,6 +221,9 @@ pub extern "C" fn cb_capabilities() -> u32 {
         }
         if cfg!(feature = "ureq") {
             bits |= cb_capability::CB_CAP_BUNDLED_HTTP as u32;
+        }
+        if cfg!(feature = "sync") {
+            bits |= cb_capability::CB_CAP_SYNC as u32;
         }
         if cfg!(feature = "svg") {
             bits |= cb_capability::CB_CAP_SVG as u32;

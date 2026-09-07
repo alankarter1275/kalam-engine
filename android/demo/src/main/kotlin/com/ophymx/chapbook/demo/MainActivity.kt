@@ -68,7 +68,13 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.WRAP_CONTENT,
         )
 
-        val book = copyAssetToFiles("book.epub")
+        // `--es book <path>` from adb opens that file instead of the
+        // bundled asset — how a comic or PDF gets driven onto the screen
+        // without a finger on the document picker.
+        val book = intent.getStringExtra("book")
+            ?.let(::File)
+            ?.takeIf { it.exists() }
+            ?: copyAssetToFiles("book.epub")
         bookPath = book.absolutePath
         show(Session.open(book.absolutePath, filesDir.absolutePath), "could not open ${book.absolutePath}")
     }

@@ -602,6 +602,7 @@ version = "0.1.0"
 dependencies = [
  "cbindgen",
  "chapbook-reader",
+ "chapbook-sync",
  "log",
 ]
 
@@ -611,6 +612,7 @@ version = "0.1.0"
 dependencies = [
  "android_logger",
  "chapbook-reader",
+ "chapbook-sync",
  "jni 0.21.1",
  "log",
 ]
