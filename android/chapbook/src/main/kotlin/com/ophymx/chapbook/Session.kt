@@ -393,6 +393,38 @@ class Session private constructor(private var handle: Long) : AutoCloseable {
     /** Jump to a mark. Returns whether the reader moved. */
     fun gotoAnnotation(id: Long): Boolean = Native.gotoAnnotation(handle, id)
 
+    // ---- Page zoom (image books) ----
+
+    /**
+     * The pinch: zoom around a focal point, `ScaleGestureDetector`'s
+     * numbers straight in. Image books only — false on prose, where the
+     * same gesture is a font-size change ([apply] with `font-up` /
+     * `font-down`). Zoom is view state: nothing persists it, and it
+     * survives a page turn (call `setPageZoom(1f, …)` on turn to reset).
+     */
+    fun setPageZoom(zoom: Float, focusX: Float, focusY: Float): Boolean =
+        Native.setPageZoom(handle, zoom, focusX, focusY)
+
+    /**
+     * Pan the zoomed page by a drag delta, clamped at the edges. False
+     * at fit — the drag then falls through to a selection or swipe.
+     */
+    fun panPage(dx: Float, dy: Float): Boolean = Native.panPage(handle, dx, dy)
+
+    /** The current zoom, 1.0 at fit. */
+    val pageZoom: Float get() = Native.pageZoom(handle)
+
+    /**
+     * The current pan in page units — with [pageZoom], the forward map
+     * for overlays: `view = fit * zoom + pan`. Output geometry like
+     * [rangeRects] stays in fit-page space on purpose.
+     */
+    val pagePan: Pair<Float, Float>
+        get() {
+            val values = Native.pagePan(handle)
+            return if (values.size == 2) values[0] to values[1] else 0f to 0f
+        }
+
     /** Every mark this book carries, ordered by progression. */
     fun annotations(): List<Annotation> {
         val count = Native.annotationCount(handle)

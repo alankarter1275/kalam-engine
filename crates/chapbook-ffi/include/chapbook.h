@@ -2397,6 +2397,47 @@ cb_status cb_session_link_at(struct cb_session *session,
 cb_status cb_session_follow_link(struct cb_session *session, const char *href, bool *moved);
 
 /**
+ * Zoom the page around a focal point in panel coordinates — the pinch.
+ * Image books only, clamped to `[1.0, 8.0]`, 1.0 returning to fit;
+ * `*changed` reports whether the view moved. **Always false on
+ * reflowable text**, where the same gesture means "make the text
+ * bigger" — a settings change the shell maps to the `FontUp`/`FontDown`
+ * actions itself. Zoom is view state: nothing persists it, and it
+ * survives a page turn on purpose (a shell wanting turn-resets sets
+ * 1.0 on turn).
+ *
+ * Input crossing this boundary is mapped through the zoom
+ * automatically. Output geometry — `cb_session_range_rects`, the text
+ * surface — stays in fit-page space; a shell drawing overlays on a
+ * zoomed page maps forward with [`cb_session_page_zoom`] and
+ * [`cb_session_page_pan`]: `view = fit * zoom + pan`.
+ */
+cb_status cb_session_set_page_zoom(struct cb_session *session,
+                                   float zoom,
+                                   float focus_x,
+                                   float focus_y,
+                                   bool *changed);
+
+/**
+ * Pan the zoomed page by a pointer delta in panel coordinates, clamped
+ * at the page's edges. `*changed` is false at fit — how a shell knows
+ * the same drag should fall through to whatever an unzoomed drag means
+ * (a selection, a swipe turn).
+ */
+cb_status cb_session_pan_page(struct cb_session *session, float dx, float dy, bool *changed);
+
+/**
+ * The current zoom, 1.0 at fit.
+ */
+cb_status cb_session_page_zoom(const struct cb_session *session, float *zoom);
+
+/**
+ * The current pan in page units — with the zoom, the forward map for a
+ * shell's own overlays.
+ */
+cb_status cb_session_page_pan(const struct cb_session *session, float *x, float *y);
+
+/**
  * Start a sync worker over the library at `library_dir`.
  *
  * `device_id` and `device_name` identify this device to a progression

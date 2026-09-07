@@ -79,6 +79,10 @@ internal object Native {
     external fun annotation(handle: Long, index: Int): LongArray
     external fun annotationText(handle: Long, index: Int): String?
     external fun annotationColor(handle: Long, index: Int): String?
+    external fun setPageZoom(handle: Long, zoom: Float, focusX: Float, focusY: Float): Boolean
+    external fun panPage(handle: Long, dx: Float, dy: Float): Boolean
+    external fun pageZoom(handle: Long): Float
+    external fun pagePan(handle: Long): FloatArray
     external fun syncOpen(
         libraryDir: String,
         deviceId: String,

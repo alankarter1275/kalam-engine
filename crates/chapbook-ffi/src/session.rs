@@ -1693,3 +1693,90 @@ pub unsafe extern "C" fn cb_session_follow_link(
         cb_status::CB_OK
     })
 }
+
+// ---- Page zoom (image books) ----
+
+/// Zoom the page around a focal point in panel coordinates — the pinch.
+/// Image books only, clamped to `[1.0, 8.0]`, 1.0 returning to fit;
+/// `*changed` reports whether the view moved. **Always false on
+/// reflowable text**, where the same gesture means "make the text
+/// bigger" — a settings change the shell maps to the `FontUp`/`FontDown`
+/// actions itself. Zoom is view state: nothing persists it, and it
+/// survives a page turn on purpose (a shell wanting turn-resets sets
+/// 1.0 on turn).
+///
+/// Input crossing this boundary is mapped through the zoom
+/// automatically. Output geometry — `cb_session_range_rects`, the text
+/// surface — stays in fit-page space; a shell drawing overlays on a
+/// zoomed page maps forward with [`cb_session_page_zoom`] and
+/// [`cb_session_page_pan`]: `view = fit * zoom + pan`.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_set_page_zoom(
+    session: *mut cb_session,
+    zoom: f32,
+    focus_x: f32,
+    focus_y: f32,
+    changed: *mut bool,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        let did = session.inner.set_page_zoom(zoom, focus_x, focus_y);
+        out!(changed, did, "changed");
+        cb_status::CB_OK
+    })
+}
+
+/// Pan the zoomed page by a pointer delta in panel coordinates, clamped
+/// at the page's edges. `*changed` is false at fit — how a shell knows
+/// the same drag should fall through to whatever an unzoomed drag means
+/// (a selection, a swipe turn).
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_pan_page(
+    session: *mut cb_session,
+    dx: f32,
+    dy: f32,
+    changed: *mut bool,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        let did = session.inner.pan_page(dx, dy);
+        out!(changed, did, "changed");
+        cb_status::CB_OK
+    })
+}
+
+/// The current zoom, 1.0 at fit.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_zoom(
+    session: *const cb_session,
+    zoom: *mut f32,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        // SAFETY: a handle from an open call, not yet closed.
+        let Some(session) = (unsafe { session.as_ref() }) else {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "session is null");
+        };
+        out!(zoom, session.inner.page_zoom(), "zoom");
+        cb_status::CB_OK
+    })
+}
+
+/// The current pan in page units — with the zoom, the forward map for a
+/// shell's own overlays.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_pan(
+    session: *const cb_session,
+    x: *mut f32,
+    y: *mut f32,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        // SAFETY: a handle from an open call, not yet closed.
+        let Some(session) = (unsafe { session.as_ref() }) else {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "session is null");
+        };
+        let (px, py) = session.inner.page_pan();
+        out!(x, px, "x");
+        out!(y, py, "y");
+        cb_status::CB_OK
+    })
+}

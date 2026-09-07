@@ -2563,3 +2563,55 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_annotationColor(
         None => JObject::null().into_raw(),
     }
 }
+
+// ---- Page zoom (image books) ----
+
+/// The pinch: zoom around a focal point in logical units. Image books
+/// only — returns whether the view changed, and always false on prose,
+/// where the shell maps the gesture to font size instead.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_setPageZoom(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    zoom: jfloat,
+    focus_x: jfloat,
+    focus_y: jfloat,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.set_page_zoom(zoom, focus_x, focus_y)) as jboolean
+}
+
+/// Pan the zoomed page by a pointer delta, clamped at the edges. False
+/// at fit, so the drag falls through to a selection or a swipe turn.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_panPage(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    dx: jfloat,
+    dy: jfloat,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.pan_page(dx, dy)) as jboolean
+}
+
+/// The current zoom, 1.0 at fit.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pageZoom(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jfloat {
+    unsafe { session(handle) }.map_or(1.0, |s| s.page_zoom())
+}
+
+/// The current pan `[x, y]` in page units — with the zoom, the forward
+/// map for overlays a shell draws on a zoomed page.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pagePan(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jfloatArray {
+    let (x, y) = unsafe { session(handle) }.map_or((0.0, 0.0), |s| s.page_pan());
+    float_array_out(&env, &[x, y])
+}

@@ -210,10 +210,10 @@ impl Session {
         let page_idx = page_idx.min(page_count - 1);
         let layout = self.layout(spine)?;
         let page = layout.pages.get(page_idx)?;
-        Some(chapbook_paint::build_display_list(
-            page,
-            background,
-            &selections,
-        ))
+        let mut list = chapbook_paint::build_display_list(page, background, &selections);
+        // The image-book zoom view, applied here so every backend and
+        // both of frame()'s doors see the same pixels-to-be.
+        self.apply_view(&mut list);
+        Some(list)
     }
 }

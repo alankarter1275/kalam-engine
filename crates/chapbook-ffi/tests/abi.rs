@@ -2276,3 +2276,77 @@ fn a_mark_lives_its_whole_life_across_the_boundary() {
 
     unsafe { cb_session_close(session) };
 }
+
+/// The pinch, across the boundary: refused on prose, honored on a comic,
+/// pan falling through at fit.
+#[test]
+fn zoom_is_for_image_books_and_says_so() {
+    if cb_capabilities() & cb_capability::CB_CAP_CBZ as u32 == 0 {
+        eprintln!("skipped: this build opens no comics");
+        return;
+    }
+    // Prose refuses: the gesture belongs to font size there.
+    let session = open("zoom-epub", "epub/minimal.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut changed = true;
+    assert_eq!(
+        unsafe { cb_session_set_page_zoom(session, 2.0, 100.0, 100.0, &mut changed) },
+        cb_status::CB_OK
+    );
+    assert!(!changed, "prose maps pinch to FontUp/FontDown instead");
+    unsafe { cb_session_close(session) };
+
+    // A comic zooms once its page has landed.
+    let session = open("zoom-cbz", "cbz/minimal.cbz");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut pending = true;
+    for _ in 0..400 {
+        let mut visible = false;
+        unsafe {
+            cb_session_poll_loaded(session, &mut visible);
+            cb_session_has_pending_loads(session, &mut pending);
+        }
+        if !pending {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!pending, "the first page decodes");
+
+    // Pan at fit falls through, so a drag can mean a swipe turn.
+    assert_eq!(
+        unsafe { cb_session_pan_page(session, -30.0, 0.0, &mut changed) },
+        cb_status::CB_OK
+    );
+    assert!(!changed);
+
+    assert_eq!(
+        unsafe { cb_session_set_page_zoom(session, 2.0, 300.0, 400.0, &mut changed) },
+        cb_status::CB_OK
+    );
+    assert!(changed, "{}", last_error());
+    let mut zoom = 0.0f32;
+    assert_eq!(
+        unsafe { cb_session_page_zoom(session, &mut zoom) },
+        cb_status::CB_OK
+    );
+    assert_eq!(zoom, 2.0);
+    assert_eq!(
+        unsafe { cb_session_pan_page(session, -30.0, -10.0, &mut changed) },
+        cb_status::CB_OK
+    );
+    assert!(changed, "a zoomed page pans");
+    let (mut px, mut py) = (0.0f32, 0.0f32);
+    assert_eq!(
+        unsafe { cb_session_page_pan(session, &mut px, &mut py) },
+        cb_status::CB_OK
+    );
+    assert!(px < 0.0 || py < 0.0, "the pan moved off origin");
+    unsafe { cb_session_close(session) };
+}

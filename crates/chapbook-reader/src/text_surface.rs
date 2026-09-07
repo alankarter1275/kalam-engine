@@ -176,7 +176,7 @@ impl Session {
 
     fn offset_at(&mut self, x: f32, y: f32) -> Option<u32> {
         // Input is in panel space; hit-testing happens in page space.
-        let (x, y) = self.metrics.map_or((x, y), |m| m.panel_to_page(x, y));
+        let (x, y) = self.content_point(x, y);
         let (spine, page) = (self.spine, self.page);
         let layout = self.layout_unit(spine)?;
         layout.pages.get(page)?.offset_at(Point::new(x, y))
