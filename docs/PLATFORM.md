@@ -130,9 +130,14 @@ at every level it names:
   actually in. It is also the first shell to run all three press hit
   tests in the order `SHELLS.md` specifies, and the first to deliver
   `Key::TurnPrev`/`TurnNext`, which arrive on a desktop as the two thumb
-  buttons of a mouse. CI compiles and tests the workspace on
-  `windows-latest`, which nothing did before it: the crate is a stub
-  `main` everywhere else, so every line of it is judged there or nowhere.
+  buttons of a mouse. Its `uia` module puts the page behind
+  `ITextProvider`, which is the second implementation of the text surface
+  against a real assistive stack and the one that proves it is a seam:
+  AT-SPI asks for text around an offset and UI Automation hands out a
+  range that moves its own endpoints, and the same three accessors answer
+  both. CI compiles and tests the workspace on `windows-latest`, which
+  nothing did before it: the crate is a stub `main` everywhere else, so
+  every line of it is judged there or nowhere.
 - **WASM stays a demo, deliberately**: `wasm-bindgen` wraps Rust, not C,
   so a browser build is a sibling exporter over the same shape. The
   EPUB-only profile it forces (`--no-default-features`: no SQLite, no

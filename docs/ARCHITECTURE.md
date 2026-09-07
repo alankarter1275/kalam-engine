@@ -348,5 +348,11 @@ over `LineFragment` text and per-glyph locators — deliberately *not* the
 display list, which carries glyph indices and no text; chapbook-reader's
 `text_surface` module docs have that argument. Each platform wraps the
 runs in its own tree
-(`UIAccessibilityElement`, `AccessibilityNodeInfo`, AT-SPI); the GTK
-viewer's `PageArea` is the reference, verified against AT-SPI end to end.
+(`UIAccessibilityElement`, `AccessibilityNodeInfo`, AT-SPI, UI
+Automation); the GTK viewer's `PageArea` is the reference, verified
+against AT-SPI end to end, and the Win32 viewer's `uia` module is the
+second implementation, verified against a real UIA client. Two of them
+is what turned the accessor from a data structure into a seam: AT-SPI
+asks for text at a granularity around an offset, UIA asks for a range
+object that moves its own endpoints by unit, and the same three calls
+answer both.

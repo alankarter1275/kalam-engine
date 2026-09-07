@@ -74,7 +74,7 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 | `chapbook-reader` | Shared reading session (open/layout/navigate/select/persist) | API |
 | `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) | Not a library |
 | `chapbook-viewer-gtk` | GTK4 reference viewer (Linux only) | Not a library |
-| `chapbook-viewer-win32` | Win32 reference viewer (Windows only) | Not a library |
+| `chapbook-viewer-win32` | Win32 reference viewer, with a UI Automation text provider (Windows only) | Not a library |
 | `tools/chapbook-cli` | Dev/test CLI exercising each pipeline stage | Not a library |
 | `chapbook-ffi` | The C ABI for hosts that speak C — iOS, embedders; `include/chapbook.h` | Contract |
 | `chapbook-jni` | Android JNI binding, paired with `android/` | Not a library |

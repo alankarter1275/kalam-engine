@@ -19,3 +19,4 @@ authors.workspace = true
 chapbook-core = { workspace = true }
 chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds", "svg", "mathml"] }
 windows = { workspace = true }
+windows-core = { workspace = true }

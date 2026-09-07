@@ -199,6 +199,42 @@ as the contract rather than as a transcription of that file.
 written for: a press inside a highlight in the outer third of the page
 reports the highlight there and does not turn.
 
+## 3a. The page in front of a screen reader
+
+A rasterized page is a picture, and a picture of text is unusable with a
+screen reader. Three accessors exist for exactly that, and they are the
+whole of what an accessibility tree needs: `page_text_runs` for the
+lines, `speakable_page` for the words and the string they sit in, and
+`range_rects` for the geometry of any locator range. `word_at` answers a
+dictionary tap out of the same table.
+
+Two shells wrap them, and reading both is worthwhile because the two
+platforms ask opposite questions of the same data.
+`chapbook-viewer-gtk`'s `PageArea` implements GTK's `AccessibleText`,
+where the client asks for *text at a granularity around an offset*.
+`chapbook-viewer-win32`'s `uia` module implements `ITextProvider`, where
+the client is handed a *range object that moves its own endpoints by
+unit* and asks it questions. Neither shape is the accessor's, which is
+what makes the accessor a seam rather than one platform's tree written
+in Rust.
+
+Two things that module settles for anyone writing a third. Offsets on
+the boundary are character offsets into the speakable string, because
+that is the space `WordSpan` already carries — locator offsets stay
+inside the shell. And the tree is fed from a *snapshot* taken after each
+paint rather than from the session, because UI Automation calls a
+provider from its own threads and `Session` is `Send` but not `Sync`;
+the one thing a client asks for that a snapshot cannot answer is a
+mutation, and that posts back to the UI thread. A platform whose
+accessibility callbacks arrive on the UI thread — GTK's do — needs
+neither.
+
+The unit a screen reader actually navigates by is the line, and it is
+exact. Paragraphs are not: the speakable page collapses whitespace and
+carries no paragraph structure, so both shells resolve a paragraph to
+the whole page. Giving the text surface real paragraph spans is the
+engine change that would fix it in both at once.
+
 `apply` answers two questions, not one, and you need both:
 `ActionOutcome::needs_redraw()` says whether to repaint, and
 `consumed()` says whether to tell your platform you took the event. They

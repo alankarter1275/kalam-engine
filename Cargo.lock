@@ -750,6 +750,7 @@ dependencies = [
  "chapbook-core",
  "chapbook-reader",
  "windows",
+ "windows-core",
 ]
 
 [[package]]

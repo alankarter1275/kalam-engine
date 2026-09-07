@@ -212,13 +212,26 @@ arboard = { version = "3", default-features = false, features = [
 # for features of it. `windows` rather than `windows-sys`: the COM half is
 # what a UI Automation text provider needs, and that is where this shell is
 # going.
+# The `#[implement]` macro spells its own paths `windows_core::…`, so the
+# crate has to be nameable — `windows::core` is a re-export of exactly this
+# crate at exactly this version, so naming it costs nothing in the graph and
+# is what lets a COM interface be implemented in Rust at all.
+windows-core = "0.62"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    "Win32_System_Com",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
+    # Ole and Variant are not a widening for their own sake: the
+    # `IRawElementProviderSimple` and `ITextRangeProvider` vtables are
+    # `cfg`-gated on all three, because their methods traffic in `VARIANT`
+    # and `SAFEARRAY`. `CF_UNICODETEXT` arrives with them.
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",

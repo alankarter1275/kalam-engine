@@ -29,11 +29,17 @@
 //! the page reaches the window as a top-down 32bpp DIB through
 //! `StretchDIBits`. No swapchain, no compositor, no third-party surface
 //! crate — `BeginPaint`, one blit, `EndPaint`.
+//!
+//! Accessibility is `crate::uia`: `WM_GETOBJECT` hands out a document
+//! element with a text pattern on it, and every paint re-captures the page
+//! for it. A picture of text is unusable with a screen reader, and this is
+//! the half of that job Windows asks for.
 
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::sync::{Arc, Mutex};
 
-use windows::core::{w, HSTRING};
+use windows::core::{w, BSTR, HSTRING};
 use windows::Win32::Foundation::{
     COLORREF, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM,
 };
@@ -47,6 +53,12 @@ use windows::Win32::System::DataExchange::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::UI::Accessibility::{
+    IRawElementProviderSimple, NotificationKind_Other, NotificationProcessing_MostRecent,
+    UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId, UiaClientsAreListening,
+    UiaDisconnectProvider, UiaRaiseAutomationEvent, UiaRaiseNotificationEvent,
+    UiaReturnRawElementProvider, UiaRootObjectId,
+};
 use windows::Win32::UI::HiDpi::{
     AdjustWindowRectExForDpi, GetDpiForSystem, GetDpiForWindow, SetProcessDpiAwarenessContext,
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -61,9 +73,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, CREATESTRUCTW,
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, IDC_ARROW, MSG, SWP_NOACTIVATE,
     SWP_NOZORDER, SW_SHOW, WHEEL_DELTA, WINDOW_EX_STYLE, WM_APP, WM_CHAR, WM_CREATE, WM_DESTROY,
-    WM_DPICHANGED, WM_ENDSESSION, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_XBUTTONDOWN, WNDCLASSW, WS_OVERLAPPEDWINDOW,
-    XBUTTON1,
+    WM_DPICHANGED, WM_ENDSESSION, WM_ERASEBKGND, WM_GETOBJECT, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_XBUTTONDOWN, WNDCLASSW,
+    WS_OVERLAPPEDWINDOW, XBUTTON1,
 };
 
 use chapbook_core::{
@@ -71,17 +83,19 @@ use chapbook_core::{
 };
 use chapbook_reader::{Session, SessionEvent};
 
+use crate::uia::{apply_selection, PageProvider, PageSnapshot, WM_CHAPBOOK_SELECT};
+
 /// The loader thread's wakeup, posted rather than sent.
 ///
 /// `WM_APP` is the first value Windows reserves for an application's own
 /// messages, and this shell has exactly one.
 const WM_CHAPBOOK_WAKE: u32 = WM_APP;
 
-/// `CF_UNICODETEXT`, which lives in `Win32::System::Ole` — a feature this
-/// crate does not otherwise want a line of. `SetClipboardData` takes the
-/// format as a plain `u32`, so naming the number here costs a comment and
-/// saves compiling OLE automation.
-const CF_UNICODETEXT: u32 = 13;
+/// `CF_UNICODETEXT`, as a plain `u32` because that is what
+/// `SetClipboardData` takes. The constant itself lives in
+/// `Win32::System::Ole::CF_UNICODETEXT` as a `CLIPBOARD_FORMAT`, which the
+/// UIA vtables drag into this build anyway.
+const CF_UNICODETEXT: u32 = windows::Win32::System::Ole::CF_UNICODETEXT.0 as u32;
 
 /// A mouse drag that never exceeded this many logical pixels was a tap.
 /// A mouse's slop, not a finger's — this shell is not driving a
@@ -175,6 +189,10 @@ fn main_window(session: Session) -> windows::core::Result<()> {
         selecting: false,
         title: String::new(),
         dark: false,
+        snapshot: Arc::new(Mutex::new(PageSnapshot::default())),
+        provider: None,
+        announced: Vec::new(),
+        selected: None,
     }));
     // The book declares which edge it reads from, so the zones cannot be
     // built before the session exists. The middle band is inert: this shell
@@ -267,6 +285,13 @@ fn main_window(session: Session) -> windows::core::Result<()> {
         app.borrow_mut().session.set_waker(move || wake.post());
     }
 
+    {
+        // The provider needs the window, so it cannot exist before it.
+        let mut state = app.borrow_mut();
+        let snapshot = state.snapshot.clone();
+        state.provider = Some(PageProvider::element(hwnd, snapshot));
+    }
+
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOW);
     }
@@ -313,6 +338,20 @@ struct App {
     title: String,
     /// Whether the title bar is currently drawn dark.
     dark: bool,
+    /// What UI Automation reads. Shared with the provider, which answers
+    /// out of it from whatever thread UIA asks on.
+    snapshot: Arc<Mutex<PageSnapshot>>,
+    /// The element behind `WM_GETOBJECT`. Built once, because UIA compares
+    /// elements by COM identity and a client that is handed a new one every
+    /// time believes the page was replaced every time.
+    provider: Option<IRawElementProviderSimple>,
+    /// The page text last given to the snapshot, so a repaint that changed
+    /// no words raises no events. A selection repaint is the common case
+    /// and it must not read the page out again.
+    announced: Vec<char>,
+    /// The selection the snapshot was built with, in locator space — the
+    /// other half of "did anything a client cares about move".
+    selected: Option<(u32, u32)>,
 }
 
 impl App {
@@ -363,6 +402,103 @@ impl App {
     }
 }
 
+impl App {
+    /// Re-capture the page for UI Automation, and say what changed.
+    ///
+    /// Called after every paint, like `sync_chrome`, and for the same
+    /// reason: a paint is the one place every content change funnels
+    /// through. It compares before capturing, so a repaint that moved
+    /// nothing costs one `speakable_page` and stops there.
+    fn sync_accessibility(&mut self, scale: f64, force: bool) {
+        // Nothing is listening: no client, and so no reason to walk the
+        // page at all. This is what keeps the whole module free in the
+        // ordinary case, which is a reader with no assistive technology
+        // running.
+        //
+        // `force` is the case that check gets wrong on its own. A client
+        // that attaches to a window already showing a page has missed
+        // every paint there will be until the reader does something, so
+        // the arrival itself — `WM_GETOBJECT` — has to be a capture. The
+        // symptom otherwise is a screen reader that finds an empty
+        // document until the next page turn, which reads as a page with no
+        // text on it rather than as a race.
+        if !force && !unsafe { UiaClientsAreListening() }.as_bool() {
+            return;
+        }
+        let Some(provider) = self.provider.clone() else {
+            return;
+        };
+
+        let text: Vec<char> = self
+            .session
+            .speakable_page()
+            .map(|page| page.text.chars().collect())
+            .unwrap_or_default();
+        let selection = self.session.selected_range();
+        let words_moved = text != self.announced;
+        if !words_moved && selection == self.selected && !force {
+            return;
+        }
+        self.selected = selection;
+
+        let name = self.title.clone();
+        let fresh = PageSnapshot::capture(&self.session, scale, name);
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            *snapshot = fresh;
+        }
+
+        // A client that just arrived is not being told anything changed;
+        // it is being given something to read. Announcing here would mean
+        // the page is spoken every time any automation tool attaches,
+        // which is a different thing from a page turn and sounds like one.
+        if force {
+            self.announced = text;
+            return;
+        }
+
+        if !words_moved {
+            // Only the selection moved. A client tracking the caret wants
+            // to know; a client reading the page does not want the page
+            // read to it again.
+            unsafe {
+                let _ = UiaRaiseAutomationEvent(&provider, UIA_Text_TextSelectionChangedEventId);
+            }
+            return;
+        }
+
+        self.announced = text;
+        // Advisory, both here and below: a client that misses one asks
+        // again on its next query, and a failure is not something a reader
+        // could act on.
+        unsafe {
+            let _ = UiaRaiseAutomationEvent(&provider, UIA_Text_TextChangedEventId);
+        }
+
+        // The turn made audible. `TextChanged` tells a client the words
+        // moved; it does not make Narrator say them, and a reader that
+        // turns the page in silence is not accessible however complete its
+        // text pattern is. The GTK shell makes the same argument for
+        // announcing a page over AT-SPI; this is the Windows call that
+        // does it.
+        //
+        // `MostRecent` is what makes holding the page key down bearable:
+        // pending announcements are dropped rather than queued, so someone
+        // who turned six pages hears the sixth and not all six.
+        let spoken: String = self.announced.iter().collect();
+        if !spoken.is_empty() {
+            unsafe {
+                let _ = UiaRaiseNotificationEvent(
+                    &provider,
+                    NotificationKind_Other,
+                    NotificationProcessing_MostRecent,
+                    &BSTR::from(spoken),
+                    &BSTR::from("chapbook.page"),
+                );
+            }
+        }
+    }
+}
+
 /// The state behind a window, or `None` before `WM_CREATE` has stored it.
 fn state_of(hwnd: HWND) -> Option<&'static RefCell<App>> {
     let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const RefCell<App>;
@@ -406,6 +542,42 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_CHAPBOOK_WAKE => {
             wake(hwnd, state);
+            LRESULT(0)
+        }
+        WM_GETOBJECT => {
+            // The one message a screen reader sends before anything else.
+            // `lparam` names which object is being asked for; every value
+            // but this one belongs to MSAA and goes to `DefWindowProcW`,
+            // which answers for the window itself.
+            if lparam.0 as i32 != UiaRootObjectId {
+                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+            }
+            let Ok(mut app) = state.try_borrow_mut() else {
+                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+            };
+            // Capture before answering: see `sync_accessibility`.
+            app.sync_accessibility(scale_of(hwnd) as f64, true);
+            let Some(provider) = app.provider.clone() else {
+                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+            };
+            drop(app);
+            unsafe { UiaReturnRawElementProvider(hwnd, wparam, lparam, &provider) }
+        }
+        WM_CHAPBOOK_SELECT => {
+            // A UIA client asked for a selection. It arrives here rather
+            // than being applied where it was asked for, because the
+            // session lives on this thread and nowhere else.
+            if let Ok(mut app) = state.try_borrow_mut() {
+                let (start, end) = (wparam.0 as u32, lparam.0 as u32);
+                let App {
+                    session, snapshot, ..
+                } = &mut *app;
+                if let Ok(snapshot) = snapshot.lock() {
+                    apply_selection(session, &snapshot, start, end);
+                }
+                drop(app);
+                invalidate(hwnd);
+            }
             LRESULT(0)
         }
         WM_DPICHANGED => {
@@ -511,6 +683,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             // that is easy to forget; this is the one place it cannot be.
             if let Ok(mut app) = state.try_borrow_mut() {
                 app.session.save_position();
+                // Tell UI Automation the element is gone. Without this a
+                // client can hold a reference to a provider whose window
+                // has been destroyed, and every call it makes is answered
+                // by a handle that resolves to nothing.
+                if let Some(provider) = app.provider.take() {
+                    unsafe {
+                        let _ = UiaDisconnectProvider(&provider);
+                    }
+                }
             }
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
@@ -655,7 +836,10 @@ fn paint(hwnd: HWND, state: &RefCell<App>) {
     }
 
     if let Ok(mut app) = state.try_borrow_mut() {
+        // Chrome first: the title is what names the element, so a
+        // snapshot taken before it would carry the previous page's name.
         app.sync_chrome(hwnd);
+        app.sync_accessibility(scale_of(hwnd) as f64, false);
     }
 }
 

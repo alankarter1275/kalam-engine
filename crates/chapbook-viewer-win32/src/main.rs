@@ -15,6 +15,8 @@
 //! difference.
 
 #[cfg(windows)]
+mod uia;
+#[cfg(windows)]
 mod win32;
 
 #[cfg(windows)]
