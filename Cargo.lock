@@ -520,6 +520,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "chapbook-app"
+version = "0.1.0"
+dependencies = [
+ "chapbook-cbz",
+ "chapbook-core",
+ "chapbook-epub",
+ "chapbook-library",
+ "chapbook-opds",
+ "chapbook-pdf",
+ "chapbook-reader",
+ "chapbook-sync",
+]
+
+[[package]]
+name = "chapbook-app-gtk"
+version = "0.1.0"
+dependencies = [
+ "chapbook-app",
+ "futures-channel",
+ "futures-util",
+ "gtk4",
+]
+
+[[package]]
 name = "chapbook-cbz"
 version = "0.1.0"
 dependencies = [

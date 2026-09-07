@@ -1,0 +1,26 @@
+[package]
+name = "chapbook-app"
+description = "Toolkit-neutral application model for a full chapbook app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+chapbook-epub = { workspace = true }
+chapbook-cbz = { workspace = true }
+chapbook-pdf = { workspace = true }
+chapbook-library = { workspace = true }
+chapbook-sync = { workspace = true, features = ["ureq"] }
+chapbook-opds = { workspace = true, features = ["ureq"] }
+chapbook-reader = { workspace = true, features = [
+    "cbz",
+    "pdf",
+    "opds",
+    "ureq",
+    "svg",
+    "mathml",
+] }

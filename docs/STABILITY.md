@@ -20,7 +20,7 @@ meaning something, and where it will not be treated as a cost at all.
 | **Producer** | `chapbook-epub`, `chapbook-cbz`, `chapbook-pdf`, `chapbook-opds` | Format readers behind `Publication`. Depend on one only to open that format directly; through `chapbook-reader` they are an implementation detail. |
 | **Backend** | `chapbook-render-tinyskia`, `chapbook-render-vello` | Implementations of a Contract-tier trait. The *trait* is stable; the crate implementing it is free to change, because substituting it is the point. |
 | **Internal** | `chapbook-layout` | No stability of any kind. It exists to make the engine work, its DOM binding and cascade driver follow stylo's shape rather than a design of their own, and a stylo upgrade rewrites them. |
-| **Not a library** | `chapbook-viewer`, `chapbook-viewer-gtk`, `tools/chapbook-cli`, `chapbook-jni` | Their surface is not their Rust API. For the three binaries it is a command line; for `chapbook-jni` it is the AAR's Kotlin API, which is why it is here rather than in a tier of its own. The reference shells exist to be read and copied, not linked. |
+| **Not a library** | `chapbook-viewer`, `chapbook-viewer-gtk`, `tools/chapbook-cli`, `chapbook-jni`, `chapbook-app`, `chapbook-app-gtk` | Their surface is not their Rust API. For the three binaries it is a command line; for `chapbook-jni` it is the AAR's Kotlin API, which is why it is here rather than in a tier of its own. The reference shells exist to be read and copied, not linked. `chapbook-app` and `chapbook-app-gtk` are the two halves of the desktop application — the model crate serves its own front ends, and a downstream builds on `chapbook-reader`, not on it. |
 
 ## Why the lines fall there
 
