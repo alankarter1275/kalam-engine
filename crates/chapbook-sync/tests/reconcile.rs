@@ -29,12 +29,43 @@ struct FakeHttp(Arc<Inner>);
 #[derive(Default)]
 struct Inner {
     routes: Mutex<HashMap<String, Canned>>,
+    /// Responses consumed one per request, ahead of any standing route.
+    /// A merge attempts the same write twice, so the two attempts have to
+    /// be able to answer differently.
+    queued: Mutex<HashMap<String, Vec<Canned>>>,
     seen: Mutex<Vec<(String, String, String)>>,
 }
 
 impl FakeHttp {
     fn on(self, method: &str, path: &str, status: u16, body: &str) -> Self {
         self.route(method, path, status, &[], body)
+    }
+
+    /// Queue one response, taken before any standing route for the same
+    /// request and only once. Calls stack in order.
+    fn once(
+        self,
+        method: &str,
+        path: &str,
+        status: u16,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Self {
+        self.0
+            .queued
+            .lock()
+            .unwrap()
+            .entry(format!("{method} {path}"))
+            .or_default()
+            .push((
+                status,
+                headers
+                    .iter()
+                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .collect(),
+                body.to_string(),
+            ));
+        self
     }
 
     fn route(
@@ -78,13 +109,19 @@ impl FakeHttp {
             path.clone(),
             String::from_utf8_lossy(&body).into_owned(),
         ));
-        match self
-            .0
-            .routes
-            .lock()
-            .unwrap()
-            .get(&format!("{method} {path}"))
-        {
+        let key = format!("{method} {path}");
+        if let Some(queue) = self.0.queued.lock().unwrap().get_mut(&key) {
+            if !queue.is_empty() {
+                let (status, headers, body) = queue.remove(0);
+                return HttpResponse {
+                    status,
+                    content_type: Some("application/json".into()),
+                    headers,
+                    body: Box::new(Cursor::new(body.into_bytes())),
+                };
+            }
+        }
+        match self.0.routes.lock().unwrap().get(&key) {
             Some((status, headers, body)) => HttpResponse {
                 status: *status,
                 content_type: Some("application/json".into()),
@@ -445,10 +482,11 @@ fn a_new_mark_is_created_and_remembered() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The container's copy moved. Ours must survive and stay owed — a sync
-/// that resolved this by overwriting would be losing a reader's edit.
+/// The container's copy moved and says something else. Neither edit is
+/// recoverable once dropped, so both survive: theirs becomes a mark of its
+/// own here, ours keeps the IRI there.
 #[test]
-fn a_refused_edit_keeps_the_local_mark_and_stays_dirty() {
+fn a_refused_edit_keeps_both_sides() {
     let dir = scratch();
     let (mut library, book) = library_with_book(&dir);
     let annotation = library
@@ -474,31 +512,278 @@ fn a_refused_edit_keeps_the_local_mark_and_stays_dirty() {
         .set_annotation_color(annotation, Some("#00ccff"))
         .unwrap();
 
+    let theirs = json!({
+        "@context": "http://www.w3.org/ns/anno.jsonld",
+        "id": "https://library.example.com/annotations/abc",
+        "type": "Annotation",
+        "motivation": "commenting",
+        "bodyValue": "typed on the phone",
+        "target": {"source": "urn:isbn:9780000000000", "selector": [
+            {"type": "TextQuoteSelector", "exact": "Call me Ishmael"},
+            {"type": "ProgressSelector", "value": 0.1}
+        ]}
+    })
+    .to_string();
+
     let http = FakeHttp::default()
+        // The stale tag is refused; the re-read hands back their copy and a
+        // tag that works, and the second write carries it.
+        .once("PUT", "/annotations/abc", 412, &[], "")
+        .route(
+            "GET",
+            "/annotations/abc",
+            200,
+            &[("ETag", "\"v2\"")],
+            &theirs,
+        )
+        .on("PUT", "/annotations/abc", 200, &theirs)
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.merged, 1);
+    assert_eq!(report.annotations.updated, 1);
+    assert_eq!(report.annotations.conflicts, 0);
+
+    // Their words are here now, as a second mark rather than instead of
+    // ours.
+    let marks = engine.library().annotations(book).unwrap();
+    assert_eq!(marks.len(), 2, "{marks:?}");
+    assert!(
+        marks.iter().any(|m| m.color.as_deref() == Some("#00ccff")),
+        "our edit survived: {marks:?}"
+    );
+    assert!(
+        marks
+            .iter()
+            .any(|m| m.text.as_deref() == Some("typed on the phone")),
+        "their edit survived: {marks:?}"
+    );
+
+    // Ours is settled with the container; theirs is the one still owed a
+    // write, which is what carries it back to the device that made it.
+    let owed = engine.library().annotations_needing_push(book).unwrap();
+    assert_eq!(owed.len(), 1, "{owed:?}");
+    assert!(owed[0].remote_iri.is_none());
+
+    // The retry carried the tag the re-read produced, not the stale one.
+    assert_eq!(http.sent("PUT").len(), 2);
+}
+
+/// Both devices made the same edit. There is nothing to choose, so the row
+/// simply agrees with the container — and nothing is written to say so.
+#[test]
+fn a_refused_edit_that_already_agrees_writes_nothing() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            Some("#00ccff"),
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+    library
+        .set_annotation_color(annotation, Some("#ffcc00"))
+        .unwrap();
+
+    // What the container holds is exactly what this device was about to
+    // write — the whole document, locator extensions included, because a
+    // mark that differs in its anchor is a different mark. Only `created`
+    // and `modified` are allowed to differ, and they do.
+    let same = json!({
+        "@context": "http://www.w3.org/ns/anno.jsonld",
+        "id": "https://library.example.com/annotations/abc",
+        "type": "Annotation",
+        "motivation": "highlighting",
+        "chapbook:color": "#ffcc00",
+        "created": "2020-01-01T00:00:00Z",
+        "modified": "2020-01-01T00:00:00Z",
+        "target": {
+            "type": "SpecificResource",
+            "source": "urn:isbn:9780000000000",
+            "chapbook:spineHref": "OEBPS/ch4.xhtml",
+            "chapbook:spineIndex": 3,
+            "chapbook:spineFraction": 0.1,
+            "selector": [
+                {"type": "TextQuoteSelector", "exact": "", "prefix": "the harbour was ",
+                 "suffix": "quiet that morning"},
+                {"type": "TextPositionSelector", "start": 10, "end": 10,
+                 "chapbook:locatorVersion": 2},
+                {"type": "ProgressSelector", "value": 0.1}
+            ]
+        }
+    })
+    .to_string();
+
+    let http = FakeHttp::default()
+        .once("PUT", "/annotations/abc", 412, &[], "")
+        .route("GET", "/annotations/abc", 200, &[("ETag", "\"v2\"")], &same)
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.merged, 1);
+    assert_eq!(
+        report.annotations.updated, 0,
+        "nothing went over the wire, so nothing was written"
+    );
+    assert_eq!(report.annotations.conflicts, 0);
+    assert_eq!(
+        engine.library().annotations(book).unwrap().len(),
+        1,
+        "an agreement is not a second mark"
+    );
+    assert!(engine
+        .library()
+        .annotations_needing_push(book)
+        .unwrap()
+        .is_empty());
+    // Only the refused first attempt; the merge found nothing to say.
+    assert_eq!(http.sent("PUT").len(), 1);
+}
+
+/// A third write landing between the re-read and the retry is a race, not
+/// a merge. One retry settles a conflict; looping on it is a fight.
+#[test]
+fn an_edit_refused_twice_is_left_owing_a_write() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+    library
+        .set_annotation_color(annotation, Some("#00ccff"))
+        .unwrap();
+
+    let theirs = json!({
+        "@context": "http://www.w3.org/ns/anno.jsonld",
+        "id": "https://library.example.com/annotations/abc",
+        "type": "Annotation",
+        "motivation": "commenting",
+        "bodyValue": "typed on the phone",
+        "target": {"source": "urn:isbn:9780000000000", "selector": [
+            {"type": "TextQuoteSelector", "exact": "Call me Ishmael"},
+            {"type": "ProgressSelector", "value": 0.1}
+        ]}
+    })
+    .to_string();
+
+    let http = FakeHttp::default()
+        .route(
+            "GET",
+            "/annotations/abc",
+            200,
+            &[("ETag", "\"v2\"")],
+            &theirs,
+        )
         .on("PUT", "/annotations/abc", 412, "")
         .on("GET", "/annotations/", 200, &empty_container());
     let mut engine = engine(library, http);
 
     let report = engine.sync_book(book).unwrap();
     assert_eq!(report.annotations.conflicts, 1);
+    assert_eq!(report.annotations.merged, 0);
     assert_eq!(report.annotations.updated, 0);
-    assert_eq!(
-        engine.library().annotations(book).unwrap()[0]
-            .color
-            .as_deref(),
-        Some("#00ccff"),
-        "the local edit was overwritten"
-    );
     assert_eq!(
         engine
             .library()
             .annotations_needing_push(book)
             .unwrap()
             .len(),
-        1,
-        "a refused edit must still owe the container a write"
+        2,
+        "ours still owes a write, and so does the copy of theirs"
     );
-    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A delete the container refuses is still a delete. The reader said to
+/// remove the mark; a tag that moved is not a reason to keep it.
+#[test]
+fn a_refused_delete_is_retried_with_a_fresh_tag() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+    library.delete_annotation(annotation).unwrap();
+
+    let theirs = json!({
+        "@context": "http://www.w3.org/ns/anno.jsonld",
+        "id": "https://library.example.com/annotations/abc",
+        "type": "Annotation",
+        "motivation": "highlighting",
+        "target": {"source": "urn:isbn:9780000000000", "selector": [
+            {"type": "ProgressSelector", "value": 0.1}
+        ]}
+    })
+    .to_string();
+
+    let http = FakeHttp::default()
+        .once("DELETE", "/annotations/abc", 412, &[], "")
+        .route(
+            "GET",
+            "/annotations/abc",
+            200,
+            &[("ETag", "\"v2\"")],
+            &theirs,
+        )
+        .on("DELETE", "/annotations/abc", 204, "")
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.deleted, 1);
+    assert_eq!(report.annotations.merged, 1);
+    assert_eq!(report.annotations.conflicts, 0);
+    assert!(
+        engine.library().annotations(book).unwrap().is_empty(),
+        "the row goes once the container has been told"
+    );
+    assert_eq!(http.sent("DELETE").len(), 2);
 }
 
 /// The reader deleted it here; the container has to be told, and only then
@@ -958,4 +1243,271 @@ fn what_a_removed_book_owed_is_frozen_and_comes_back_with_it() {
         .progression_url
         .is_some());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The same mark, anchored identically, with a note another device typed.
+/// Only the words differ, so a refresh is exactly what should happen.
+fn their_edit_of_abc(text: Option<&str>, color: Option<&str>) -> String {
+    let mut doc = json!({
+        "@context": "http://www.w3.org/ns/anno.jsonld",
+        "id": "https://library.example.com/annotations/abc",
+        "type": "Annotation",
+        "motivation": "highlighting",
+        "created": "2020-01-01T00:00:00Z",
+        "modified": "2020-01-02T00:00:00Z",
+        "target": {
+            "type": "SpecificResource",
+            "source": "urn:isbn:9780000000000",
+            "chapbook:spineHref": "OEBPS/ch4.xhtml",
+            "chapbook:spineIndex": 3,
+            "chapbook:spineFraction": 0.1,
+            "selector": [
+                {"type": "TextQuoteSelector", "exact": "", "prefix": "the harbour was ",
+                 "suffix": "quiet that morning"},
+                {"type": "TextPositionSelector", "start": 10, "end": 10,
+                 "chapbook:locatorVersion": 2},
+                {"type": "ProgressSelector", "value": 0.1}
+            ]
+        }
+    });
+    if let Some(text) = text {
+        doc["bodyValue"] = json!(text);
+    }
+    if let Some(color) = color {
+        doc["chapbook:color"] = json!(color);
+    }
+    doc.to_string()
+}
+
+fn container_with(item: &str) -> String {
+    format!("{{\"type\":\"AnnotationPage\",\"items\":[{item}]}}")
+}
+
+/// A mark this device already has, changed elsewhere. Until the pull
+/// looked at known IRIs at all, this arrived only when this device
+/// happened to write into the same mark and be refused.
+#[test]
+fn a_change_another_device_made_is_pulled() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+
+    let http = FakeHttp::default().on(
+        "GET",
+        "/annotations/",
+        200,
+        &container_with(&their_edit_of_abc(
+            Some("typed on the phone"),
+            Some("#ffcc00"),
+        )),
+    );
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.refreshed, 1);
+    assert_eq!(
+        report.annotations.adopted, 0,
+        "an edit to a known mark is not a new mark"
+    );
+
+    let marks = engine.library().annotations(book).unwrap();
+    assert_eq!(marks.len(), 1, "refreshing must not duplicate: {marks:?}");
+    assert_eq!(
+        marks[0].id, annotation,
+        "the same row, saying something else"
+    );
+    assert_eq!(marks[0].text.as_deref(), Some("typed on the phone"));
+    assert_eq!(marks[0].color.as_deref(), Some("#ffcc00"));
+
+    // Adopted from the container, so it owes the container nothing.
+    assert!(engine
+        .library()
+        .annotations_needing_push(book)
+        .unwrap()
+        .is_empty());
+    assert!(http.sent("PUT").is_empty(), "a pull must not write");
+}
+
+/// The container's copy says what this device already holds. Nothing
+/// changed, so nothing is reported as having changed.
+#[test]
+fn a_known_mark_the_container_agrees_about_is_left_alone() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+
+    let http = FakeHttp::default().on(
+        "GET",
+        "/annotations/",
+        200,
+        &container_with(&their_edit_of_abc(None, None)),
+    );
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.refreshed, 0);
+    assert_eq!(report.annotations.adopted, 0);
+    assert_eq!(engine.library().annotations(book).unwrap().len(), 1);
+}
+
+/// A mark deleted here is not put back by a pull, including while the
+/// container has not been told yet. Resurrecting one would be the sync
+/// undoing a reader's decision.
+#[test]
+fn a_pull_does_not_resurrect_a_mark_deleted_here() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+    library.delete_annotation(annotation).unwrap();
+
+    // The delete is refused twice, so the row stays deleted here and the
+    // container keeps listing it — exactly the window a pull could undo.
+    let http = FakeHttp::default()
+        .on("DELETE", "/annotations/abc", 412, "")
+        .route(
+            "GET",
+            "/annotations/abc",
+            200,
+            &[("ETag", "\"v2\"")],
+            &their_edit_of_abc(None, None),
+        )
+        .on(
+            "GET",
+            "/annotations/",
+            200,
+            &container_with(&their_edit_of_abc(Some("still here"), None)),
+        );
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.conflicts, 1);
+    assert_eq!(report.annotations.adopted, 0);
+    assert_eq!(report.annotations.refreshed, 0);
+    assert!(
+        engine.library().annotations(book).unwrap().is_empty(),
+        "the mark stays deleted"
+    );
+}
+
+/// Both sides moved and the push could not settle it. The pull must not
+/// then quietly adopt over the local edit — nor report the same
+/// disagreement a second time.
+#[test]
+fn a_pull_does_not_overwrite_an_edit_that_still_owes_a_write() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+    library
+        .set_annotation_color(annotation, Some("#00ccff"))
+        .unwrap();
+
+    let http = FakeHttp::default()
+        // Refused, and refused again on the retry: still owed.
+        .on("PUT", "/annotations/abc", 412, "")
+        .route(
+            "GET",
+            "/annotations/abc",
+            200,
+            &[("ETag", "\"v2\"")],
+            &their_edit_of_abc(Some("typed on the phone"), None),
+        )
+        .on(
+            "GET",
+            "/annotations/",
+            200,
+            &container_with(&their_edit_of_abc(Some("typed on the phone"), None)),
+        );
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(
+        report.annotations.conflicts, 1,
+        "one disagreement, reported once"
+    );
+    assert_eq!(report.annotations.refreshed, 0);
+
+    let ours = engine
+        .library()
+        .annotations(book)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.id == annotation)
+        .expect("our mark is still here");
+    assert_eq!(
+        ours.color.as_deref(),
+        Some("#00ccff"),
+        "the local edit survived the pull"
+    );
 }

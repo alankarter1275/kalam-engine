@@ -968,6 +968,7 @@ fn describe_marks(report: &chapbook_sync::AnnotationReport) -> String {
         (report.updated, "updated"),
         (report.deleted, "deleted"),
         (report.adopted, "adopted"),
+        (report.refreshed, "refreshed"),
         (report.conflicts, "in conflict"),
     ] {
         if count > 0 {
@@ -977,10 +978,18 @@ fn describe_marks(report: &chapbook_sync::AnnotationReport) -> String {
     if parts.is_empty() {
         parts.push("idle".to_string());
     }
-    if let Some(why) = &report.failed {
-        parts.push(format!("container failed: {why}"));
+    let mut line = parts.join(", ");
+    // Said apart from the counts above rather than added to them: a
+    // settled conflict is one of those writes, not another one — and it
+    // may have left a second mark over the same words, which is the part
+    // worth a reader's attention.
+    if report.merged > 0 {
+        line.push_str(&format!(" ({} settled a conflict)", report.merged));
     }
-    parts.join(", ")
+    if let Some(why) = &report.failed {
+        line.push_str(&format!(", container failed: {why}"));
+    }
+    line
 }
 
 /// The device this CLI is, minted once and kept beside the library.

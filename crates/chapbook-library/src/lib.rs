@@ -742,6 +742,69 @@ impl Library {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Replace an annotation's content with what another device wrote.
+    ///
+    /// The adopting half of sync, and every field a mark carries, because
+    /// a peer may have moved the anchor as well as the words. `created_at`
+    /// is left alone: the mark was made once, by whoever made it, and this
+    /// is the same mark saying something else.
+    ///
+    /// Bumps `revision` as any other edit does, which leaves the row owing
+    /// a write it does not owe — a change adopted *from* the container is
+    /// already there. Follow with [`Self::mark_annotation_synced`] at the
+    /// revision this produced.
+    pub fn update_annotation(
+        &mut self,
+        annotation_id: i64,
+        kind: AnnotationKind,
+        start: &LayeredLocator,
+        end: Option<&LayeredLocator>,
+        text: Option<&str>,
+        color: Option<&str>,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE annotations SET kind = ?2,
+                    start_spine_href = ?3, start_spine_index = ?4, start_char_offset = ?5,
+                    start_locator_version = ?6, start_quote_prefix = ?7, start_quote_exact = ?8,
+                    start_quote_suffix = ?9, start_spine_fraction = ?10,
+                    start_book_progression = ?11,
+                    end_spine_href = ?12, end_spine_index = ?13, end_char_offset = ?14,
+                    end_locator_version = ?15, end_quote_prefix = ?16, end_quote_exact = ?17,
+                    end_quote_suffix = ?18, end_spine_fraction = ?19,
+                    end_book_progression = ?20,
+                    note_text = ?21, color = ?22,
+                    updated_at = strftime('%s','now'), revision = revision + 1
+                 WHERE id = ?1",
+                params![
+                    annotation_id,
+                    kind.as_str(),
+                    start.spine_href,
+                    start.spine_index as i64,
+                    start.char_offset as i64,
+                    start.locator_version as i64,
+                    start.quote.prefix,
+                    start.quote.exact,
+                    start.quote.suffix,
+                    start.spine_fraction,
+                    start.book_progression,
+                    end.map(|e| e.spine_href.clone()),
+                    end.map(|e| e.spine_index as i64),
+                    end.map(|e| e.char_offset as i64),
+                    end.map(|e| e.locator_version as i64),
+                    end.map(|e| e.quote.prefix.clone()),
+                    end.map(|e| e.quote.exact.clone()),
+                    end.map(|e| e.quote.suffix.clone()),
+                    end.map(|e| e.spine_fraction),
+                    end.map(|e| e.book_progression),
+                    text,
+                    color,
+                ],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     pub fn annotations(&self, id: BookId) -> Result<Vec<Annotation>> {
         let mut stmt = self
             .conn
