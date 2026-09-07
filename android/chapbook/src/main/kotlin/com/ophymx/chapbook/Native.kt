@@ -59,6 +59,27 @@ internal object Native {
     external fun fontFamily(handle: Long): String?
     external fun setFontFamily(handle: Long, family: String?, thisBook: Boolean)
     external fun fontFamilies(handle: Long): Array<String>
+    external fun syncOpen(
+        libraryDir: String,
+        deviceId: String,
+        deviceName: String,
+        transport: SyncTransport,
+        waker: Runnable?,
+    ): Long
+    external fun syncRequestAll(handle: Long): Boolean
+    external fun syncRequestBook(handle: Long, book: Long): Boolean
+    external fun syncNext(handle: Long): LongArray
+    external fun syncDetail(handle: Long): String?
+    external fun syncMarksError(handle: Long): String?
+    external fun syncClose(handle: Long)
+    external fun librarySetSyncTargets(
+        handle: Long,
+        book: Long,
+        progressionUrl: String?,
+        annotationContainer: String?,
+    ): Boolean
+    external fun librarySyncProgressionUrl(handle: Long, book: Long): String?
+    external fun librarySyncAnnotationContainer(handle: Long, book: Long): String?
     external fun position(handle: Long): Long
     external fun title(handle: Long): String
     external fun renderSize(handle: Long): Long

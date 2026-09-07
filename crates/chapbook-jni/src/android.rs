@@ -1794,3 +1794,453 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_fontFamilies(
     }
     array.into_raw()
 }
+
+// ---- Sync ----
+//
+// The engine and worker are chapbook-sync's; what this section adds is
+// the transport and the drain, both spelled for a platform that owns its
+// networking. The binding deliberately bundles no TLS: a Rust stack here
+// would trust webpki-roots and ignore the user's CAs, enterprise roots
+// and network security config, so the transport is a Kotlin object over
+// the platform's own HTTP — and it must write, because reconciling marks
+// means POST, PUT and DELETE. Credentials are the transport's business
+// too: attach `Authorization` per request from whatever store the app
+// keeps, which is why no credential type crosses here at all.
+
+/// What a sync handle points at: the worker, plus the drain state the
+/// flattened `syncNext`/`syncDetail` pair reads.
+struct SyncHandle {
+    worker: chapbook_sync::SyncWorker,
+    pending: std::collections::VecDeque<chapbook_sync::SyncEvent>,
+    detail: Option<String>,
+    marks_error: Option<String>,
+}
+
+/// # Safety
+/// `handle` must have come from `syncOpen` and not yet been closed.
+unsafe fn sync_handle<'a>(handle: jlong) -> Option<&'a mut SyncHandle> {
+    (handle as *mut SyncHandle).as_mut()
+}
+
+/// The Kotlin transport, held as a global ref and driven from the sync
+/// worker's thread.
+struct KtTransport {
+    vm: jni::JavaVM,
+    transport: jni::objects::GlobalRef,
+}
+
+use chapbook_sync::{HttpError, HttpRequest, HttpResponse};
+
+impl KtTransport {
+    /// Attach the worker thread (as a daemon, once — it lives for the
+    /// worker's life) and run one call, translating a thrown exception
+    /// into the transport failure it is.
+    fn with_env<T>(
+        &self,
+        f: impl FnOnce(&mut JNIEnv) -> Result<T, jni::errors::Error>,
+    ) -> Result<T, HttpError> {
+        let mut env = self
+            .vm
+            .attach_current_thread_permanently()
+            .map_err(|e| HttpError::new(format!("cannot attach to the JVM: {e}")))?;
+        let result = f(&mut env);
+        if env.exception_check().unwrap_or(false) {
+            let thrown = env.exception_occurred().ok();
+            env.exception_clear().ok();
+            let message = thrown
+                .and_then(|exc| {
+                    let value = env
+                        .call_method(&exc, "toString", "()Ljava/lang/String;", &[])
+                        .ok()?
+                        .l()
+                        .ok()?;
+                    env.get_string(&jni::objects::JString::from(value))
+                        .ok()
+                        .map(String::from)
+                })
+                .unwrap_or_else(|| "the transport threw".to_string());
+            return Err(HttpError::new(message));
+        }
+        result.map_err(|e| HttpError::new(format!("transport call failed: {e}")))
+    }
+}
+
+/// Request headers as Kotlin sees them: one flat array, names and values
+/// interleaved.
+fn kt_headers<'l>(
+    env: &mut JNIEnv<'l>,
+    headers: &[(String, String)],
+) -> Result<jni::objects::JObjectArray<'l>, jni::errors::Error> {
+    let class = env.find_class("java/lang/String")?;
+    let array = env.new_object_array((headers.len() * 2) as jint, class, JObject::null())?;
+    for (index, (name, value)) in headers.iter().enumerate() {
+        let name = env.new_string(name)?;
+        env.set_object_array_element(&array, (index * 2) as jint, name)?;
+        let value = env.new_string(value)?;
+        env.set_object_array_element(&array, (index * 2 + 1) as jint, value)?;
+    }
+    Ok(array)
+}
+
+/// A `SyncResponse` read back into the engine's shape.
+fn kt_response(env: &mut JNIEnv, response: JObject) -> Result<HttpResponse, jni::errors::Error> {
+    let status = env.get_field(&response, "status", "I")?.i()? as u16;
+    let content_type = {
+        let value = env
+            .get_field(&response, "contentType", "Ljava/lang/String;")?
+            .l()?;
+        if value.is_null() {
+            None
+        } else {
+            Some(String::from(
+                env.get_string(&jni::objects::JString::from(value))?,
+            ))
+        }
+    };
+    let mut headers = Vec::new();
+    let raw = env
+        .get_field(&response, "headers", "[Ljava/lang/String;")?
+        .l()?;
+    if !raw.is_null() {
+        let raw = jni::objects::JObjectArray::from(raw);
+        let len = env.get_array_length(&raw)?;
+        let mut pair = 0;
+        while pair + 1 < len {
+            let name = env.get_object_array_element(&raw, pair)?;
+            let value = env.get_object_array_element(&raw, pair + 1)?;
+            if !name.is_null() && !value.is_null() {
+                headers.push((
+                    String::from(env.get_string(&jni::objects::JString::from(name))?),
+                    String::from(env.get_string(&jni::objects::JString::from(value))?),
+                ));
+            }
+            pair += 2;
+        }
+    }
+    let body = {
+        let raw = env.get_field(&response, "body", "[B")?.l()?;
+        if raw.is_null() {
+            Vec::new()
+        } else {
+            env.convert_byte_array(jni::objects::JByteArray::from(raw))?
+        }
+    };
+    Ok(HttpResponse {
+        status,
+        content_type,
+        headers,
+        body: Box::new(std::io::Cursor::new(body)),
+    })
+}
+
+impl chapbook_sync::HttpClient for KtTransport {
+    fn get(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        self.with_env(|env| {
+            let url = env.new_string(&request.url)?;
+            let headers = kt_headers(env, &request.headers)?;
+            let response = env
+                .call_method(
+                    self.transport.as_obj(),
+                    "get",
+                    "(Ljava/lang/String;[Ljava/lang/String;)Lcom/ophymx/chapbook/SyncResponse;",
+                    &[(&url).into(), (&headers).into()],
+                )?
+                .l()?;
+            kt_response(env, response)
+        })
+    }
+
+    fn send(
+        &self,
+        method: chapbook_sync::HttpMethod,
+        request: HttpRequest,
+        body: Option<Vec<u8>>,
+    ) -> Result<HttpResponse, HttpError> {
+        self.with_env(|env| {
+            let verb = env.new_string(method.as_str())?;
+            let url = env.new_string(&request.url)?;
+            let headers = kt_headers(env, &request.headers)?;
+            let body = env.byte_array_from_slice(&body.unwrap_or_default())?;
+            let response = env
+                .call_method(
+                    self.transport.as_obj(),
+                    "send",
+                    "(Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;[B)\
+                     Lcom/ophymx/chapbook/SyncResponse;",
+                    &[
+                        (&verb).into(),
+                        (&url).into(),
+                        (&headers).into(),
+                        (&body).into(),
+                    ],
+                )?
+                .l()?;
+            kt_response(env, response)
+        })
+    }
+}
+
+/// Start a sync worker over a library. The transport is required — see
+/// the section comment for why nothing is bundled. `waker` is a
+/// `Runnable` fired on the worker thread once per queued report, or null
+/// to poll. `deviceId` is minted once by the app and reused forever;
+/// `deviceName` is for people.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_syncOpen(
+    mut env: JNIEnv,
+    _class: JClass,
+    library_dir: JString,
+    device_id: JString,
+    device_name: JString,
+    transport: JObject,
+    waker: JObject,
+) -> jlong {
+    use chapbook_reader::chapbook_library::Library;
+    let (Some(dir), Some(id), Some(name)) = (
+        string_in(&mut env, &library_dir),
+        string_in(&mut env, &device_id),
+        string_in(&mut env, &device_name),
+    ) else {
+        return 0;
+    };
+    if transport.is_null() {
+        log::error!("syncOpen needs a transport; this binding bundles none on purpose");
+        return 0;
+    }
+    let (Ok(vm), Ok(transport)) = (env.get_java_vm(), env.new_global_ref(transport)) else {
+        return 0;
+    };
+    let library = match Library::open(std::path::Path::new(&dir)) {
+        Ok(library) => library,
+        Err(e) => {
+            log::error!("sync cannot open the library at {dir}: {e}");
+            return 0;
+        }
+    };
+    let engine = chapbook_sync::SyncEngine::new(
+        library,
+        std::sync::Arc::new(KtTransport { vm, transport }),
+        chapbook_sync::Device { id, name },
+    );
+    let waker: std::sync::Arc<dyn Fn() + Send + Sync> = if waker.is_null() {
+        std::sync::Arc::new(|| {})
+    } else {
+        let (Ok(vm), Ok(waker)) = (env.get_java_vm(), env.new_global_ref(waker)) else {
+            return 0;
+        };
+        std::sync::Arc::new(move || {
+            if let Ok(mut env) = vm.attach_current_thread_permanently() {
+                let _ = env.call_method(waker.as_obj(), "run", "()V", &[]);
+            }
+        })
+    };
+    Box::into_raw(Box::new(SyncHandle {
+        worker: chapbook_sync::SyncWorker::spawn(engine, waker),
+        pending: std::collections::VecDeque::new(),
+        detail: None,
+        marks_error: None,
+    })) as jlong
+}
+
+/// Ask for every book with a service. Returns whether the worker took it.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_syncRequestAll(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jboolean {
+    unsafe { sync_handle(handle) }
+        .is_some_and(|s| s.worker.request(chapbook_sync::SyncCommand::All)) as jboolean
+}
+
+/// Ask for one book.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_syncRequestBook(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    book: jlong,
+) -> jboolean {
+    use chapbook_reader::chapbook_library::BookId;
+    unsafe { sync_handle(handle) }.is_some_and(|s| {
+        s.worker
+            .request(chapbook_sync::SyncCommand::Book(BookId(book)))
+    }) as jboolean
+}
+
+/// The next report, flattened: `[kind, book, position, created, updated,
+/// deleted, adopted, refreshed, merged, conflicts, books]`, or an empty
+/// array when none waits. Kinds: 0 book, 1 book failed, 2 finished;
+/// positions: 0 idle, 1 pushed, 2 pulled, 3 refused, 4 conflict,
+/// 5 failed. The strings ride [`syncDetail`] and [`syncMarksError`].
+///
+/// [`syncDetail`]: Java_com_ophymx_chapbook_Native_syncDetail
+/// [`syncMarksError`]: Java_com_ophymx_chapbook_Native_syncMarksError
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_syncNext(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlongArray {
+    use chapbook_sync::{PositionReport, SyncEvent};
+    let Some(sync) = (unsafe { sync_handle(handle) }) else {
+        return long_array_out(&env, &[]);
+    };
+    if sync.pending.is_empty() {
+        sync.pending.extend(sync.worker.drain());
+    }
+    let Some(event) = sync.pending.pop_front() else {
+        return long_array_out(&env, &[]);
+    };
+    sync.detail = None;
+    sync.marks_error = None;
+    let mut values = [0 as jlong; 11];
+    match event {
+        SyncEvent::Book(report) => {
+            values[0] = 0;
+            values[1] = report.book.0;
+            values[2] = match report.position {
+                PositionReport::Idle => 0,
+                PositionReport::Pushed => 1,
+                PositionReport::Pulled => 2,
+                PositionReport::Refused(why) => {
+                    sync.detail = Some(why);
+                    3
+                }
+                PositionReport::Conflict => 4,
+                PositionReport::Failed(why) => {
+                    sync.detail = Some(why);
+                    5
+                }
+            };
+            let marks = report.annotations;
+            values[3] = marks.created as jlong;
+            values[4] = marks.updated as jlong;
+            values[5] = marks.deleted as jlong;
+            values[6] = marks.adopted as jlong;
+            values[7] = marks.refreshed as jlong;
+            values[8] = marks.merged as jlong;
+            values[9] = marks.conflicts as jlong;
+            sync.marks_error = marks.failed;
+        }
+        SyncEvent::Failed { book, reason } => {
+            values[0] = 1;
+            values[1] = book.0;
+            sync.detail = Some(reason);
+        }
+        SyncEvent::Finished { books } => {
+            values[0] = 2;
+            values[10] = books as jlong;
+        }
+    }
+    long_array_out(&env, &values)
+}
+
+/// The refusal or failure belonging to the report [`syncNext`] just
+/// returned, or null. Replaced by the next call.
+///
+/// [`syncNext`]: Java_com_ophymx_chapbook_Native_syncNext
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_syncDetail(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    match unsafe { sync_handle(handle) }.and_then(|s| s.detail.take()) {
+        Some(detail) => string_out(&env, &detail),
+        None => JObject::null().into_raw(),
+    }
+}
+
+/// The container-unreachable message belonging to the last report, or
+/// null.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_syncMarksError(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    match unsafe { sync_handle(handle) }.and_then(|s| s.marks_error.take()) {
+        Some(message) => string_out(&env, &message),
+        None => JObject::null().into_raw(),
+    }
+}
+
+/// Close the worker. Blocks for the book in flight — the thread is
+/// joined, so a returned close means nothing still touches the library
+/// or calls the transport.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_syncClose(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle != 0 {
+        // SAFETY: a handle from `syncOpen`, closed once.
+        drop(unsafe { Box::from_raw(handle as *mut SyncHandle) });
+    }
+}
+
+/// Record where a book syncs — the services off the catalog entry it was
+/// downloaded from. Null holds none; two nulls make it local again.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_librarySetSyncTargets(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    book: jlong,
+    progression_url: JString,
+    annotation_container: JString,
+) -> jboolean {
+    use chapbook_reader::chapbook_library::BookId;
+    let Some(library) = (unsafe { library(handle) }) else {
+        return 0;
+    };
+    let progression = if progression_url.is_null() {
+        None
+    } else {
+        string_in(&mut env, &progression_url)
+    };
+    let container = if annotation_container.is_null() {
+        None
+    } else {
+        string_in(&mut env, &annotation_container)
+    };
+    ok(library.set_sync_targets(BookId(book), progression.as_deref(), container.as_deref()))
+}
+
+/// The progression service this book syncs its position to, or null.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_librarySyncProgressionUrl(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    book: jlong,
+) -> jstring {
+    use chapbook_reader::chapbook_library::BookId;
+    let url = unsafe { library(handle) }
+        .and_then(|l| l.sync_targets(BookId(book)).ok())
+        .and_then(|t| t.progression_url);
+    match url {
+        Some(url) => string_out(&env, &url),
+        None => JObject::null().into_raw(),
+    }
+}
+
+/// The annotation container this book syncs its marks with, or null.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_librarySyncAnnotationContainer(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    book: jlong,
+) -> jstring {
+    use chapbook_reader::chapbook_library::BookId;
+    let container = unsafe { library(handle) }
+        .and_then(|l| l.sync_targets(BookId(book)).ok())
+        .and_then(|t| t.annotation_container);
+    match container {
+        Some(container) => string_out(&env, &container),
+        None => JObject::null().into_raw(),
+    }
+}
