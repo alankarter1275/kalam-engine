@@ -1767,3 +1767,286 @@ fn zeroed_query() -> cb_book_query {
         offset: 0,
     }
 }
+
+// ---- Sync across the boundary ----
+
+/// Where a book's services are recorded and read back — the half a host
+/// that browses catalogs itself needs before a sync can find anything.
+#[test]
+fn sync_targets_round_trip_through_the_shelf() {
+    if cb_capabilities() & cb_capability::CB_CAP_LIBRARY as u32 == 0 {
+        eprintln!("skipped: this build has no library");
+        return;
+    }
+    let session = open("sync-targets", "epub/minimal.epub");
+    let mut book = 0i64;
+    assert_eq!(
+        unsafe { cb_session_book_id(session, &mut book) },
+        cb_status::CB_OK
+    );
+    unsafe { cb_session_close(session) };
+
+    let dir = std::env::temp_dir().join(format!(
+        "chapbook-ffi-test-{}-sync-targets",
+        std::process::id()
+    ));
+    let dir_c = cstr(&dir.to_string_lossy());
+    let mut lib: *mut cb_library = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { cb_library_open(dir_c.as_ptr(), &mut lib) },
+        cb_status::CB_OK
+    );
+
+    // A sideloaded book has no services, and says so per service —
+    // straight from the probe call, before any buffer is offered.
+    let mut needed = 0usize;
+    assert_eq!(
+        unsafe { cb_library_sync_progression_url(lib, book, std::ptr::null_mut(), 0, &mut needed) },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+
+    let progression = cstr("http://127.0.0.1:1/progression");
+    let container = cstr("http://127.0.0.1:1/annotations");
+    assert_eq!(
+        unsafe { cb_library_set_sync_targets(lib, book, progression.as_ptr(), container.as_ptr()) },
+        cb_status::CB_OK
+    );
+    assert_eq!(
+        read_string(|buf, cap, needed| unsafe {
+            cb_library_sync_progression_url(lib, book, buf, cap, needed)
+        })
+        .as_deref(),
+        Ok("http://127.0.0.1:1/progression")
+    );
+    assert_eq!(
+        read_string(|buf, cap, needed| unsafe {
+            cb_library_sync_annotation_container(lib, book, buf, cap, needed)
+        })
+        .as_deref(),
+        Ok("http://127.0.0.1:1/annotations")
+    );
+
+    // Two nulls make it local again.
+    assert_eq!(
+        unsafe { cb_library_set_sync_targets(lib, book, std::ptr::null(), std::ptr::null()) },
+        cb_status::CB_OK
+    );
+    assert_eq!(
+        unsafe {
+            cb_library_sync_annotation_container(lib, book, std::ptr::null_mut(), 0, &mut needed)
+        },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+
+    unsafe { cb_library_close(lib) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+static SYNC_WAKES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SYNC_FINALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+extern "C" fn sync_wake(_user: *mut std::ffi::c_void) {
+    SYNC_WAKES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+unsafe extern "C" fn sync_finalize(_user: *mut std::ffi::c_void) {
+    SYNC_FINALIZED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// A transport with nobody on the other end, spelled as host callbacks.
+unsafe extern "C" fn dead_get(
+    _request: *const cb_http_request,
+    response: *mut cb_http_response,
+    _user: *mut std::ffi::c_void,
+) {
+    unsafe {
+        cb_http_response_fail(response, c"nobody home".as_ptr());
+    }
+}
+
+unsafe extern "C" fn dead_send(
+    _method: *const c_char,
+    _request: *const cb_http_request,
+    _body: *const u8,
+    _len: usize,
+    response: *mut cb_http_response,
+    _user: *mut std::ffi::c_void,
+) {
+    unsafe {
+        cb_http_response_fail(response, c"nobody home".as_ptr());
+    }
+}
+
+/// Wait out the worker: the next report, or a named failure.
+fn next_report(sync: *mut cb_sync) -> cb_sync_report {
+    let mut report = cb_sync_report {
+        kind: cb_sync_kind::CB_SYNC_FINISHED,
+        book: 0,
+        position: cb_sync_position::CB_SYNC_POSITION_IDLE,
+        detail: std::ptr::null(),
+        marks_created: 0,
+        marks_updated: 0,
+        marks_deleted: 0,
+        marks_adopted: 0,
+        marks_refreshed: 0,
+        marks_merged: 0,
+        marks_conflicts: 0,
+        marks_error: std::ptr::null(),
+        books: 0,
+    };
+    for _ in 0..500 {
+        match unsafe { cb_sync_next(sync, &mut report) } {
+            cb_status::CB_OK => return report,
+            cb_status::CB_ERR_UNAVAILABLE => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            other => panic!("cb_sync_next: {other:?}: {}", last_error()),
+        }
+    }
+    panic!("no sync report within five seconds");
+}
+
+/// The whole reach, driven the way a phone would: record a service, open
+/// a worker over host callbacks, ask for the shelf, drain what happened.
+/// The service is dead, which is the honest first thing to prove — the
+/// failure crosses the boundary as a report on the book, not a dead
+/// batch and not silence.
+#[test]
+fn a_dead_service_crosses_as_a_report_not_a_dead_batch() {
+    if cb_capabilities() & cb_capability::CB_CAP_SYNC as u32 == 0 {
+        eprintln!("skipped: this build has no sync");
+        return;
+    }
+    let session = open("sync-drive", "epub/minimal.epub");
+    let mut book = 0i64;
+    assert_eq!(
+        unsafe { cb_session_book_id(session, &mut book) },
+        cb_status::CB_OK
+    );
+    unsafe { cb_session_close(session) };
+
+    let dir = std::env::temp_dir().join(format!(
+        "chapbook-ffi-test-{}-sync-drive",
+        std::process::id()
+    ));
+    let dir_c = cstr(&dir.to_string_lossy());
+    let mut lib: *mut cb_library = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { cb_library_open(dir_c.as_ptr(), &mut lib) },
+        cb_status::CB_OK
+    );
+    let progression = cstr("http://127.0.0.1:1/progression");
+    assert_eq!(
+        unsafe { cb_library_set_sync_targets(lib, book, progression.as_ptr(), std::ptr::null()) },
+        cb_status::CB_OK
+    );
+    unsafe { cb_library_close(lib) };
+
+    let device_id = cstr("abi-test-device");
+    let device_name = cstr("abi test");
+    let mut sync: *mut cb_sync = std::ptr::null_mut();
+    let finalized_before = SYNC_FINALIZED.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        unsafe {
+            cb_sync_open(
+                dir_c.as_ptr(),
+                device_id.as_ptr(),
+                device_name.as_ptr(),
+                Some(dead_get),
+                Some(dead_send),
+                Some(sync_finalize),
+                std::ptr::null_mut(),
+                Some(sync_wake),
+                std::ptr::null_mut(),
+                &mut sync,
+            )
+        },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert!(!sync.is_null());
+
+    assert_eq!(unsafe { cb_sync_request_all(sync) }, cb_status::CB_OK);
+
+    let report = next_report(sync);
+    assert_eq!(report.kind, cb_sync_kind::CB_SYNC_BOOK);
+    assert_eq!(report.book, book);
+    assert_eq!(
+        report.position,
+        cb_sync_position::CB_SYNC_POSITION_FAILED,
+        "a dead transport fails the position half"
+    );
+    assert!(!report.detail.is_null(), "a failure explains itself");
+    let detail = unsafe { std::ffi::CStr::from_ptr(report.detail) }
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        detail.contains("nobody home"),
+        "the transport's own words cross: {detail}"
+    );
+
+    let finished = next_report(sync);
+    assert_eq!(finished.kind, cb_sync_kind::CB_SYNC_FINISHED);
+    assert_eq!(finished.books, 1);
+
+    // Between batches the queue is empty, and says so quietly.
+    let mut spare = finished;
+    assert_eq!(
+        unsafe { cb_sync_next(sync, &mut spare) },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+    assert!(
+        SYNC_WAKES.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+        "the waker fired per report"
+    );
+
+    unsafe { cb_sync_close(sync) };
+    assert_eq!(
+        SYNC_FINALIZED.load(std::sync::atomic::Ordering::SeqCst),
+        finalized_before + 1,
+        "closing the worker ran the transport finalizer exactly once"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The refusal that keeps a host honest: a transport that can read but
+/// not write is not a sync transport, and the finalizer still runs so
+/// the ownership contract holds on the failure path.
+#[test]
+fn sync_refuses_a_transport_that_cannot_write() {
+    if cb_capabilities() & cb_capability::CB_CAP_SYNC as u32 == 0 {
+        eprintln!("skipped: this build has no sync");
+        return;
+    }
+    let dir = library_dir("sync-readonly");
+    let dir_c = cstr(&dir.to_string_lossy());
+    let device_id = cstr("abi-test-device");
+    let device_name = cstr("abi test");
+    let mut sync: *mut cb_sync = std::ptr::null_mut();
+    let finalized_before = SYNC_FINALIZED.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        unsafe {
+            cb_sync_open(
+                dir_c.as_ptr(),
+                device_id.as_ptr(),
+                device_name.as_ptr(),
+                Some(dead_get),
+                None,
+                Some(sync_finalize),
+                std::ptr::null_mut(),
+                None,
+                std::ptr::null_mut(),
+                &mut sync,
+            )
+        },
+        cb_status::CB_ERR_NULL_ARGUMENT
+    );
+    assert!(sync.is_null());
+    assert_eq!(
+        SYNC_FINALIZED.load(std::sync::atomic::Ordering::SeqCst),
+        finalized_before + 1,
+        "declining still released the host's object"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

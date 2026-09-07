@@ -175,6 +175,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
       - run: cargo check -p chapbook-ffi --no-default-features --features "${{ matrix.features }}"
+      # `sync` is the C ABI's own feature — chapbook-reader has no such
+      # switch — so it gets its own line rather than a matrix row the
+      # reader check would refuse. Without `ureq`, which is the device
+      # shape: sync over the host's transport, no TLS stack in the build.
+      - run: cargo check -p chapbook-ffi --no-default-features --features sync
+        if: matrix.features == ''
 
   progression-feature:
     # OPDS Progression 1.0 is off by default because the spec is an
