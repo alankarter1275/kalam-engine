@@ -195,12 +195,20 @@ bytes — sideloaded, or adopted from a descriptor — has no entry and so
 no service, and nothing maps a fingerprint back to one. That direction
 is still open, and it is a product question before it is a protocol one.
 
-What is *not* built is the reach. `chapbook lib sync` drives it from the
-terminal, and that is the whole of it: the engine is absent from the C
-ABI, from the JNI binding and from the Swift package, and
-`chapbook-reader` does not re-export it, so every shell that is not
-itself Rust holds a library it has no way to reconcile. kosync remains
-backlog.
+The reach is built in the order the consumers asked for it. `chapbook
+lib sync` drives it from the terminal; the desktop application drives it
+from a window; and the C ABI carries it — `cb_sync_open` puts the worker
+over the host's own transport, `cb_library_set_sync_targets` is where a
+host that browsed a catalog records the services it learned, and reports
+cross as typed per-book statuses. That boundary has **no credential
+surface, deliberately**: a host transport is the host's networking, and
+it authorizes its own requests — which also obliges it to write, so the
+transport contract there includes the POST/PUT/DELETE half and the
+response headers (`ETag`, `Location`) the annotation flows turn on.
+Still outside: the JNI binding and the Swift package wrap none of it
+yet, so the two mobile shells hold libraries they cannot reconcile —
+though the surface they would wrap now exists and is golden-tested.
+kosync remains backlog.
 
 Three conclusions here are load-bearing for every host and worth
 restating wherever a shell author looks:

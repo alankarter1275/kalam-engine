@@ -58,6 +58,7 @@ pub struct cb_http_request {
 pub struct cb_http_response {
     pub(crate) status: Option<u16>,
     pub(crate) content_type: Option<String>,
+    pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Vec<u8>,
     pub(crate) error: Option<String>,
 }
@@ -116,6 +117,34 @@ pub type cb_http_download_fn = Option<
     ),
 >;
 
+/// Performs one blocking request that is not a GET — the write half a
+/// sync transport must have, because reconciling marks means POST, PUT
+/// and DELETE against a Web Annotation container and a position PUT
+/// against a progression service.
+///
+/// `method` is the verb as an uppercase token: `"POST"`, `"PUT"` or
+/// `"DELETE"` — nothing else is ever sent. `body` is `body_len` bytes to
+/// send, or null when the request has none (a DELETE); it dies when the
+/// callback returns.
+///
+/// Everything [`cb_http_get_fn`] promises applies here too, plus one
+/// duty of its own: **report the response headers** through
+/// [`cb_http_response_add_header`], at least `ETag` and `Location` when
+/// present. A Web Annotation container carries its whole concurrency
+/// story in `ETag` and says where it put a new mark in `Location`; a
+/// transport that discards them makes safe concurrent editing
+/// impossible, and the failure looks like sync quietly forgetting marks.
+pub type cb_http_send_fn = Option<
+    unsafe extern "C" fn(
+        method: *const c_char,
+        request: *const cb_http_request,
+        body: *const u8,
+        body_len: usize,
+        response: *mut cb_http_response,
+        user: *mut c_void,
+    ),
+>;
+
 /// Releases whatever `user` points at, once, when the transport is
 /// dropped — the config freed unopened, or the last session holding it
 /// closed. This is what lets a host hand over a reference-counted object
@@ -165,6 +194,34 @@ pub unsafe extern "C" fn cb_http_response_set_content_type(
             return cb_status::CB_ERR_NULL_ARGUMENT;
         };
         response.content_type = Some(content_type.to_string());
+        cb_status::CB_OK
+    })
+}
+
+/// Report one response header, name and value as received. Call once per
+/// header, duplicates in order. `Content-Type` still goes through
+/// [`cb_http_response_set_content_type`], which stays authoritative;
+/// everything else — `ETag` and `Location` above all, see
+/// [`cb_http_send_fn`] — arrives here. A transport may pass all headers
+/// or only the ones it can cheaply enumerate.
+#[no_mangle]
+pub unsafe extern "C" fn cb_http_response_add_header(
+    response: *mut cb_http_response,
+    name: *const c_char,
+    value: *const c_char,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        // SAFETY: the pointer the callback was handed, within the call.
+        let Some(response) = (unsafe { response.as_mut() }) else {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "response is null");
+        };
+        // SAFETY: the header's contract for both strings.
+        let (Some(name), Some(value)) = (unsafe { crate::abi::str_in(name, "name") }, unsafe {
+            crate::abi::str_in(value, "value")
+        }) else {
+            return cb_status::CB_ERR_NULL_ARGUMENT;
+        };
+        response.headers.push((name.to_string(), value.to_string()));
         cb_status::CB_OK
     })
 }
@@ -297,9 +354,10 @@ pub unsafe extern "C" fn cb_config_set_http_transport(
 
 /// The `HttpClient` the callbacks become. Only meaningful with `opds` —
 /// without it `SessionConfig` has no transport field and the entry point
-/// above declines honestly.
+/// above declines honestly. `pub(crate)` because the sync module builds
+/// its transport out of the same parts.
 #[cfg(feature = "opds")]
-mod host {
+pub(crate) mod host {
     use std::ffi::{c_void, CString};
     use std::io::Cursor;
     use std::path::Path;
@@ -308,7 +366,7 @@ mod host {
 
     use super::{cb_http_download_fn, cb_http_finalize_fn, cb_http_header, cb_http_request};
 
-    pub(super) struct HostTransport {
+    pub(crate) struct HostTransport {
         pub get:
             unsafe extern "C" fn(*const cb_http_request, *mut super::cb_http_response, *mut c_void),
         pub download: cb_http_download_fn,
@@ -321,7 +379,7 @@ mod host {
     }
 
     impl HostTransport {
-        fn user(&self) -> *mut c_void {
+        pub(crate) fn user(&self) -> *mut c_void {
             self.user as *mut c_void
         }
     }
@@ -338,7 +396,7 @@ mod host {
 
     /// Marshal one request into C shapes that live exactly as long as the
     /// callback invocation `f` makes.
-    fn with_c_request<T>(
+    pub(crate) fn with_c_request<T>(
         request: &HttpRequest,
         f: impl FnOnce(*const cb_http_request) -> T,
     ) -> Result<T, HttpError> {
@@ -376,12 +434,17 @@ mod host {
         /// What the callback left behind, judged: a failure message wins,
         /// then a response, and silence is reported as the transport bug
         /// it is rather than surfacing as a parse error on an empty body.
-        fn settle(self) -> Result<(u16, Option<String>, Vec<u8>), HttpError> {
+        pub(crate) fn settle(self) -> Result<HttpResponse, HttpError> {
             if let Some(message) = self.error {
                 return Err(HttpError::new(message));
             }
             match self.status {
-                Some(status) => Ok((status, self.content_type, self.body)),
+                Some(status) => Ok(HttpResponse {
+                    status,
+                    content_type: self.content_type,
+                    headers: self.headers,
+                    body: Box::new(Cursor::new(self.body)),
+                }),
                 None => Err(HttpError::new(
                     "the host transport returned without reporting a status or a failure",
                 )),
@@ -397,13 +460,7 @@ mod host {
                 // valid for exactly this call.
                 unsafe { (self.get)(raw, &mut response, self.user()) }
             })?;
-            let (status, content_type, body) = response.settle()?;
-            Ok(HttpResponse {
-                status,
-                content_type,
-                headers: Vec::new(),
-                body: Box::new(Cursor::new(body)),
-            })
+            response.settle()
         }
 
         fn download(&self, request: HttpRequest, dest: &Path) -> Result<u16, HttpError> {
@@ -429,8 +486,7 @@ mod host {
                 // SAFETY: as for `get`.
                 unsafe { download(raw, dest.as_ptr(), &mut response, self.user()) }
             })?;
-            let (status, _, _) = response.settle()?;
-            Ok(status)
+            Ok(response.settle()?.status)
         }
     }
 }

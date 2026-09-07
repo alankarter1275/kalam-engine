@@ -6,6 +6,43 @@ import android.os.ParcelFileDescriptor
 /** Where the reader is. The pair, never the page alone — see `docs/SHELLS.md`. */
 data class Position(val spine: Int, val page: Int)
 
+/** What kind of book a session opened. */
+enum class BookKind { EPUB, COMIC, PDF }
+
+/** The engine's colour themes, in cycle order. */
+enum class Theme { LIGHT, SEPIA, DARK }
+
+/**
+ * The scalar reading settings. The font family deliberately travels on
+ * its own calls — see [Session.setSettings].
+ */
+data class ReadingSettings(
+    val baseFontPx: Float,
+    val lineHeight: Float,
+    val justify: Boolean,
+    val publisherStyles: Boolean,
+    val theme: Theme,
+)
+
+/**
+ * Something the session wants a shell to know, drained from
+ * [Session.drainEvents]. Deliberately not about drawing — what to repaint
+ * is [Session.pollLoaded]'s answer.
+ */
+sealed class SessionEvent {
+    /** A background unit finished decoding, prefetches included. */
+    data class UnitLoaded(val spine: Int) : SessionEvent()
+
+    /** A background unit failed and will not be retried. [message] is for a person. */
+    data class UnitFailed(val spine: Int, val message: String) : SessionEvent()
+
+    /** The reader is somewhere else — moves the shell did not make included. */
+    data class PositionChanged(val spine: Int, val page: Int) : SessionEvent()
+
+    /** The reader reached the last page of the last unit. */
+    data object BookFinished : SessionEvent()
+}
+
 /** The device-pixel size a bitmap must be before [Session.renderInto] will draw. */
 data class RenderSize(val width: Int, val height: Int)
 
@@ -163,6 +200,116 @@ class Session private constructor(private var handle: Long) : AutoCloseable {
 
     /** Next theme. Repaints; the position does not move. */
     fun cycleTheme() = Native.cycleTheme(handle)
+
+    // ---- Background loads ----
+    //
+    // Image books (CBZ, PDF) decode off the UI thread. Without this pair
+    // wired, a comic opens to its placeholder page and stays there.
+
+    /**
+     * Install the wake callback, run once per landed load **on the loader
+     * thread**. It must only get back to the main thread — `View.post`, a
+     * `Handler` — and call [pollLoaded]; touching a view from inside it is
+     * the bug every reference shell's waker comment warns about. Null
+     * clears it.
+     */
+    fun setWaker(waker: Runnable?) = Native.setWaker(handle, waker)
+
+    /**
+     * Take delivery of anything the loader finished. Returns whether the
+     * visible page changed, and therefore whether to repaint — prefetch
+     * landings answer false on purpose.
+     */
+    fun pollLoaded(): Boolean = Native.pollLoaded(handle)
+
+    /** Whether any unit is still loading — for a shell that shows a spinner. */
+    val hasPendingLoads: Boolean get() = Native.hasPendingLoads(handle)
+
+    // ---- Session events ----
+
+    /**
+     * Everything the session wants a shell to know since the last drain:
+     * loads landing and failing, the position moving, the book finishing.
+     * Drain after a wake or a draw; the engine coalesces on its side.
+     */
+    fun drainEvents(): List<SessionEvent> {
+        val out = mutableListOf<SessionEvent>()
+        while (true) {
+            val packed = Native.nextEvent(handle)
+            if (packed < 0) break
+            val spine = ((packed ushr 28) and 0x0fff_ffff).toInt()
+            val page = (packed and 0x0fff_ffff).toInt()
+            out.add(
+                when ((packed ushr 56).toInt()) {
+                    0 -> SessionEvent.UnitLoaded(spine)
+                    1 -> SessionEvent.UnitFailed(spine, Native.eventMessage(handle) ?: "")
+                    2 -> SessionEvent.PositionChanged(spine, page)
+                    else -> SessionEvent.BookFinished
+                }
+            )
+        }
+        return out
+    }
+
+    // ---- The rest of the reading model ----
+
+    /** How many spine units the book has — the denominator of "ch 2/8". */
+    val spineLen: Int get() = Native.spineLen(handle)
+
+    /** How many pages the current unit laid out to; 0 until metrics arrive. */
+    val pageCount: Int get() = Native.pageCount(handle)
+
+    /** What kind of book — "ch" or "pg" in a title bar. */
+    val kind: BookKind
+        get() = when (Native.bookKind(handle)) {
+            1 -> BookKind.COMIC
+            2 -> BookKind.PDF
+            else -> BookKind.EPUB
+        }
+
+    // ---- Settings ----
+
+    /** The settings in force, resolved override-over-default. */
+    val settings: ReadingSettings?
+        get() {
+            val values = Native.settings(handle)
+            if (values.size < 5) return null
+            return ReadingSettings(
+                baseFontPx = values[0],
+                lineHeight = values[1],
+                justify = values[2] != 0f,
+                publisherStyles = values[3] != 0f,
+                theme = Theme.entries.getOrElse(values[4].toInt()) { Theme.LIGHT },
+            )
+        }
+
+    /**
+     * Replace the scalar settings. The chosen font family is preserved,
+     * not cleared — it travels on [setFontFamily], the same split the C
+     * ABI keeps and for the same reason. [thisBook] scopes the change to
+     * this book instead of the reader default; both persist through the
+     * library when the session has one.
+     */
+    fun setSettings(settings: ReadingSettings, thisBook: Boolean = false) =
+        Native.setSettings(
+            handle,
+            settings.baseFontPx,
+            settings.lineHeight,
+            settings.justify,
+            settings.publisherStyles,
+            settings.theme.ordinal,
+            thisBook,
+        )
+
+    /** The reader's chosen typeface, or null for the publisher's. */
+    val fontFamily: String? get() = Native.fontFamily(handle)
+
+    /** Choose a typeface — one of [fontFamilies] — or null to let go. */
+    fun setFontFamily(family: String?, thisBook: Boolean = false) =
+        Native.setFontFamily(handle, family, thisBook)
+
+    /** Every family the session's font database offers — a picker's list. */
+    val fontFamilies: Array<String> get() = Native.fontFamilies(handle)
 
     /**
      * Save the position and drop everything reconstructible. Call from

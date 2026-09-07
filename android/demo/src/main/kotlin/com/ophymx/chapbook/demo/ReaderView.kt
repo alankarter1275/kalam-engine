@@ -8,6 +8,7 @@ import android.view.View
 import android.view.accessibility.AccessibilityNodeProvider
 import com.ophymx.chapbook.PageAccessibility
 import com.ophymx.chapbook.Session
+import com.ophymx.chapbook.SessionEvent
 
 /**
  * The whole shell, in one view.
@@ -44,6 +45,24 @@ class ReaderView(context: Context, private val session: Session) : View(context)
         // can tell premultiplied RGBA from BGRA — worth keeping a band for.
         session.setTapZones(1f / 3f, 1f / 3f, "cycle-theme")
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+        // Image books decode off the UI thread, and the waker is how
+        // their pages reach the screen: it fires on the loader thread, so
+        // it only posts; the post polls, and a visible change repaints. A
+        // failed page surfaces on the status line instead of staying a
+        // placeholder with no explanation.
+        session.setWaker(
+            Runnable {
+                post {
+                    if (session.pollLoaded()) invalidate()
+                    for (event in session.drainEvents()) {
+                        if (event is SessionEvent.UnitFailed) {
+                            lastAction = "page ${event.spine + 1} failed: ${event.message}"
+                            onMoved?.invoke()
+                        }
+                    }
+                }
+            }
+        )
     }
 
     override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y

@@ -507,6 +507,90 @@ typedef uint32_t cb_settings_scope;
 #endif // __cplusplus
 
 /**
+ * What kind of thing [`cb_session_next_event`] is reporting.
+ */
+typedef enum cb_session_event_kind {
+    /**
+     * A background unit finished decoding, prefetches included —
+     * [`cb_session_poll_loaded`] deliberately answers false for those,
+     * and a shell watching load progress wants both.
+     */
+    CB_SESSION_EVENT_UNIT_LOADED = 0,
+    /**
+     * A background unit failed and will not be retried. Without this a
+     * comic page that failed to download stays a placeholder forever
+     * with nothing able to say why.
+     */
+    CB_SESSION_EVENT_UNIT_FAILED = 1,
+    /**
+     * The reader is somewhere else — including moves the host did not
+     * make: a restored position resolving after open, a load landing
+     * that settles the page.
+     */
+    CB_SESSION_EVENT_POSITION_CHANGED = 2,
+    /**
+     * The reader reached the last page of the last unit. Fires on the
+     * transition and re-arms if they leave. Whether it means "mark as
+     * read" is the host's policy.
+     */
+    CB_SESSION_EVENT_BOOK_FINISHED = 3,
+} cb_session_event_kind;
+
+/**
+ * What kind of report [`cb_sync_next`] filled in.
+ */
+typedef enum cb_sync_kind {
+    /**
+     * A book reconciled. Failures *inside* the book — an unreachable
+     * service, a refused write — live in the report's position and mark
+     * fields, because one dead host must not read as a dead batch.
+     */
+    CB_SYNC_BOOK = 0,
+    /**
+     * A book did not reconcile at all — removed from the shelf, or no
+     * service to talk to. The rest of the batch still ran.
+     */
+    CB_SYNC_BOOK_FAILED = 1,
+    /**
+     * A batch finished; `books` says how many reports preceded this.
+     * The signal to stop showing a spinner.
+     */
+    CB_SYNC_FINISHED = 2,
+} cb_sync_kind;
+
+/**
+ * What happened to a book's reading position.
+ */
+typedef enum cb_sync_position {
+    /**
+     * Nothing to do: no service, or nothing had changed on either side.
+     */
+    CB_SYNC_POSITION_IDLE = 0,
+    /**
+     * This device's position reached the service.
+     */
+    CB_SYNC_POSITION_PUSHED = 1,
+    /**
+     * The service's position was adopted locally.
+     */
+    CB_SYNC_POSITION_PULLED = 2,
+    /**
+     * The service declined; what it holds is newer. Not a failure — the
+     * next pull brings it down if the local copy is clean by then.
+     */
+    CB_SYNC_POSITION_REFUSED = 3,
+    /**
+     * Both sides moved since they last agreed. Nothing was overwritten.
+     */
+    CB_SYNC_POSITION_CONFLICT = 4,
+    /**
+     * The service could not be reached, or answered something unusable.
+     * Nothing local changed.
+     */
+    CB_SYNC_POSITION_FAILED = 5,
+} cb_sync_position;
+
+/**
  * Which optional capabilities this build actually has.
  *
  * A header cannot tell a host which `.so` it loaded, and the Android spike
@@ -552,6 +636,12 @@ enum cb_capability
      * EPUB altimg/alttext fallback.
      */
     CB_CAP_MATHML = 64,
+    /**
+     * Positions and marks reconcile with a book's services. Without it
+     * `cb_sync_open` declines and the library is read and written only
+     * locally.
+     */
+    CB_CAP_SYNC = 128,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -596,6 +686,15 @@ typedef struct cb_session cb_session;
  * One query's rows, held still until freed. Opaque.
  */
 typedef struct cb_shelf cb_shelf;
+
+/**
+ * A sync worker over one library. Opaque.
+ *
+ * Owns a thread; [`cb_sync_close`] joins it. Not thread-safe: like a
+ * session, a handle belongs to one thread at a time, and the thread the
+ * worker owns reaches back only through the waker.
+ */
+typedef struct cb_sync cb_sync;
 
 /**
  * One request header, borrowed for the duration of the callback.
@@ -924,6 +1023,121 @@ typedef struct cb_word_span {
  */
 typedef void (*cb_wake_fn)(void *user);
 
+/**
+ * One session event. Plain data; `message` is borrowed from the session
+ * and stays valid until the next [`cb_session_next_event`] or the
+ * session closes — copy it before either.
+ */
+typedef struct cb_session_event {
+    enum cb_session_event_kind kind;
+    /**
+     * The spine unit, for the two unit events and the position.
+     */
+    size_t spine;
+    /**
+     * The page, for `CB_SESSION_EVENT_POSITION_CHANGED`; 0 otherwise.
+     */
+    size_t page;
+    /**
+     * A unit failure's reason, for a person to read (free to change; do
+     * not match on it). Null for every other kind.
+     */
+    const char *message;
+} cb_session_event;
+
+/**
+ * Performs one blocking request that is not a GET — the write half a
+ * sync transport must have, because reconciling marks means POST, PUT
+ * and DELETE against a Web Annotation container and a position PUT
+ * against a progression service.
+ *
+ * `method` is the verb as an uppercase token: `"POST"`, `"PUT"` or
+ * `"DELETE"` — nothing else is ever sent. `body` is `body_len` bytes to
+ * send, or null when the request has none (a DELETE); it dies when the
+ * callback returns.
+ *
+ * Everything [`cb_http_get_fn`] promises applies here too, plus one
+ * duty of its own: **report the response headers** through
+ * [`cb_http_response_add_header`], at least `ETag` and `Location` when
+ * present. A Web Annotation container carries its whole concurrency
+ * story in `ETag` and says where it put a new mark in `Location`; a
+ * transport that discards them makes safe concurrent editing
+ * impossible, and the failure looks like sync quietly forgetting marks.
+ */
+typedef void (*cb_http_send_fn)(const char *method,
+                                const struct cb_http_request *request,
+                                const uint8_t *body,
+                                size_t body_len,
+                                struct cb_http_response *response,
+                                void *user);
+
+/**
+ * One report from the worker. Plain data; the strings are borrowed from
+ * the handle and stay valid until the next [`cb_sync_next`] or
+ * [`cb_sync_close`] — copy them before either.
+ *
+ * Which fields mean anything depends on `kind`: a `CB_SYNC_BOOK` fills
+ * `book`, `position` and the mark counts; `CB_SYNC_BOOK_FAILED` fills
+ * `book` and `detail`; `CB_SYNC_FINISHED` fills `books`. Everything
+ * else is zeroed, so a host may also just read what it prints.
+ */
+typedef struct cb_sync_report {
+    enum cb_sync_kind kind;
+    /**
+     * The library row, [`cb_library_query`](crate::cb_library_query)'s
+     * id space.
+     */
+    int64_t book;
+    enum cb_sync_position position;
+    /**
+     * The refusal or failure being reported — the position's for
+     * `CB_SYNC_BOOK` with a refused or failed position, the book's for
+     * `CB_SYNC_BOOK_FAILED`. Null when there is nothing to explain.
+     */
+    const char *detail;
+    /**
+     * Marks: written to the container as new.
+     */
+    size_t marks_created;
+    /**
+     * Marks: this device's edits written over the container's copy.
+     */
+    size_t marks_updated;
+    /**
+     * Marks: deletes carried out on the container.
+     */
+    size_t marks_deleted;
+    /**
+     * Marks: pulled from the container as marks this device had not
+     * seen.
+     */
+    size_t marks_adopted;
+    /**
+     * Marks: already known here, brought up to date with what another
+     * device wrote.
+     */
+    size_t marks_refreshed;
+    /**
+     * Marks: conflicts settled by re-reading the container — both edits
+     * survive, nothing overwritten.
+     */
+    size_t marks_merged;
+    /**
+     * Marks: still owing a write after a merge was attempted. The next
+     * pass tries again.
+     */
+    size_t marks_conflicts;
+    /**
+     * The container could not be reached; whatever was pushed before it
+     * failed stands. Null when the mark half ran to the end.
+     */
+    const char *marks_error;
+    /**
+     * `CB_SYNC_FINISHED` only: how many books the batch reported.
+     */
+    size_t books;
+} cb_sync_report;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -1058,6 +1272,18 @@ cb_status cb_http_response_set_status(struct cb_http_response *response, uint16_
  */
 cb_status cb_http_response_set_content_type(struct cb_http_response *response,
                                             const char *content_type);
+
+/**
+ * Report one response header, name and value as received. Call once per
+ * header, duplicates in order. `Content-Type` still goes through
+ * [`cb_http_response_set_content_type`], which stays authoritative;
+ * everything else — `ETag` and `Location` above all, see
+ * [`cb_http_send_fn`] — arrives here. A transport may pass all headers
+ * or only the ones it can cheaply enumerate.
+ */
+cb_status cb_http_response_add_header(struct cb_http_response *response,
+                                      const char *name,
+                                      const char *value);
 
 /**
  * Append body bytes, in order; call as many times as chunks arrive. The
@@ -1377,6 +1603,47 @@ cb_status cb_library_delete_book(struct cb_library *library, int64_t book);
  * keeps the first timestamp.
  */
 cb_status cb_library_set_finished(struct cb_library *library, int64_t book, bool finished);
+
+/**
+ * Record where a book syncs: its OPDS Progression endpoint and its Web
+ * Annotation container, either or both, null to hold none.
+ *
+ * This is where a book *learns* its services, and the only place it
+ * can: in both protocols the URL is the publication's identity, so a
+ * host that downloaded from a catalog records the two service links off
+ * the entry it downloaded — a sideloaded book has no entry and so no
+ * services. Both URLs are opaque and may embed a per-user key: never
+ * log them, and key any credential by origin, not by the URL.
+ *
+ * Calling again replaces both values; two nulls make the book local
+ * again without touching what it still owes (a removed service simply
+ * stops being asked).
+ */
+cb_status cb_library_set_sync_targets(struct cb_library *library,
+                                      int64_t book,
+                                      const char *progression_url,
+                                      const char *annotation_container);
+
+/**
+ * The progression service this book syncs its position to.
+ * `CB_ERR_UNAVAILABLE` when it has none — the ordinary state of a
+ * sideloaded book, not an error worth surfacing.
+ */
+cb_status cb_library_sync_progression_url(const struct cb_library *library,
+                                          int64_t book,
+                                          char *buf,
+                                          size_t cap,
+                                          size_t *needed);
+
+/**
+ * The Web Annotation container this book syncs its marks with.
+ * `CB_ERR_UNAVAILABLE` when it has none.
+ */
+cb_status cb_library_sync_annotation_container(const struct cb_library *library,
+                                               int64_t book,
+                                               char *buf,
+                                               size_t cap,
+                                               size_t *needed);
 
 /**
  * The library row the open session is reading.
@@ -1895,6 +2162,98 @@ cb_status cb_session_poll_loaded(struct cb_session *session, bool *changed);
  * spinner asks this; one that just repaints on wake does not need it.
  */
 cb_status cb_session_has_pending_loads(const struct cb_session *session, bool *pending);
+
+/**
+ * Take the next session event, oldest first. `CB_ERR_UNAVAILABLE` when
+ * there is none, which is the ordinary answer, not an error worth
+ * surfacing.
+ *
+ * Everything the session wants a host to know that is *not* "repaint":
+ * loads landing and failing, the position moving (a progress bar's and
+ * a sync client's feed), the book finishing. Drain after a wake or an
+ * action; the engine coalesces on its side, so a host cannot miss a
+ * move by draining rarely.
+ */
+cb_status cb_session_next_event(struct cb_session *session, struct cb_session_event *out);
+
+/**
+ * Start a sync worker over the library at `library_dir`.
+ *
+ * `device_id` and `device_name` identify this device to a progression
+ * service: the id is stable and host-minted (mint once, store, reuse
+ * forever — it is how the service tells this device's positions from
+ * another's), the name is for people.
+ *
+ * The transport: pass `get` and `send` callbacks —
+ * [`cb_http_get_fn`](crate::cb_http_get_fn) and
+ * [`cb_http_send_fn`](crate::cb_http_send_fn), same contracts as the
+ * session's transport plus the write half — or pass both null to use
+ * the bundled transport where this build carries one
+ * (`CB_CAP_BUNDLED_HTTP`). A get without a send is refused: sync
+ * writes, and a transport that cannot is not a sync transport.
+ * `finalize` releases `transport_user` exactly once, on the same
+ * ownership rule as
+ * [`cb_config_set_http_transport`](crate::cb_config_set_http_transport)
+ * — including on every failure path of this call.
+ *
+ * `wake` may be null; the host then polls [`cb_sync_next`] on its own
+ * clock. Given, it fires on the worker thread once per queued report
+ * and must only nudge the host's main loop.
+ *
+ * The worker holds its own connection to the library, so the handle
+ * coexists with open sessions and a `cb_library` on the same directory.
+ *
+ * Without sync in this build (`cb_capabilities()` lacks `CB_CAP_SYNC`)
+ * this reports `CB_ERR_FORMAT_NOT_BUILT` — after running `finalize`,
+ * keeping the ownership rule true.
+ */
+cb_status cb_sync_open(const char *library_dir,
+                       const char *device_id,
+                       const char *device_name,
+                       cb_http_get_fn get,
+                       cb_http_send_fn send,
+                       cb_http_finalize_fn finalize,
+                       void *transport_user,
+                       cb_wake_fn wake,
+                       void *wake_user,
+                       struct cb_sync **out);
+
+/**
+ * Ask for every book with a service to reconcile. Reports arrive per
+ * book through [`cb_sync_next`], then one `CB_SYNC_FINISHED`; a shelf
+ * where nothing syncs finishes immediately with zero books, which is a
+ * fact to tell the reader rather than a spinner to show them.
+ */
+cb_status cb_sync_request_all(struct cb_sync *sync);
+
+/**
+ * Ask for one book to reconcile. A book with no service, or one that
+ * has left the shelf, reports `CB_SYNC_BOOK_FAILED` rather than being
+ * silently skipped — the caller named it, so the answer names it back.
+ */
+cb_status cb_sync_request_book(struct cb_sync *sync, int64_t book);
+
+/**
+ * Take the next report, oldest first. `CB_ERR_UNAVAILABLE` when there
+ * is none, which is the ordinary answer between wakes, not an error
+ * worth surfacing.
+ *
+ * The strings the filled report borrows live in the handle and are
+ * replaced by the next call — copy anything worth keeping before
+ * calling again.
+ */
+cb_status cb_sync_next(struct cb_sync *sync, struct cb_sync_report *out);
+
+/**
+ * Close the worker. Accepts null.
+ *
+ * **Blocks for the book in flight**: the thread is joined, on the same
+ * argument as closing a session joins its loader — a returned close
+ * means nothing is still writing to the library or holding the
+ * transport, so a host may free whatever its callbacks used as soon as
+ * `finalize` has run.
+ */
+void cb_sync_close(struct cb_sync *sync);
 
 #ifdef __cplusplus
 }  // extern "C"

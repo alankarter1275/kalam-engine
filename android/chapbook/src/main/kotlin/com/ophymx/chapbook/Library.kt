@@ -226,6 +226,23 @@ class Library private constructor(private var handle: Long) : AutoCloseable {
      * a book they finished elsewhere. Marking twice keeps the first
      * timestamp.
      */
+    /**
+     * Record where a book syncs — the two service URLs off the catalog
+     * entry it was downloaded from. Null holds none; two nulls make it
+     * local again. Both URLs are opaque and may embed a per-user key:
+     * never log them, and key any credential by origin, not by URL.
+     */
+    fun setSyncTargets(book: Long, progressionUrl: String?, annotationContainer: String?): Boolean =
+        Native.librarySetSyncTargets(handle, book, progressionUrl, annotationContainer)
+
+    /** The progression service this book syncs its position to, or null. */
+    fun syncProgressionUrl(book: Long): String? =
+        Native.librarySyncProgressionUrl(handle, book)
+
+    /** The annotation container this book syncs its marks with, or null. */
+    fun syncAnnotationContainer(book: Long): String? =
+        Native.librarySyncAnnotationContainer(handle, book)
+
     fun setFinished(book: Long, finished: Boolean): Boolean =
         Native.librarySetFinished(handle, book, finished)
 
