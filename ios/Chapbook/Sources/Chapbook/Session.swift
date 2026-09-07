@@ -235,6 +235,58 @@ public final class Session {
         try check(cb_session_has_pending_loads(raw, &pending))
         return pending
     }
+
+    // MARK: Session events
+
+    /// Something the session wants the app to know that is *not*
+    /// "repaint" — what to repaint is [`pollLoaded()`]'s answer.
+    public enum Event: Hashable, Sendable {
+        /// A background unit finished decoding, prefetches included —
+        /// `pollLoaded()` deliberately answers `false` for those, and a
+        /// load-progress indicator wants both.
+        case unitLoaded(spine: Int)
+        /// A background unit failed and will not be retried. `message`
+        /// is for a person to read, not to match on.
+        case unitFailed(spine: Int, message: String)
+        /// The reader is somewhere else — including moves the app did
+        /// not make: a restored position resolving after open, a load
+        /// landing that settles the page.
+        case positionChanged(Position)
+        /// The reader reached the last page of the last unit. Fires on
+        /// the transition and re-arms if they leave; whether it means
+        /// "mark as read" is the app's policy.
+        case bookFinished
+    }
+
+    /// The next event, oldest first, or `nil` when there is none.
+    public func nextEvent() throws -> Event? {
+        var raw = cb_session_event()
+        let status = cb_session_next_event(self.raw, &raw)
+        if status == C.unavailable { return nil }
+        try check(status)
+        switch raw.kind {
+        case CB_SESSION_EVENT_UNIT_LOADED:
+            return .unitLoaded(spine: raw.spine)
+        case CB_SESSION_EVENT_UNIT_FAILED:
+            // The message is borrowed until the next call; copied here.
+            return .unitFailed(
+                spine: raw.spine, message: raw.message.map { String(cString: $0) } ?? "")
+        case CB_SESSION_EVENT_POSITION_CHANGED:
+            return .positionChanged(Position(spine: raw.spine, page: raw.page))
+        default:
+            return .bookFinished
+        }
+    }
+
+    /// Everything since the last drain, oldest first: loads landing and
+    /// failing, the position moving, the book finishing. Drain after a
+    /// wake or an action; the engine coalesces on its side, so draining
+    /// rarely cannot miss a move.
+    public func drainEvents() throws -> [Event] {
+        var events: [Event] = []
+        while let event = try nextEvent() { events.append(event) }
+        return events
+    }
 }
 
 final class WakerBox: @unchecked Sendable {

@@ -63,12 +63,14 @@ final class URLSessionTransport: Sendable {
         self.session = session
     }
 
-    /// One blocking GET. The engine calls this on its loader thread and
+    /// One blocking transfer — a session's GET, or the POST/PUT/DELETE a
+    /// sync worker turns on; the method and body already ride on the
+    /// request. The engine calls this on its loader or sync thread and
     /// expects the transfer settled on return; the semaphore bridges
     /// `URLSession`'s callback world to that contract. (A catalog *open*
     /// is therefore synchronous network — construct catalog sessions off
     /// the main actor.)
-    func get(_ request: URLRequest) -> Fetched {
+    func perform(_ request: URLRequest) -> Fetched {
         let slot = Slot<Fetched>()
         let done = DispatchSemaphore(value: 0)
         session.dataTask(with: request) { data, response, error in
@@ -159,7 +161,9 @@ private func urlRequest(from request: cb_http_request) -> URLRequest? {
 /// Feed a fetch's outcome to the engine's response builder. 4xx and 5xx
 /// go through as responses — a 401's body is the Authentication Document
 /// the login flow needs — and only a transfer that produced nothing
-/// reports as a failure.
+/// reports as a failure. Every header crosses: a sync worker turns on
+/// `ETag` and `Location`, and `URLSession` can enumerate them all as
+/// cheaply as those two.
 private func report(_ outcome: URLSessionTransport.Fetched, into response: OpaquePointer?) {
     switch outcome {
     case .failure(let message):
@@ -169,6 +173,12 @@ private func report(_ outcome: URLSessionTransport.Fetched, into response: Opaqu
         if let contentType = http.value(forHTTPHeaderField: "Content-Type") {
             _ = cb_http_response_set_content_type(response, contentType)
         }
+        for (name, value) in http.allHeaderFields {
+            guard let name = name as? String, let value = value as? String,
+                name.caseInsensitiveCompare("Content-Type") != .orderedSame
+            else { continue }
+            _ = cb_http_response_add_header(response, name, value)
+        }
         body.withUnsafeBytes { buffer in
             _ = cb_http_response_append_body(
                 response, buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count)
@@ -176,10 +186,11 @@ private func report(_ outcome: URLSessionTransport.Fetched, into response: Opaqu
     }
 }
 
-// The three C entry points. Plain functions, not closures, so they carry
-// no context — everything they need rides in `user`.
+// The C entry points. Plain functions, not closures, so they carry no
+// context — everything they need rides in `user`. Internal rather than
+// private because `cb_sync_open` takes the same `get` and `finalize`.
 
-private func transportGet(
+func transportGet(
     request: UnsafePointer<cb_http_request>?,
     response: OpaquePointer?,
     user: UnsafeMutableRawPointer?
@@ -190,7 +201,33 @@ private func transportGet(
         return
     }
     let transport = Unmanaged<URLSessionTransport>.fromOpaque(user).takeUnretainedValue()
-    report(transport.get(built), into: response)
+    report(transport.perform(built), into: response)
+}
+
+/// The write half — `cb_http_send_fn`. Only a sync worker installs it:
+/// reconciling marks means POST, PUT and DELETE against a Web Annotation
+/// container, and a position PUT against a progression service.
+func transportSend(
+    method: UnsafePointer<CChar>?,
+    request: UnsafePointer<cb_http_request>?,
+    body: UnsafePointer<UInt8>?,
+    bodyLen: Int,
+    response: OpaquePointer?,
+    user: UnsafeMutableRawPointer?
+) {
+    guard let method, let request = request?.pointee, let user else { return }
+    guard var built = urlRequest(from: request) else {
+        _ = cb_http_response_fail(response, "the request URL did not parse")
+        return
+    }
+    built.httpMethod = String(cString: method)
+    if let body, bodyLen > 0 {
+        // Copied here by necessity: the engine's bytes die when this
+        // callback returns, and the data task outlives the call frame.
+        built.httpBody = Data(bytes: body, count: bodyLen)
+    }
+    let transport = Unmanaged<URLSessionTransport>.fromOpaque(user).takeUnretainedValue()
+    report(transport.perform(built), into: response)
 }
 
 private func transportDownload(
@@ -208,7 +245,7 @@ private func transportDownload(
     report(transport.download(built, toPath: String(cString: dest)), into: response)
 }
 
-private func transportFinalize(user: UnsafeMutableRawPointer?) {
+func transportFinalize(user: UnsafeMutableRawPointer?) {
     guard let user else { return }
     Unmanaged<URLSessionTransport>.fromOpaque(user).release()
 }
