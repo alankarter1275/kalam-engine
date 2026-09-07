@@ -73,10 +73,38 @@ pub struct Target {
     pub kind: Value,
     /// The publication this anchors into.
     pub source: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The model allows one selector or an array of them, and real
+    /// servers use both — webanno serializes a lone selector as a bare
+    /// object. Read either; always write the array. Found live: every
+    /// single-selector mark in a container parsed as nothing, and a
+    /// listing full of them looked exactly like an empty container.
+    #[serde(
+        default,
+        deserialize_with = "one_or_many",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub selector: Vec<Selector>,
     #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
+}
+
+/// `selector` as the model defines it: a single object stands for a
+/// stack of one. Branching on the JSON shape rather than an untagged
+/// enum, because [`Selector::Other`] would happily swallow an array.
+fn one_or_many<'de, D>(deserializer: D) -> Result<Vec<Selector>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    let items = match value {
+        Value::Array(items) => items,
+        Value::Null => Vec::new(),
+        one => vec![one],
+    };
+    items
+        .into_iter()
+        .map(|item| serde_json::from_value(item).map_err(serde::de::Error::custom))
+        .collect()
 }
 
 fn specific_resource() -> Value {

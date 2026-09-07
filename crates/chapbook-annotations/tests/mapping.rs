@@ -343,3 +343,30 @@ fn an_extra_map_is_only_written_when_it_has_something_in_it() {
     assert!(!object.contains_key("extra"), "flatten leaked a field name");
     let _: BTreeMap<String, Value> = BTreeMap::new();
 }
+
+/// The model allows `selector` to be one object or an array, and webanno
+/// — the very server this crate is pointed at in development — writes the
+/// bare object for a stack of one. Before this was read, every
+/// single-selector mark in a listing failed to parse and was silently
+/// skipped, so a container full of another device's highlights looked
+/// exactly like an empty one.
+#[test]
+fn a_single_selector_object_is_a_stack_of_one() {
+    let foreign: Annotation = serde_json::from_value(json!({
+        "@context": "http://www.w3.org/ns/anno.jsonld",
+        "id": "http://example.com/annotations/one",
+        "type": "Annotation",
+        "motivation": "highlighting",
+        "target": {
+            "type": "SpecificResource",
+            "source": SOURCE,
+            "selector": {"type": "TextQuoteSelector", "exact": "quiet that morning"}
+        }
+    }))
+    .unwrap();
+    let mark = from_annotation(&foreign);
+    assert_eq!(
+        mark.start.quote.exact, "quiet that morning",
+        "a lone selector object is read, not skipped"
+    );
+}
