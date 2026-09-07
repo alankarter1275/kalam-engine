@@ -9,6 +9,11 @@ which before reading further.
 | `Chapbook.Tests/` | The gate: the binding driven against the real engine, headless |
 | `build-native.ps1` | `chapbook-ffi` → `chapbook_ffi.dll` |
 
+It covers the session, the shelf, the text surface, session events, the
+host transport and sync — everything the header carries except the
+`download` callback, which .NET has no background-transfer facility worth
+the engine deferring to.
+
 The *other* Windows integration is `crates/chapbook-viewer-win32`, which
 is a Rust shell over `chapbook-reader` directly and shares nothing with
 this directory. A desktop Rust binary has no boundary to cross, so it does
@@ -53,6 +58,50 @@ why the native structs there use `byte` where the header says `bool` and
 convert once, in the public types. Strings are UTF-8 explicitly for the
 same class of reason: the default is ANSI, which mangles any path holding
 a character outside the active code page and reports nothing.
+
+## The transport, and why sync needs the write half
+
+`HttpTransport` is two blocking methods — `Get`, and `Send` for POST, PUT
+and DELETE — and a host implements them over whatever it already has.
+`HttpClientTransport` is that over `HttpClient`, which is the reason to
+bother: a client the app configured carries its proxy, its trust
+decisions, its authentication handler and its timeouts, and a stack inside
+the engine would carry none of them. No credential crosses this boundary
+by design; a service behind auth wants a client whose handler attaches
+its own.
+
+Three parts of that contract are unforgiving, and all three are the kind
+that fail quietly. A callback **may fire on any thread** and must *block*
+until the transfer settles — it is not a place to hand back a `Task`. It
+must not call back into this library except through the
+`HttpResponseBuilder` it was given. And it must not **retry**:
+authentication retry is the engine's own flow one level up, so a
+transport that retries turns one 401 into several.
+
+The write half has a duty of its own: **report the response headers**.
+A Web Annotation container carries its whole concurrency story in `ETag`
+and says where it put a new mark in `Location`, so a transport that
+discards them makes safe concurrent editing impossible — and the failure
+looks like sync quietly forgetting marks rather than like a missing
+header.
+
+`HttpTransport.OnReleased` is the other end of the ABI's finalizer,
+called exactly once when the engine lets go — the last session closing, a
+worker closing, or a configuration disposed without ever being opened.
+A host that built something for the engine's sake releases it there,
+which is the only moment nothing is still inside a callback.
+
+## Testing sync without a server
+
+`Chapbook.Tests` fakes the transport rather than opening a socket, and
+that is a design point rather than a shortcut: the transport *is* the
+seam, so a fake one exercises the whole path — worker thread, callbacks,
+response builders, the report queue — with nothing to flake. What the
+tests then assert is the behaviour that matters to a host: a shelf where
+nothing syncs finishes with zero books rather than spinning, an
+unreachable service is one book's problem and not the batch's, a book
+that has left the shelf is *reported* rather than silently skipped, and
+the waker fires on the worker's thread and not the caller's.
 
 ## Five things the ABI does not say out loud
 
@@ -101,32 +150,19 @@ was actually built with — a header cannot answer either.
 
 ## What is not here yet
 
-The binding covers the **session**, completely — including the events the
-ABI grew alongside the sync work, which are the other half of a wake:
-`PollLoaded` answers "should I repaint", `DrainEvents` answers "is there
-anything to tell the reader", and a host needs both.
+No UI. `Chapbook.WinUI` — a `SessionView` control and the automation peer
+that puts its page in front of Narrator — and a demo app over it are the
+next thing, and the reason the binding was built first: everything above
+it is now a matter of drawing, not of boundary-crossing.
 
-What it does not cover, in the order the ABI added it:
+The `download` callback is deliberately unbound. It exists for a host with
+a background transfer facility worth deferring to — an iOS background
+`URLSession`, Android's `WorkManager` — and .NET has none of that shape,
+so the engine streams through `Get` and writes the file itself.
 
-- **The shelf.** `cb_library_*` — query, collections, mark-as-read — which
-  the Swift package already has and which a Windows app opening onto
-  something other than a book will need first.
-- **Sync.** `cb_sync_*`, plus the `cb_library_*_sync_*` calls that record
-  which services a book answers to. It is the larger piece, because the
-  sync client is opened over a host transport rather than a bundled one:
-  binding it means binding `cb_http_get_fn`, the new `cb_http_send_fn`,
-  and `finalize`, and getting the ownership and threading of those
-  callbacks right. `HttpClient` is what a .NET host would put behind it,
-  which is exactly the substitution the seam exists for.
-
-And no CI job compiles this directory. That is the state `ios/` was in
-before the `apple` job existed, when the Swift package landed broken and a
-Mac was the only thing that could have said so; the same is true here of a
-Windows runner with the .NET SDK on it, and it is worth fixing before this
-grows further.
-
-`crates/chapbook-app` is the other thing to read before building on this.
-It is the shared application model the GTK app sits on, and a Windows
-application belongs over that rather than over a second viewer — the
-binding here is what a non-Rust front end would use, and the two are
-different answers to different questions.
+`crates/chapbook-app` is the thing to read before building that UI. It is
+the shared application model the GTK app sits on, and a Windows
+application belongs over an equivalent rather than over a second viewer —
+though a .NET front end reaches the engine through *this* binding, not
+through that crate, and the two are different answers to different
+questions.

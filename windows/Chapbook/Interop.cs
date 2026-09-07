@@ -99,6 +99,30 @@ internal static partial class Interop
     [LibraryImport(Library)]
     internal static partial void cb_config_free(nint config);
 
+    [LibraryImport(Library)]
+    internal static partial Status cb_config_set_http_transport(
+        nint config, nint get, nint download, nint finalize, nint user);
+
+    // ---- The response a transport builds ----
+
+    [LibraryImport(Library)]
+    internal static partial Status cb_http_response_set_status(nint response, ushort status);
+
+    [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Status cb_http_response_set_content_type(
+        nint response, string contentType);
+
+    [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Status cb_http_response_add_header(
+        nint response, string name, string value);
+
+    [LibraryImport(Library)]
+    internal static partial Status cb_http_response_append_body(
+        nint response, nint bytes, nuint len);
+
+    [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Status cb_http_response_fail(nint response, string message);
+
     // ---- Opening and closing ----
 
     [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
@@ -378,4 +402,36 @@ internal static partial class Interop
     [LibraryImport(Library)]
     internal static partial Status cb_library_remove_from_collection(
         nint library, long book, long collection);
+
+    // ---- Sync ----
+
+    [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Status cb_library_set_sync_targets(
+        nint library, long book, string? progressionUrl, string? annotationContainer);
+
+    [LibraryImport(Library)]
+    internal static partial Status cb_library_sync_progression_url(
+        nint library, long book, byte[]? buf, nuint cap, out nuint needed);
+
+    [LibraryImport(Library)]
+    internal static partial Status cb_library_sync_annotation_container(
+        nint library, long book, byte[]? buf, nuint cap, out nuint needed);
+
+    [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Status cb_sync_open(
+        string libraryDir, string deviceId, string deviceName,
+        nint get, nint send, nint finalize, nint transportUser,
+        nint wake, nint wakeUser, out nint sync);
+
+    [LibraryImport(Library)]
+    internal static partial Status cb_sync_request_all(nint sync);
+
+    [LibraryImport(Library)]
+    internal static partial Status cb_sync_request_book(nint sync, long book);
+
+    [LibraryImport(Library)]
+    internal static partial Status cb_sync_next(nint sync, out NativeSyncReport report);
+
+    [LibraryImport(Library)]
+    internal static partial void cb_sync_close(nint sync);
 }

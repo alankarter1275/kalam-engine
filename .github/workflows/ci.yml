@@ -96,9 +96,10 @@ jobs:
     # other Windows-only code path, and its test runs nowhere else either.
     #
     # The whole workspace rather than the one crate, because that is what
-    # the claim is about. The GTK viewer compiles here as its stub and needs
-    # no system library, so the runner image needs nothing installed.
-    name: clippy + test (Windows)
+    # the claim is about. The GTK viewer and the GTK app both compile here
+    # as their stubs and need no system library, so the runner image needs
+    # nothing installed beyond the .NET SDK the last step asks for.
+    name: clippy + test (Windows) + dotnet test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -109,6 +110,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
+      # The .NET binding under `windows/`, which is the other thing only a
+      # Windows runner can judge — and unlike the shell it is not merely
+      # compiled here: `dotnet test` drives the real engine through the C
+      # ABI, which is the `swift test` half of this repository's other
+      # header consumer. It needs the DLL, so the Rust build comes first;
+      # release rather than debug because that is what a host ships and the
+      # workspace has already built most of it above.
+      - run: ./windows/build-native.ps1
+        shell: pwsh
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - run: dotnet test windows/Chapbook.Tests/Chapbook.Tests.csproj
 
   apple:
     # The Swift package, on the only host that can judge it. Every other
