@@ -22,6 +22,11 @@ use crate::error::{cb_status, clear_last_error, fail, from_error, guard};
 /// An open book. Opaque.
 pub struct cb_session {
     pub(crate) inner: Session,
+    /// Session events drained from the engine and not yet handed out,
+    /// plus the message the last-returned event's `message` pointer
+    /// borrows — replaced on the next call, which bounds its lifetime.
+    pub(crate) events: std::collections::VecDeque<chapbook_reader::SessionEvent>,
+    pub(crate) event_message: Option<std::ffi::CString>,
     /// The tap policy for this session — beside the session rather than a
     /// free-standing struct so the one field a host must *not* choose, the
     /// reading direction, is read off the book on every configuration and
@@ -186,7 +191,12 @@ fn open_with(source: Source, config: *mut cb_config) -> *mut cb_session {
             // The default bands, in the direction the book declares;
             // everything else waits for `cb_session_set_tap_zones`.
             let zones = TapZones::new(inner.reading_direction());
-            Box::into_raw(Box::new(cb_session { inner, zones }))
+            Box::into_raw(Box::new(cb_session {
+                inner,
+                zones,
+                events: std::collections::VecDeque::new(),
+                event_message: None,
+            }))
         }
         Err(e) => {
             from_error(&e);
@@ -1394,6 +1404,109 @@ pub unsafe extern "C" fn cb_session_has_pending_loads(
     guard(cb_status::CB_ERR_PANIC, || {
         let session = session_ref!(session);
         out!(pending, session.inner.has_pending_loads(), "pending");
+        cb_status::CB_OK
+    })
+}
+
+// ---- Session events ----
+
+/// What kind of thing [`cb_session_next_event`] is reporting.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum cb_session_event_kind {
+    /// A background unit finished decoding, prefetches included —
+    /// [`cb_session_poll_loaded`] deliberately answers false for those,
+    /// and a shell watching load progress wants both.
+    CB_SESSION_EVENT_UNIT_LOADED = 0,
+    /// A background unit failed and will not be retried. Without this a
+    /// comic page that failed to download stays a placeholder forever
+    /// with nothing able to say why.
+    CB_SESSION_EVENT_UNIT_FAILED = 1,
+    /// The reader is somewhere else — including moves the host did not
+    /// make: a restored position resolving after open, a load landing
+    /// that settles the page.
+    CB_SESSION_EVENT_POSITION_CHANGED = 2,
+    /// The reader reached the last page of the last unit. Fires on the
+    /// transition and re-arms if they leave. Whether it means "mark as
+    /// read" is the host's policy.
+    CB_SESSION_EVENT_BOOK_FINISHED = 3,
+}
+
+/// One session event. Plain data; `message` is borrowed from the session
+/// and stays valid until the next [`cb_session_next_event`] or the
+/// session closes — copy it before either.
+#[repr(C)]
+pub struct cb_session_event {
+    pub kind: cb_session_event_kind,
+    /// The spine unit, for the two unit events and the position.
+    pub spine: usize,
+    /// The page, for `CB_SESSION_EVENT_POSITION_CHANGED`; 0 otherwise.
+    pub page: usize,
+    /// A unit failure's reason, for a person to read (free to change; do
+    /// not match on it). Null for every other kind.
+    pub message: *const c_char,
+}
+
+/// Take the next session event, oldest first. `CB_ERR_UNAVAILABLE` when
+/// there is none, which is the ordinary answer, not an error worth
+/// surfacing.
+///
+/// Everything the session wants a host to know that is *not* "repaint":
+/// loads landing and failing, the position moving (a progress bar's and
+/// a sync client's feed), the book finishing. Drain after a wake or an
+/// action; the engine coalesces on its side, so a host cannot miss a
+/// move by draining rarely.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_next_event(
+    session: *mut cb_session,
+    out: *mut cb_session_event,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        use chapbook_reader::SessionEvent;
+        clear_last_error();
+        let session = session_mut!(session);
+        if out.is_null() {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "out is null");
+        }
+        if session.events.is_empty() {
+            let drained = session.inner.drain_events();
+            session.events.extend(drained);
+        }
+        let Some(event) = session.events.pop_front() else {
+            return fail(cb_status::CB_ERR_UNAVAILABLE, "no event waiting");
+        };
+        // The previous event's message dies here — the documented lifetime.
+        session.event_message = None;
+        let mut report = cb_session_event {
+            kind: cb_session_event_kind::CB_SESSION_EVENT_BOOK_FINISHED,
+            spine: 0,
+            page: 0,
+            message: std::ptr::null(),
+        };
+        match event {
+            SessionEvent::UnitLoaded { spine } => {
+                report.kind = cb_session_event_kind::CB_SESSION_EVENT_UNIT_LOADED;
+                report.spine = spine;
+            }
+            SessionEvent::UnitFailed { spine, message } => {
+                report.kind = cb_session_event_kind::CB_SESSION_EVENT_UNIT_FAILED;
+                report.spine = spine;
+                let owned = std::ffi::CString::new(message.replace('\0', " "))
+                    .expect("NULs were just replaced");
+                report.message = owned.as_ptr();
+                session.event_message = Some(owned);
+            }
+            SessionEvent::PositionChanged { spine, page } => {
+                report.kind = cb_session_event_kind::CB_SESSION_EVENT_POSITION_CHANGED;
+                report.spine = spine;
+                report.page = page;
+            }
+            SessionEvent::BookFinished => {
+                report.kind = cb_session_event_kind::CB_SESSION_EVENT_BOOK_FINISHED;
+            }
+        }
+        // SAFETY: checked non-null above.
+        unsafe { *out = report };
         cb_status::CB_OK
     })
 }

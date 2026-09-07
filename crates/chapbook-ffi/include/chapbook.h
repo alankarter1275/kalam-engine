@@ -507,6 +507,36 @@ typedef uint32_t cb_settings_scope;
 #endif // __cplusplus
 
 /**
+ * What kind of thing [`cb_session_next_event`] is reporting.
+ */
+typedef enum cb_session_event_kind {
+    /**
+     * A background unit finished decoding, prefetches included —
+     * [`cb_session_poll_loaded`] deliberately answers false for those,
+     * and a shell watching load progress wants both.
+     */
+    CB_SESSION_EVENT_UNIT_LOADED = 0,
+    /**
+     * A background unit failed and will not be retried. Without this a
+     * comic page that failed to download stays a placeholder forever
+     * with nothing able to say why.
+     */
+    CB_SESSION_EVENT_UNIT_FAILED = 1,
+    /**
+     * The reader is somewhere else — including moves the host did not
+     * make: a restored position resolving after open, a load landing
+     * that settles the page.
+     */
+    CB_SESSION_EVENT_POSITION_CHANGED = 2,
+    /**
+     * The reader reached the last page of the last unit. Fires on the
+     * transition and re-arms if they leave. Whether it means "mark as
+     * read" is the host's policy.
+     */
+    CB_SESSION_EVENT_BOOK_FINISHED = 3,
+} cb_session_event_kind;
+
+/**
  * What kind of report [`cb_sync_next`] filled in.
  */
 typedef enum cb_sync_kind {
@@ -992,6 +1022,28 @@ typedef struct cb_word_span {
  * from inside it is the shape this comment exists to prevent.
  */
 typedef void (*cb_wake_fn)(void *user);
+
+/**
+ * One session event. Plain data; `message` is borrowed from the session
+ * and stays valid until the next [`cb_session_next_event`] or the
+ * session closes — copy it before either.
+ */
+typedef struct cb_session_event {
+    enum cb_session_event_kind kind;
+    /**
+     * The spine unit, for the two unit events and the position.
+     */
+    size_t spine;
+    /**
+     * The page, for `CB_SESSION_EVENT_POSITION_CHANGED`; 0 otherwise.
+     */
+    size_t page;
+    /**
+     * A unit failure's reason, for a person to read (free to change; do
+     * not match on it). Null for every other kind.
+     */
+    const char *message;
+} cb_session_event;
 
 /**
  * Performs one blocking request that is not a GET — the write half a
@@ -2110,6 +2162,19 @@ cb_status cb_session_poll_loaded(struct cb_session *session, bool *changed);
  * spinner asks this; one that just repaints on wake does not need it.
  */
 cb_status cb_session_has_pending_loads(const struct cb_session *session, bool *pending);
+
+/**
+ * Take the next session event, oldest first. `CB_ERR_UNAVAILABLE` when
+ * there is none, which is the ordinary answer, not an error worth
+ * surfacing.
+ *
+ * Everything the session wants a host to know that is *not* "repaint":
+ * loads landing and failing, the position moving (a progress bar's and
+ * a sync client's feed), the book finishing. Drain after a wake or an
+ * action; the engine coalesces on its side, so a host cannot miss a
+ * move by draining rarely.
+ */
+cb_status cb_session_next_event(struct cb_session *session, struct cb_session_event *out);
 
 /**
  * Start a sync worker over the library at `library_dir`.

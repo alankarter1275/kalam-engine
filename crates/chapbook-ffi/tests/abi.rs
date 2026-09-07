@@ -2050,3 +2050,64 @@ fn sync_refuses_a_transport_that_cannot_write() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The event drain: a page turn is a position change a progress UI can
+/// see, and finishing the book is a transition, not a level.
+#[test]
+fn session_events_cross_oldest_first() {
+    let session = open("events", "epub/minimal.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    // Drain whatever opening produced (a restored-position resolve, loads)
+    // so the assertions below start from quiet.
+    let mut event = cb_session_event {
+        kind: cb_session_event_kind::CB_SESSION_EVENT_BOOK_FINISHED,
+        spine: 0,
+        page: 0,
+        message: std::ptr::null(),
+    };
+    while unsafe { cb_session_next_event(session, &mut event) } == cb_status::CB_OK {}
+
+    let mut moved = false;
+    assert_eq!(
+        unsafe { cb_session_next_page(session, &mut moved) },
+        cb_status::CB_OK
+    );
+    assert!(moved, "minimal.epub has a second page to turn to");
+
+    assert_eq!(
+        unsafe { cb_session_next_event(session, &mut event) },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert_eq!(
+        event.kind,
+        cb_session_event_kind::CB_SESSION_EVENT_POSITION_CHANGED
+    );
+    assert!(event.message.is_null(), "a move needs no explaining");
+
+    // Ride to the end: the last turn that moves fires the finish.
+    for _ in 0..200 {
+        let mut moved = false;
+        unsafe { cb_session_next_page(session, &mut moved) };
+        if !moved {
+            break;
+        }
+    }
+    let mut finished = false;
+    while unsafe { cb_session_next_event(session, &mut event) } == cb_status::CB_OK {
+        if event.kind == cb_session_event_kind::CB_SESSION_EVENT_BOOK_FINISHED {
+            finished = true;
+        }
+    }
+    assert!(finished, "reaching the last page is a reportable event");
+    assert_eq!(
+        unsafe { cb_session_next_event(session, &mut event) },
+        cb_status::CB_ERR_UNAVAILABLE,
+        "quiet between drains"
+    );
+    unsafe { cb_session_close(session) };
+}
