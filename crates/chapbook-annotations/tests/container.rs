@@ -335,13 +335,18 @@ fn a_collection_is_followed_to_its_first_page_and_then_paged() {
             &json!({"type": "AnnotationPage", "items": [annotation(Some("urn:b"))]}).to_string(),
         );
 
-    let items = AnnotationContainer::new(http)
+    let listing = AnnotationContainer::new(http)
         .all(&format!("{HOST}/annotations/"), None)
         .unwrap();
     assert_eq!(
-        items.iter().map(|s| s.iri.as_str()).collect::<Vec<_>>(),
+        listing
+            .items
+            .iter()
+            .map(|s| s.iri.as_str())
+            .collect::<Vec<_>>(),
         vec!["urn:a", "urn:b"]
     );
+    assert!(listing.complete, "the chain ended, so the walk was whole");
 }
 
 /// A container is somebody else's, and a `next` that points at itself must
@@ -358,10 +363,14 @@ fn a_page_that_points_at_itself_terminates() {
                 "next": "https://library.example.com/annotations/"})
         .to_string(),
     );
-    let items = AnnotationContainer::new(http)
+    let listing = AnnotationContainer::new(http)
         .all(&format!("{HOST}/annotations/"), None)
         .unwrap();
-    assert_eq!(items.len(), 1);
+    assert_eq!(listing.items.len(), 1);
+    assert!(
+        !listing.complete,
+        "a page pointing at itself is a chain that was never followed to an end"
+    );
 }
 
 /// And a long chain is capped when the caller asked for a cap.
@@ -386,10 +395,15 @@ fn the_page_limit_is_honoured() {
                     "next": "https://library.example.com/annotations/?page=2"})
             .to_string(),
         );
-    let items = AnnotationContainer::new(http)
+    let listing = AnnotationContainer::new(http)
         .all(&format!("{HOST}/annotations/"), Some(1))
         .unwrap();
-    assert_eq!(items.len(), 1, "the cap was not honoured");
+    assert_eq!(listing.items.len(), 1, "the cap was not honoured");
+    assert!(
+        !listing.complete,
+        "a capped walk must say it saw only a prefix — a caller that reads \
+         absence as deletion is trusting exactly this flag"
+    );
 }
 
 /// A transport that cannot write says so rather than reporting success.
@@ -441,11 +455,11 @@ fn a_container_that_serves_iris_is_followed_rather_than_read_as_empty() {
             &annotation(Some("https://library.example.com/annotations/b")).to_string(),
         );
 
-    let items = AnnotationContainer::new(http)
+    let listing = AnnotationContainer::new(http)
         .all(&format!("{HOST}/annotations/"), None)
         .unwrap();
-    assert_eq!(items.len(), 2, "an IRI listing was read as empty");
-    assert_eq!(items[0].annotation.target.source, "urn:book");
+    assert_eq!(listing.items.len(), 2, "an IRI listing was read as empty");
+    assert_eq!(listing.items[0].annotation.target.source, "urn:book");
 }
 
 /// And the request says which it wants, so following should rarely be

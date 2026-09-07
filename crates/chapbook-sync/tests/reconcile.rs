@@ -1511,3 +1511,144 @@ fn a_pull_does_not_overwrite_an_edit_that_still_owes_a_write() {
         "the local edit survived the pull"
     );
 }
+
+/// A mark another device deleted goes from this shelf too. Until the pull
+/// could tell a whole listing from a partial one, it could not safely
+/// conclude anything from absence, so a deletion never travelled.
+#[test]
+fn a_mark_deleted_elsewhere_is_taken_off_this_shelf() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+
+    // A complete listing that does not mention it: it is gone there.
+    let http = FakeHttp::default().on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http.clone());
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.withdrawn, 1);
+    assert!(!report.annotations.truncated);
+    assert!(
+        engine.library().annotations(book).unwrap().is_empty(),
+        "the mark is gone here too"
+    );
+    // Nothing is owed to a container that has already dropped it.
+    assert!(engine
+        .library()
+        .annotations_needing_push(book)
+        .unwrap()
+        .is_empty());
+    assert!(
+        http.sent("DELETE").is_empty(),
+        "adopting a deletion is not performing one"
+    );
+}
+
+/// A listing that stopped early proves nothing about what it did not
+/// reach. Reading that absence as deletion would take a reader's
+/// highlights away for no better reason than a container being long.
+#[test]
+fn a_listing_that_stopped_early_withdraws_nothing() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    let annotation = library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let revision = library.annotations_needing_push(book).unwrap()[0].revision;
+    library
+        .mark_annotation_synced(
+            annotation,
+            revision,
+            "https://library.example.com/annotations/abc",
+            Some("\"v1\""),
+        )
+        .unwrap();
+
+    // A page whose `next` is itself: the walk stops without reaching an
+    // end, which is exactly the shape a cap produces.
+    let http = FakeHttp::default().on(
+        "GET",
+        "/annotations/",
+        200,
+        &json!({"type": "AnnotationPage", "items": [],
+                "next": "https://library.example.com/annotations/"})
+        .to_string(),
+    );
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert!(report.annotations.truncated, "the short walk must say so");
+    assert_eq!(
+        report.annotations.withdrawn, 0,
+        "absence from a prefix is not absence"
+    );
+    assert_eq!(
+        engine.library().annotations(book).unwrap().len(),
+        1,
+        "the mark stays"
+    );
+}
+
+/// A mark made moments ago is not evidence of anything. A container that
+/// has not listed it yet has not deleted it.
+#[test]
+fn a_mark_created_this_pass_is_never_withdrawn() {
+    let dir = scratch();
+    let (mut library, book) = library_with_book(&dir);
+    library
+        .add_annotation(
+            book,
+            AnnotationKind::Highlight,
+            &locator(10, 0.1),
+            None,
+            Some("just written"),
+            None,
+        )
+        .unwrap();
+
+    // The container takes the create and then lists nothing — a listing
+    // that has not caught up, which is a real thing containers do.
+    let http = FakeHttp::default()
+        .route(
+            "POST",
+            "/annotations/",
+            201,
+            &[("Location", "https://library.example.com/annotations/new")],
+            "",
+        )
+        .on("GET", "/annotations/", 200, &empty_container());
+    let mut engine = engine(library, http);
+
+    let report = engine.sync_book(book).unwrap();
+    assert_eq!(report.annotations.created, 1);
+    assert_eq!(
+        report.annotations.withdrawn, 0,
+        "a mark this pass created must survive a listing that has not caught up"
+    );
+    assert_eq!(engine.library().annotations(book).unwrap().len(), 1);
+}

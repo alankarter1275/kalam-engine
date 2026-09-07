@@ -131,7 +131,15 @@ fn main() {
 
     // List the container.
     match container.all(&container_url, Some(20)) {
-        Ok(items) => println!("\nCONTAINER holds {} annotations", items.len()),
+        Ok(listing) => println!(
+            "\nCONTAINER holds {} annotations{}",
+            listing.items.len(),
+            if listing.complete {
+                ""
+            } else {
+                " (and more past the page cap)"
+            }
+        ),
         Err(err) => println!("\nLIST failed: {err}"),
     }
 

@@ -27,7 +27,7 @@ pub mod container;
 pub mod mapping;
 pub mod model;
 
-pub use container::{AnnotationContainer, ContainerError, StoredAnnotation};
+pub use container::{AnnotationContainer, ContainerError, Listing, StoredAnnotation};
 pub use mapping::{from_annotation, to_annotation, Mark};
 pub use model::{Annotation, Selector, Target, CFI_CONFORMS_TO, CONTEXT, MEDIA_TYPE};
 

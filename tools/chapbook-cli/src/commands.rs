@@ -969,6 +969,7 @@ fn describe_marks(report: &chapbook_sync::AnnotationReport) -> String {
         (report.deleted, "deleted"),
         (report.adopted, "adopted"),
         (report.refreshed, "refreshed"),
+        (report.withdrawn, "withdrawn"),
         (report.conflicts, "in conflict"),
     ] {
         if count > 0 {
@@ -985,6 +986,12 @@ fn describe_marks(report: &chapbook_sync::AnnotationReport) -> String {
     // worth a reader's attention.
     if report.merged > 0 {
         line.push_str(&format!(" ({} settled a conflict)", report.merged));
+    }
+    // Said out loud, because it changes what the rest of the line means:
+    // no deletion was inferred, so a mark another device removed may still
+    // be sitting here.
+    if report.truncated {
+        line.push_str(" — container longer than one sync reads");
     }
     if let Some(why) = &report.failed {
         line.push_str(&format!(", container failed: {why}"));
