@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The gate for everything under `windows/`, and the only place a line of
+    this binding is *run* rather than compiled. It is the analogue of
+    `swift test` in `ios/`: the parts that need no window are asserted
+    here, and the parts that need one are compiled and not run.
+
+    It needs the native DLL, which `Chapbook.csproj` copies to the output.
+    Without it every test throws `DllNotFoundException`, which is a
+    perfectly clear failure and the reason nothing here mocks the engine.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <!--
+      One test at a time. The engine's per-thread last-error message and
+      the process-global log callback are both shared state, and a test
+      that reads either while another is writing it reports the wrong
+      thing. The library tests in the Rust workspace serialize for the
+      same reason.
+    -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Chapbook\Chapbook.csproj" />
+  </ItemGroup>
+
+</Project>
