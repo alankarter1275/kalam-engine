@@ -2113,3 +2113,166 @@ fn session_events_cross_oldest_first() {
     );
     unsafe { cb_session_close(session) };
 }
+
+/// The loop a touch reader runs, spelled across the boundary: long-press
+/// selects a word, the selection becomes a highlight, the highlight is
+/// found again under a finger, listed, recolored, jumped to, removed.
+#[test]
+fn a_mark_lives_its_whole_life_across_the_boundary() {
+    if cb_capabilities() & cb_capability::CB_CAP_LIBRARY as u32 == 0 {
+        eprintln!("skipped: marks persist through the library");
+        return;
+    }
+    let session = open("marks", "epub/minimal.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+
+    // Where the text sits depends on the fixture fonts, so sweep for a
+    // word rather than knowing a coordinate.
+    let (mut wx, mut wy, mut selected) = (0f32, 0f32, false);
+    'sweep: for y in (40..760).step_by(20) {
+        for x in (40..560).step_by(20) {
+            unsafe {
+                cb_session_select_word_at(session, x as f32, y as f32, &mut selected);
+            }
+            if selected {
+                wx = x as f32;
+                wy = y as f32;
+                break 'sweep;
+            }
+        }
+    }
+    assert!(selected, "a page of text has a word to long-press");
+
+    let (mut start, mut end) = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_selected_range(session, &mut start, &mut end) },
+        cb_status::CB_OK
+    );
+    assert!(end > start, "a word is a non-empty range");
+    let word = read_string(|buf, cap, needed| unsafe {
+        cb_session_selected_text(session, buf, cap, needed)
+    })
+    .expect("selected text crosses");
+    assert!(!word.trim().is_empty());
+
+    // Grow the selection by exact range — the adjusted-handle move.
+    unsafe { cb_session_select_range(session, start, end + 4) };
+
+    let mut id = 0i64;
+    assert_eq!(
+        unsafe { cb_session_add_highlight(session, &mut id) },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert!(id > 0);
+    // The highlight replaces the selection, and saying so is the shell's
+    // move — the paint order is explicit.
+    unsafe { cb_session_selection_clear(session) };
+    let mut none = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_selected_range(session, &mut none.0, &mut none.1) },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+
+    // The tap that opens the recolor menu — aimed at the highlight's own
+    // ink, since `highlight_at` hit-tests exactly (inside the marked
+    // text, like a link) while the word sweep above was allowed to snap.
+    let mut rect = cb_rect {
+        x: 0.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+    };
+    let mut filled = 0usize;
+    assert_eq!(
+        unsafe { cb_session_range_rects(session, start, end + 4, &mut rect, 1, &mut filled) },
+        cb_status::CB_OK
+    );
+    let _ = (wx, wy);
+    let mut found = 0i64;
+    assert_eq!(
+        unsafe {
+            cb_session_highlight_at(
+                session,
+                rect.x + rect.w / 2.0,
+                rect.y + rect.h / 2.0,
+                &mut found,
+            )
+        },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert_eq!(found, id);
+
+    // Listed, recolored, read back.
+    let mut count = 0usize;
+    assert_eq!(
+        unsafe { cb_session_annotation_count(session, &mut count) },
+        cb_status::CB_OK
+    );
+    assert_eq!(count, 1);
+    let color = cstr("#ffcc00");
+    assert_eq!(
+        unsafe { cb_session_set_highlight_color(session, id, color.as_ptr()) },
+        cb_status::CB_OK
+    );
+    let mut row = cb_annotation {
+        id: 0,
+        kind: cb_annotation_kind::CB_ANNOTATION_BOOKMARK,
+        spine: 0,
+        progression: 0.0,
+        has_text: false,
+        has_color: false,
+    };
+    assert_eq!(
+        unsafe { cb_session_annotation(session, 0, &mut row) },
+        cb_status::CB_OK
+    );
+    assert_eq!(row.id, id);
+    assert_eq!(row.kind, cb_annotation_kind::CB_ANNOTATION_HIGHLIGHT);
+    assert!(row.has_text && row.has_color);
+    assert_eq!(
+        read_string(|buf, cap, needed| unsafe {
+            cb_session_annotation_color(session, 0, buf, cap, needed)
+        })
+        .as_deref(),
+        Ok("#ffcc00")
+    );
+    let quote = read_string(|buf, cap, needed| unsafe {
+        cb_session_annotation_text(session, 0, buf, cap, needed)
+    })
+    .expect("a highlight quotes its text");
+    assert!(quote.contains(word.trim()), "{quote:?} carries {word:?}");
+
+    // Jump to it from somewhere else, then remove it.
+    let mut moved = false;
+    unsafe { cb_session_next_page(session, &mut moved) };
+    assert_eq!(
+        unsafe { cb_session_goto_annotation(session, id, &mut moved) },
+        cb_status::CB_OK
+    );
+    assert_eq!(
+        unsafe { cb_session_remove_annotation(session, id) },
+        cb_status::CB_OK
+    );
+    assert_eq!(
+        unsafe { cb_session_annotation_count(session, &mut count) },
+        cb_status::CB_OK
+    );
+    assert_eq!(count, 0);
+
+    // An external link is the shell's to open, and says so quietly.
+    let external = cstr("https://example.com/elsewhere");
+    assert_eq!(
+        unsafe { cb_session_follow_link(session, external.as_ptr(), &mut moved) },
+        cb_status::CB_OK
+    );
+    assert!(!moved, "the engine does not browse");
+
+    unsafe { cb_session_close(session) };
+}

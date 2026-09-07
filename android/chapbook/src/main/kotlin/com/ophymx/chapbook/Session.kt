@@ -9,6 +9,23 @@ data class Position(val spine: Int, val page: Int)
 /** What kind of book a session opened. */
 enum class BookKind { EPUB, COMIC, PDF }
 
+/** What kind of mark a row is. */
+enum class AnnotationKind { BOOKMARK, HIGHLIGHT, NOTE }
+
+/** One mark, as the marks list shows it. */
+data class Annotation(
+    val id: Long,
+    val kind: AnnotationKind,
+    /** The spine unit it resolves against. */
+    val spine: Int,
+    /** Whole-book progression of its start, 0.0..=1.0. */
+    val progression: Double,
+    /** A highlight's quote or a note's body. */
+    val text: String?,
+    /** The chosen color, or null for the theme's. */
+    val color: String?,
+)
+
 /** The engine's colour themes, in cycle order. */
 enum class Theme { LIGHT, SEPIA, DARK }
 
@@ -310,6 +327,93 @@ class Session private constructor(private var handle: Long) : AutoCloseable {
 
     /** Every family the session's font database offers — a picker's list. */
     val fontFamilies: Array<String> get() = Native.fontFamilies(handle)
+
+    // ---- Selection, links and marks ----
+    //
+    // The gesture surface. Long-press → [selectWordAt]; the handles a
+    // shell draws come from [rangeRects] over [selectedRange]; dragging
+    // one is [selectRange] with the adjusted offsets; the result becomes
+    // a highlight the library keeps and sync carries.
+
+    /** Anchor a selection at a point. Returns whether text was there. */
+    fun selectionBegin(x: Float, y: Float): Boolean = Native.selectionBegin(handle, x, y)
+
+    /** Extend the selection — press-drag, or a moving handle. */
+    fun selectionDrag(x: Float, y: Float) = Native.selectionDrag(handle, x, y)
+
+    /** Select the word under a point — what a long press means. */
+    fun selectWordAt(x: Float, y: Float): Boolean = Native.selectWordAt(handle, x, y)
+
+    /** Select an exact locator range — a search hit, an adjusted handle. */
+    fun selectRange(start: Int, end: Int) = Native.selectRange(handle, start, end)
+
+    /** Drop the selection. */
+    fun selectionClear() = Native.selectionClear(handle)
+
+    /** The selection as a locator range, or null when there is none. */
+    val selectedRange: IntRange?
+        get() {
+            val packed = Native.selectedRange(handle)
+            if (packed < 0) return null
+            return (packed ushr 32).toInt() until (packed and 0xffff_ffffL).toInt()
+        }
+
+    /** The selected text, collapsed the way a clipboard wants it. */
+    val selectedText: String? get() = Native.selectedText(handle)
+
+    /** The link under a point, or null — check before starting a selection. */
+    fun linkAt(x: Float, y: Float): String? = Native.linkAt(handle, x, y)
+
+    /**
+     * Follow an href. Returns whether the reader moved; an external
+     * `http(s)` link answers false and is the app's to open in a browser.
+     */
+    fun followLink(href: String): Boolean = Native.followLink(handle, href)
+
+    /** The selection becomes a stored highlight; its id, or null. */
+    fun addHighlight(): Long? = Native.addHighlight(handle).takeIf { it > 0 }
+
+    /** The selection becomes a note carrying [body]; its id, or null. */
+    fun addNote(body: String): Long? = Native.addNote(handle, body).takeIf { it > 0 }
+
+    /** Bookmark the current position; its id, or null. */
+    fun addBookmark(): Long? = Native.addBookmark(handle).takeIf { it > 0 }
+
+    /** The stored highlight under a point, or null — the recolor-menu tap. */
+    fun highlightAt(x: Float, y: Float): Long? =
+        Native.highlightAt(handle, x, y).takeIf { it > 0 }
+
+    /** Recolor a highlight — `"#rrggbb"`/`"#rrggbbaa"`, null for the theme's. */
+    fun setHighlightColor(id: Long, color: String?) =
+        Native.setHighlightColor(handle, id, color)
+
+    /** Remove a mark; the removal reaches the container on the next sync. */
+    fun removeAnnotation(id: Long) = Native.removeAnnotation(handle, id)
+
+    /** Jump to a mark. Returns whether the reader moved. */
+    fun gotoAnnotation(id: Long): Boolean = Native.gotoAnnotation(handle, id)
+
+    /** Every mark this book carries, ordered by progression. */
+    fun annotations(): List<Annotation> {
+        val count = Native.annotationCount(handle)
+        if (count <= 0) return emptyList()
+        return (0 until count).mapNotNull { index ->
+            val values = Native.annotation(handle, index)
+            if (values.size < 4) return@mapNotNull null
+            Annotation(
+                id = values[0],
+                kind = when (values[1]) {
+                    1L -> AnnotationKind.HIGHLIGHT
+                    2L -> AnnotationKind.NOTE
+                    else -> AnnotationKind.BOOKMARK
+                },
+                spine = values[2].toInt(),
+                progression = Double.fromBits(values[3]),
+                text = Native.annotationText(handle, index),
+                color = Native.annotationColor(handle, index),
+            )
+        }
+    }
 
     /**
      * Save the position and drop everything reconstructible. Call from
