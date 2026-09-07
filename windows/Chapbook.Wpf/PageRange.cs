@@ -1,32 +1,17 @@
-using Microsoft.UI.Xaml.Automation.Provider;
-using Microsoft.UI.Xaml.Automation.Text;
+using System.Windows.Automation;
+using System.Windows.Automation.Provider;
+using System.Windows.Automation.Text;
 
-namespace Chapbook.WinUI;
+namespace Chapbook.Wpf;
 
 /// <summary>
 /// A range of the page, as a UI Automation client holds it.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Endpoints are character offsets into the speakable string. They move
-/// under the client's hand — <see cref="ExpandToEnclosingUnit"/>,
-/// <see cref="Move"/> and the two <c>MoveEndpoint</c> calls all mutate —
-/// and every read clamps to the page as it is now, so a range held across
-/// a page turn degenerates rather than indexing off the end of a shorter
-/// one.
-/// </para>
-/// <para>
-/// <b>Units.</b> Character, word and line are real. Format, paragraph,
-/// page and document all resolve to the whole page, which is UIA's own
-/// documented fallback: a provider that cannot honour a unit uses the next
-/// larger one it can. Paragraph is not real because the speakable page
-/// collapses whitespace and carries no paragraph structure, and the only
-/// way to recover one would be to call a gap in locator offsets a break —
-/// a threshold dressed as a fact. A screen reader told "that paragraph is
-/// the page" is reading something true and too big; one told a guessed
-/// boundary is reading something false. Line is the unit review commands
-/// actually use, and it is exact.
-/// </para>
+/// Endpoints are character offsets into the speakable string, and they move
+/// under the client's hand. Every read clamps to the page as it is now, so
+/// a range held across a page turn degenerates rather than indexing off the
+/// end of a shorter one.
 /// </remarks>
 internal sealed class PageRange(PagePeer peer, uint start, uint end) : ITextRangeProvider
 {
@@ -46,21 +31,35 @@ internal sealed class PageRange(PagePeer peer, uint start, uint end) : ITextRang
         _end = Math.Max(from, to);
     }
 
+    /// <summary>
+    /// A UIA unit in the engine's vocabulary. Character, word and line are
+    /// real; everything larger resolves to the page, which is UIA's own
+    /// documented fallback — a provider that cannot honour a unit uses the
+    /// next larger one it can.
+    /// </summary>
+    private static TextGranularity Granularity(TextUnit unit) => unit switch
+    {
+        TextUnit.Character => TextGranularity.Character,
+        TextUnit.Word => TextGranularity.Word,
+        TextUnit.Line => TextGranularity.Line,
+        _ => TextGranularity.Page,
+    };
+
     public ITextRangeProvider Clone()
     {
         (uint from, uint to) = Span();
         return new PageRange(peer, from, to);
     }
 
-    public bool Compare(ITextRangeProvider textRangeProvider) =>
-        textRangeProvider is PageRange other && other.Span() == Span();
+    public bool Compare(ITextRangeProvider range) =>
+        range is PageRange other && other.Span() == Span();
 
     public int CompareEndpoints(
         TextPatternRangeEndpoint endpoint,
-        ITextRangeProvider textRangeProvider,
+        ITextRangeProvider targetRange,
         TextPatternRangeEndpoint targetEndpoint)
     {
-        if (textRangeProvider is not PageRange other)
+        if (targetRange is not PageRange other)
         {
             return 0;
         }
@@ -83,23 +82,10 @@ internal sealed class PageRange(PagePeer peer, uint start, uint end) : ITextRang
         }
     }
 
-    /// <summary>
-    /// A UIA unit in the engine's vocabulary. Character, word and line are
-    /// real; everything larger resolves to the page, which is UIA's own
-    /// documented fallback.
-    /// </summary>
-    private static TextGranularity Granularity(TextUnit unit) => unit switch
-    {
-        TextUnit.Character => TextGranularity.Character,
-        TextUnit.Word => TextGranularity.Word,
-        TextUnit.Line => TextGranularity.Line,
-        _ => TextGranularity.Page,
-    };
-
-    public ITextRangeProvider? FindAttribute(int attributeId, object value, bool backward) =>
-        // No attribute is reported as anything but "not supported", so
-        // there is nothing here to search for. Saying so is honest;
-        // returning the document range would be a lie a client acts on.
+    public ITextRangeProvider? FindAttribute(int attribute, object value, bool backward) =>
+        // Nothing is reported as an attribute, so there is nothing to
+        // search for. Saying so is honest; answering with the document
+        // range would be a lie a client acts on.
         null;
 
     public ITextRangeProvider? FindText(string text, bool backward, bool ignoreCase)
@@ -113,31 +99,27 @@ internal sealed class PageRange(PagePeer peer, uint start, uint end) : ITextRang
         StringComparison how = ignoreCase
             ? StringComparison.CurrentCultureIgnoreCase
             : StringComparison.CurrentCulture;
-        int at = backward
-            ? haystack.LastIndexOf(text, how)
-            : haystack.IndexOf(text, how);
+        int at = backward ? haystack.LastIndexOf(text, how) : haystack.IndexOf(text, how);
         return at < 0
             ? null
             : new PageRange(peer, from + (uint)at, from + (uint)(at + text.Length));
     }
 
-    public object? GetAttributeValue(int attributeId) =>
-        // No attribute is reported. Text attributes are not absent from the
-        // *engine* — a glyph run knows its face and its size — but they are
-        // absent from the text *surface*, which is deliberately a much
-        // smaller thing to hold still than the paint vocabulary. Exposing
-        // them means widening that accessor, which is an engine change and
-        // not a Windows one.
+    public object GetAttributeValue(int attribute) =>
+        // Text attributes are not absent from the *engine* — a glyph run
+        // knows its face and its size — but they are absent from the text
+        // *surface*, which is deliberately a much smaller thing to hold
+        // still than the paint vocabulary.
         //
-        // `null` rather than a sentinel: WPF has
-        // `AutomationElementIdentifiers.NotSupported` for this and WinUI
-        // exposes no equivalent, so there is nothing more specific to say.
-        null;
+        // This is the sentinel the WinUI peer has no equivalent of, and it
+        // is the difference between "no attributes here" and a null a
+        // client has to interpret.
+        AutomationElementIdentifiers.NotSupported;
 
-    public void GetBoundingRectangles(out double[] returnValue)
+    public double[] GetBoundingRectangles()
     {
         (uint from, uint to) = Span();
-        returnValue = peer.RectanglesFor(from, to);
+        return peer.Rectangles(from, to);
     }
 
     public IRawElementProviderSimple[] GetChildren() => [];
@@ -175,8 +157,7 @@ internal sealed class PageRange(PagePeer peer, uint start, uint end) : ITextRang
         return target - at;
     }
 
-    public int MoveEndpointByUnit(
-        TextPatternRangeEndpoint endpoint, TextUnit unit, int count)
+    public int MoveEndpointByUnit(TextPatternRangeEndpoint endpoint, TextUnit unit, int count)
     {
         if (count == 0)
         {
@@ -209,10 +190,10 @@ internal sealed class PageRange(PagePeer peer, uint start, uint end) : ITextRang
 
     public void MoveEndpointByRange(
         TextPatternRangeEndpoint endpoint,
-        ITextRangeProvider textRangeProvider,
+        ITextRangeProvider targetRange,
         TextPatternRangeEndpoint targetEndpoint)
     {
-        if (textRangeProvider is not PageRange other)
+        if (targetRange is not PageRange other)
         {
             return;
         }
@@ -247,7 +228,7 @@ internal sealed class PageRange(PagePeer peer, uint start, uint end) : ITextRang
     public void ScrollIntoView(bool alignToTop)
     {
         // Every range this provider hands out is on the page that is on the
-        // screen, so there is never anything to scroll — pagination's
-        // answer to a question a scrolling document has to work at.
+        // screen, so there is never anything to scroll — pagination's answer
+        // to a question a scrolling document has to work at.
     }
 }

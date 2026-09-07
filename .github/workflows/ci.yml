@@ -129,6 +129,14 @@ jobs:
       # so what a runner can prove is that it builds — which is what nothing
       # proved about the Swift package until a Mac was doing it.
       - run: dotnet build windows/Chapbook.WinUI/Chapbook.WinUI.csproj
+      - run: dotnet build windows/Chapbook.Wpf/Chapbook.Wpf.csproj
+      # The WPF demo is the only thing here that can be *run* without a
+      # person: `--shot` draws one page through WPF's own renderer and
+      # writes it, which is the one check a compiler cannot do — a page
+      # that came out cold blue is a swizzle bug and looks like nothing
+      # else. Screen-grabbing another process does not work for WPF, whose
+      # content is composited by DWM, so the app captures itself.
+      - run: dotnet build windows/demo-wpf/Chapbook.Demo.Wpf.csproj
 
   apple:
     # The Swift package, on the only host that can judge it. Every other

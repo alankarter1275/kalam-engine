@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A window, a book, and nothing else. It exists to put the two things a
+    compiler cannot judge in front of a person: whether the page comes out
+    the right colour, and whether a screen reader can read it.
+
+    An .exe and the .NET Desktop runtime is the whole deployment story —
+    which is itself one of the findings this spike was for.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>ChapbookDemo</AssemblyName>
+    <RootNamespace>Chapbook.Demo</RootNamespace>
+    <!-- Per-monitor v2, so the page rasterizes at the monitor's real resolution. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Chapbook.Wpf\Chapbook.Wpf.csproj" />
+  </ItemGroup>
+
+</Project>

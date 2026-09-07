@@ -103,105 +103,33 @@ internal sealed class PagePeer(SessionView owner)
         // range, which is what word-oriented review reads. A degenerate
         // range at the nearest character would be more literal and less
         // useful.
-        if (session.WordAt((float)x, (float)y) is not { } locator)
+        if (Page is not { } page || session.WordAt((float)x, (float)y) is not { } locator)
         {
             return new PageRange(this, 0, 0);
         }
-        (uint start, uint end) = TextRangeOf(locator.Start, locator.End);
-        return new PageRange(this, start, end);
+        PageText.Span span = page.TextRange(locator.Start, locator.End);
+        return new PageRange(this, span.Start, span.End);
     }
 
     // ---- What the range provider needs ----
+    //
+    // The arithmetic is `PageText`'s and lives in the binding, because it
+    // is identical here and in the WPF peer next door. What is left in a
+    // peer is only the shape its framework asks in.
 
-    internal SpeakablePage? Page => Reading?.SpeakablePage();
+    internal PageText? Page => Reading is { } session ? PageText.Of(session) : null;
 
-    internal uint Length => (uint)(Page?.Text.Length ?? 0);
+    internal uint Length => Page?.Length ?? 0;
 
-    internal string Slice(uint start, uint end)
-    {
-        string text = Page?.Text ?? string.Empty;
-        start = Math.Min(start, (uint)text.Length);
-        end = Math.Clamp(end, start, (uint)text.Length);
-        return text[(int)start..(int)end];
-    }
+    internal string Slice(uint start, uint end) => Page?.Slice(start, end) ?? string.Empty;
 
-    /// <summary>Locator range → character range, through the word table.</summary>
-    internal (uint Start, uint End) TextRangeOf(uint lo, uint hi)
-    {
-        (uint, uint)? range = null;
-        foreach (WordSpan word in Page?.Words ?? [])
-        {
-            if (word.LocatorStart < hi && lo < word.LocatorEnd)
-            {
-                range = range is { } r
-                    ? (Math.Min(r.Item1, word.TextStart), Math.Max(r.Item2, word.TextEnd))
-                    : (word.TextStart, word.TextEnd);
-            }
-        }
-        return range ?? (0, 0);
-    }
+    internal IReadOnlyList<PageText.Span> Boundaries(TextGranularity unit) =>
+        Page?.Boundaries(unit) ?? [];
 
-    /// <summary>Character range → locator range, the same way round.</summary>
-    internal (uint Start, uint End)? LocatorRangeOf(uint start, uint end)
-    {
-        (uint, uint)? range = null;
-        foreach (WordSpan word in Page?.Words ?? [])
-        {
-            if (word.TextStart < end && start < word.TextEnd)
-            {
-                range = range is { } r
-                    ? (Math.Min(r.Item1, word.LocatorStart), Math.Max(r.Item2, word.LocatorEnd))
-                    : (word.LocatorStart, word.LocatorEnd);
-            }
-        }
-        return range;
-    }
+    internal PageText.Span? Around(uint offset, TextGranularity unit) =>
+        Page?.Around(offset, unit);
 
-    /// <summary>
-    /// The word boundaries across the page, as character offsets.
-    /// </summary>
-    internal IReadOnlyList<(uint Start, uint End)> Words =>
-        Page?.Words.Select(w => (w.TextStart, w.TextEnd)).ToList() ?? [];
-
-    /// <summary>
-    /// The line boundaries, derived the way every other implementation of
-    /// this derives them: a line runs from its first word to the next
-    /// line's first word, so every character belongs to exactly one line
-    /// including the punctuation between words that no word span covers.
-    /// </summary>
-    internal IReadOnlyList<(uint Start, uint End)> Lines
-    {
-        get
-        {
-            if (Reading is not { } session || Page is not { } page)
-            {
-                return [];
-            }
-            var starts = new List<uint>();
-            foreach (TextRun run in session.PageTextRuns() ?? [])
-            {
-                foreach (WordSpan word in page.Words)
-                {
-                    if (word.LocatorStart >= run.LocatorStart && word.LocatorStart < run.LocatorEnd)
-                    {
-                        starts.Add(word.TextStart);
-                        break;
-                    }
-                }
-            }
-            if (starts.Count == 0)
-            {
-                return [];
-            }
-            starts[0] = 0;
-            var lines = new List<(uint, uint)>(starts.Count);
-            for (int i = 0; i < starts.Count; i++)
-            {
-                lines.Add((starts[i], i + 1 < starts.Count ? starts[i + 1] : Length));
-            }
-            return lines;
-        }
-    }
+    internal IRawElementProviderSimple Element => ProviderFromPeer(this);
 
     /// <summary>
     /// Screen rectangles for a character range — one per line it touches,
@@ -210,7 +138,9 @@ internal sealed class PagePeer(SessionView owner)
     /// </summary>
     internal double[] RectanglesFor(uint start, uint end)
     {
-        if (Reading is not { } session || LocatorRangeOf(start, end) is not { } locators)
+        if (Reading is not { } session
+            || Page is not { } page
+            || page.LocatorRange(start, end) is not { } locators)
         {
             return [];
         }
@@ -228,14 +158,12 @@ internal sealed class PagePeer(SessionView owner)
         return [.. flat];
     }
 
-    internal IRawElementProviderSimple Element => ProviderFromPeer(this);
-
     /// <summary>Ask the view to select a character range.</summary>
     internal void Select(uint start, uint end)
     {
-        // Nothing to do: selection does not cross the C ABI, so a client's
-        // request is honoured as far as it can be, which is not at all.
-        // Saying so here beats a silent no-op somewhere deeper.
+        // Selection does not cross the C ABI, so a client's request is
+        // honoured as far as it can be, which is not at all. Saying so here
+        // beats a silent no-op somewhere deeper.
         _ = (start, end);
     }
 }
