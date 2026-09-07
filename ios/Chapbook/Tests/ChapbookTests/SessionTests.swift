@@ -128,6 +128,45 @@ private func metrics() -> PageMetrics {
     #expect(engineABIVersion() > 0)
 }
 
+@Test func theSessionNarratesItsMoves() throws {
+    // Three pages, one per unit: two turns land on the last page of the
+    // last unit, so the drain must hold the moves *and* the finish — the
+    // "mark as read" signal an app acts on without polling anything.
+    let library = try scratchLibrary("events")
+    defer { try? FileManager.default.removeItem(at: library) }
+
+    let session = try Session(
+        source: .path(fixtures.appendingPathComponent("cbz/minimal.cbz")),
+        configuration: SessionConfiguration(fonts: fonts(), libraryDirectory: library))
+    try session.setMetrics(metrics())
+    _ = try session.drainEvents()  // whatever open and layout narrated
+
+    #expect(try session.nextPage())
+    #expect(try session.nextPage())
+    var events = try session.drainEvents()
+
+    let positions = events.compactMap { event -> Session.Position? in
+        if case .positionChanged(let position) = event { return position }
+        return nil
+    }
+    #expect(positions.last?.spine == 2, "the last move crossed: \(events)")
+
+    // The finish waits for the last page to decode: "am I at the end"
+    // reads only cached layout, and the comic's pages land on the loader
+    // thread. Let them land, then drain the transition.
+    let deadline = Date().addingTimeInterval(10)
+    while !events.contains(.bookFinished), Date() < deadline {
+        _ = try session.pollLoaded()
+        events += try session.drainEvents()
+        Thread.sleep(forTimeInterval: 0.02)
+    }
+    #expect(events.contains(.bookFinished), "the last page of the last unit: \(events)")
+
+    // Drained means drained: the queue answers nil, not the last event
+    // again.
+    #expect(try session.nextEvent() == nil)
+}
+
 @Test func thePageSpeaksItsText() throws {
     let library = try scratchLibrary("text-surface")
     defer { try? FileManager.default.removeItem(at: library) }

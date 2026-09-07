@@ -77,6 +77,10 @@ public struct Capabilities: OptionSet, Sendable {
     public static let bundledHTTP = Capabilities(rawValue: 16)
     public static let svg = Capabilities(rawValue: 32)
     public static let mathML = Capabilities(rawValue: 64)
+    /// Positions and marks reconcile with a book's services. Without it
+    /// `SyncWorker` declines to open and the library is read and written
+    /// only locally.
+    public static let sync = Capabilities(rawValue: 128)
 
     public static func current() -> Capabilities {
         Capabilities(rawValue: cb_capabilities())

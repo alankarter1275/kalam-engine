@@ -188,10 +188,10 @@ surface, deliberately**: a host transport is the host's networking, and
 it authorizes its own requests — which also obliges it to write, so the
 transport contract there includes the POST/PUT/DELETE half and the
 response headers (`ETag`, `Location`) the annotation flows turn on.
-Still outside: the JNI binding and the Swift package wrap none of it
-yet, so the two mobile shells hold libraries they cannot reconcile —
-though the surface they would wrap now exists and is golden-tested.
-kosync remains backlog.
+Both mobile bindings wrap it — Kotlin's `SyncWorker` over
+whatever client the app already has, Swift's over `URLSession` — so each
+shell reconciles through the platform's own networking, credentials
+attached by the host. kosync remains backlog.
 
 Three conclusions here are load-bearing for every host and worth
 restating wherever a shell author looks:

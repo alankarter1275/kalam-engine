@@ -5,7 +5,7 @@ app that exercises the flow real readers live or die on.
 
 | | |
 |---|---|
-| `Chapbook/` | The Swift package: `Session`, sources, input, rendering, custody helpers |
+| `Chapbook/` | The Swift package: `Session`, sources, input, rendering, sync, custody helpers |
 | `demo/` | A hand-rolled `.app`: picker once, bookmark stored, cold resolve forever after |
 | `build-xcframework.sh` | Rust staticlibs → `Chapbook.xcframework` (device, simulator, macOS slices) |
 | `typecheck-slices.sh` | The iOS slices compiled — the half `swift test` cannot run |
@@ -100,6 +100,27 @@ A book opened by descriptor **keeps its place**: the engine adopts it
 into the library by a fingerprint of its bytes, so position, annotations
 and per-book settings persist with no path ever crossing. The app's half
 of custody is holding the bookmark that reaches the file again.
+
+`SyncWorker` reconciles the shelf with a book's services — the position
+with its OPDS Progression endpoint, marks with its Web Annotation
+container — recorded per book with `Library.setSyncTargets` off the
+catalog entry it was downloaded from. The transport is the same choice a
+`SessionConfiguration` makes, with the same default (`URLSession` on
+iOS, so requests honor ATS, the trust store and the app's own
+configuration), plus the write half sync turns on: PUT, POST and DELETE
+go out through the same session, and every response's headers cross —
+`ETag` and `Location` are the annotation flows' whole concurrency story.
+No credential crosses the boundary; a service behind auth wants a
+`URLSession` configured to attach its own. Reports come back typed
+through `drainReports()`, one per book and then `.finished`; the worker
+owns a thread, and letting the last reference go joins it.
+
+`Session.drainEvents()` is the session narrating what is not "repaint":
+loads landing and failing, the position moving (moves the app did not
+make included), the book finishing. Drain after a wake or an action —
+the engine coalesces on its side, so draining rarely cannot miss a move
+— and a progress bar, a sync client and a "mark as read" flow all stop
+polling.
 
 ## The demo
 
