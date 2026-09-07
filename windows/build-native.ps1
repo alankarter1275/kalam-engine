@@ -43,15 +43,25 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
-$args = @('build', '-p', 'chapbook-ffi')
-if ($Profile -eq 'release') { $args += '--release' }
-if ($Target) { $args += @('--target', $Target) }
+$cargoArgs = @('build', '-p', 'chapbook-ffi')
+if ($Profile -eq 'release') { $cargoArgs += '--release' }
+if ($Target) { $cargoArgs += @('--target', $Target) }
 
-Write-Host "cargo $($args -join ' ')"
+Write-Host "cargo $($cargoArgs -join ' ')"
 Push-Location $root
 try {
-    & cargo @args
-    if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
+    # `Continue` for the native call, deliberately. cargo reports progress
+    # on stderr, and Windows PowerShell 5.1 wraps every stderr line from a
+    # native command in an ErrorRecord — which under `Stop` aborts the
+    # script on the first crate it compiles. The exit code is the real
+    # answer and is checked on the next line; PowerShell 7 does not have
+    # the problem, but somebody will run this under 5.1.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & cargo @cargoArgs
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $previous
+    if ($code -ne 0) { throw "cargo build failed ($code)" }
 }
 finally {
     Pop-Location

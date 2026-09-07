@@ -111,7 +111,7 @@ public sealed class FontSource : IDisposable
 /// — its own font set, a library in a packaged app's data folder — changes
 /// this and nothing else.
 /// </remarks>
-public sealed class SessionConfiguration : IDisposable
+public sealed partial class SessionConfiguration : IDisposable
 {
     internal nint Handle;
 
@@ -160,7 +160,7 @@ public sealed class SessionConfiguration : IDisposable
         return this;
     }
 
-    private nint Live() =>
+    internal nint Live() =>
         Handle != 0 ? Handle : throw new ObjectDisposedException(nameof(SessionConfiguration));
 
     internal nint Consume()

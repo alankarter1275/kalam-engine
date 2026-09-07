@@ -27,6 +27,19 @@ internal static class Fixture
 
     internal static string Book(string relative) => Dir(Path.Combine("epub", relative));
 
+    /// <summary>The checked-in C ABI header, which is the contract.</summary>
+    internal static string Header()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "crates")))
+        {
+            dir = dir.Parent;
+        }
+        Assert.NotNull(dir);
+        return Path.Combine(
+            dir!.FullName, "crates", "chapbook-ffi", "include", "chapbook.h");
+    }
+
     /// <summary>
     /// A configuration over the repository's four embedded faces and a
     /// scratch library directory.
