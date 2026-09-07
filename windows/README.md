@@ -101,9 +101,32 @@ was actually built with — a header cannot answer either.
 
 ## What is not here yet
 
-`Chapbook.WinUI` (a `SessionView` control and its automation peer), a
-WinUI demo app, and the shelf half of the binding — `Library`, over
-`cb_library_*`, which the Swift package already has. The binding covers
-the session, and the tests cover the binding; nothing above it exists, and
-no CI job compiles this directory yet, which is the state `ios/` was in
-before the `apple` job and is worth fixing before it grows.
+The binding covers the **session**, completely — including the events the
+ABI grew alongside the sync work, which are the other half of a wake:
+`PollLoaded` answers "should I repaint", `DrainEvents` answers "is there
+anything to tell the reader", and a host needs both.
+
+What it does not cover, in the order the ABI added it:
+
+- **The shelf.** `cb_library_*` — query, collections, mark-as-read — which
+  the Swift package already has and which a Windows app opening onto
+  something other than a book will need first.
+- **Sync.** `cb_sync_*`, plus the `cb_library_*_sync_*` calls that record
+  which services a book answers to. It is the larger piece, because the
+  sync client is opened over a host transport rather than a bundled one:
+  binding it means binding `cb_http_get_fn`, the new `cb_http_send_fn`,
+  and `finalize`, and getting the ownership and threading of those
+  callbacks right. `HttpClient` is what a .NET host would put behind it,
+  which is exactly the substitution the seam exists for.
+
+And no CI job compiles this directory. That is the state `ios/` was in
+before the `apple` job existed, when the Swift package landed broken and a
+Mac was the only thing that could have said so; the same is true here of a
+Windows runner with the .NET SDK on it, and it is worth fixing before this
+grows further.
+
+`crates/chapbook-app` is the other thing to read before building on this.
+It is the shared application model the GTK app sits on, and a Windows
+application belongs over that rather than over a second viewer — the
+binding here is what a non-Rust front end would use, and the two are
+different answers to different questions.

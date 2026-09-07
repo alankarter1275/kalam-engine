@@ -270,6 +270,10 @@ internal static partial class Interop
         nint session, out byte changed);
 
     [LibraryImport(Library)]
+    internal static partial Status cb_session_next_event(
+        nint session, out NativeSessionEvent evt);
+
+    [LibraryImport(Library)]
     internal static partial Status cb_session_has_pending_loads(
         nint session, out byte pending);
 

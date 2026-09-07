@@ -81,6 +81,22 @@ public readonly record struct ReadingSettings(
 }
 
 /// <summary>
+/// Something the session wants the host to know that is not "repaint".
+/// </summary>
+/// <param name="Kind">Which of the four this is.</param>
+/// <param name="Spine">The unit, for the two unit events and the position.</param>
+/// <param name="Page">
+/// The page, for <see cref="SessionEventKind.PositionChanged"/>; zero
+/// otherwise.
+/// </param>
+/// <param name="Message">
+/// A unit failure's reason, for a person to read. Free to change, so do
+/// not match on it; <c>null</c> for every other kind.
+/// </param>
+public readonly record struct SessionEvent(
+    SessionEventKind Kind, int Spine, int Page, string? Message);
+
+/// <summary>
 /// One open book, and everything that follows from it: layout, the reading
 /// position, settings, the page's text, and the shelf row it belongs to.
 /// </summary>
@@ -621,6 +637,53 @@ public sealed partial class Session : IDisposable
         ChapbookException.Check(
             Interop.cb_session_poll_loaded(Live(), out byte changed), nameof(PollLoaded));
         return changed != 0;
+    }
+
+    /// <summary>
+    /// Take the next event, oldest first, or <c>null</c> when there is
+    /// none — which is the ordinary answer and not a failure.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="PollLoaded"/> answers "should I repaint"; this answers
+    /// "is there anything to tell the reader", and a host needs both. It
+    /// is a queue to drain rather than a callback to install, because the
+    /// session mutates through itself and a handler fired from inside one
+    /// could not call back into it.
+    /// </remarks>
+    public SessionEvent? NextEvent()
+    {
+        Status status = Interop.cb_session_next_event(Live(), out NativeSessionEvent evt);
+        if (status == Status.Unavailable)
+        {
+            return null;
+        }
+        ChapbookException.Check(status, nameof(NextEvent));
+        // The message is borrowed from the session and dies on the next
+        // call, so it is copied here and nowhere later. Marshalling it
+        // straight into a managed string is the copy.
+        string? message = evt.Message == 0
+            ? null
+            : System.Runtime.InteropServices.Marshal.PtrToStringUTF8(evt.Message);
+        return new SessionEvent(evt.Kind, (int)evt.Spine, (int)evt.Page, message);
+    }
+
+    /// <summary>
+    /// Every event waiting, oldest first. The ordinary way to use
+    /// <see cref="NextEvent"/>.
+    /// </summary>
+    /// <remarks>
+    /// Drain after a wake or an action. The engine coalesces on its side —
+    /// ten page turns between drains report one position change, not ten —
+    /// so a host cannot miss a move by draining rarely.
+    /// </remarks>
+    public IReadOnlyList<SessionEvent> DrainEvents()
+    {
+        var events = new List<SessionEvent>();
+        while (NextEvent() is { } evt)
+        {
+            events.Add(evt);
+        }
+        return events;
     }
 
     /// <summary>

@@ -462,3 +462,66 @@ public class TextSurfaceTests
         }
     }
 }
+
+public class SessionEventTests
+{
+    [Fact]
+    public void ThePositionMovingIsReportedAsAnEvent()
+    {
+        using var session = Session.OpenPath(
+            Fixture.Book("long.epub"), Fixture.Config(Fixture.Scratch()));
+        session.SetMetrics(Fixture.Metrics);
+        _ = session.Render();
+        session.DrainEvents();
+
+        session.NextUnit();
+        session.NextPage();
+
+        IReadOnlyList<SessionEvent> events = session.DrainEvents();
+        SessionEvent moved = Assert.Single(
+            events, e => e.Kind == SessionEventKind.PositionChanged);
+
+        // Coalesced on the engine's side: two moves, one report. A host
+        // that drains rarely still learns where the reader ended up, which
+        // is why this is a queue and not a callback per turn.
+        Assert.Equal(session.Position.Spine, (uint)moved.Spine);
+        Assert.Equal(session.Position.Page, (uint)moved.Page);
+    }
+
+    [Fact]
+    public void ReachingTheEndOfTheBookIsAnEvent()
+    {
+        using var session = Session.OpenPath(
+            Fixture.Book("minimal.epub"), Fixture.Config(Fixture.Scratch()));
+        session.SetMetrics(Fixture.Metrics);
+        _ = session.Render();
+
+        bool finished = false;
+        for (int turn = 0; turn < 500 && !finished; turn++)
+        {
+            bool moved = session.NextPage();
+            _ = session.Render();
+            finished = session.DrainEvents()
+                .Any(e => e.Kind == SessionEventKind.BookFinished);
+            if (!moved)
+            {
+                break;
+            }
+        }
+        Assert.True(finished, "the last page of the last unit should report itself");
+    }
+
+    [Fact]
+    public void AnEmptyQueueIsNotAFailure()
+    {
+        using var session = Session.OpenPath(
+            Fixture.Book("minimal.epub"), Fixture.Config(Fixture.Scratch()));
+        session.SetMetrics(Fixture.Metrics);
+        session.DrainEvents();
+
+        // The ordinary answer. An ABI that reported this as an error would
+        // make every idle drain look like a problem.
+        Assert.Null(session.NextEvent());
+        Assert.Empty(session.DrainEvents());
+    }
+}

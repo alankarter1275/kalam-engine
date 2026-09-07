@@ -72,6 +72,20 @@ internal struct NativeWordSpan
 }
 
 [StructLayout(LayoutKind.Sequential)]
+internal struct NativeSessionEvent
+{
+    public SessionEventKind Kind;
+    public nuint Spine;
+    public nuint Page;
+    /// <summary>
+    /// Borrowed from the session and valid only until the next event is
+    /// taken or the session closes. It is copied into a managed string the
+    /// moment it arrives, which is the only correct thing to do with it.
+    /// </summary>
+    public nint Message;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct NativeBookQuery
 {
     public nint Search;
@@ -262,6 +276,45 @@ public enum ActionOutcome : uint
     /// rather than shadowing the history to know when to stop.
     /// </summary>
     Unhandled = 2,
+}
+
+/// <summary>What kind of thing a <see cref="SessionEvent"/> is reporting.</summary>
+/// <remarks>
+/// The underlying type is <c>int</c> and not <c>uint</c>, unlike every
+/// other enumeration here. That is not a slip: this one is <c>repr(C)</c>
+/// on the Rust side where the others are <c>repr(u32)</c>, so its size is
+/// a C <c>int</c>. Both are four bytes on every target chapbook builds
+/// for, and writing down which is which is cheaper than finding out.
+/// </remarks>
+public enum SessionEventKind
+{
+    /// <summary>
+    /// A background unit finished decoding, prefetches included.
+    /// <see cref="Session.PollLoaded"/> deliberately answers false for
+    /// those, and a host watching load progress wants both answers.
+    /// </summary>
+    UnitLoaded = 0,
+
+    /// <summary>
+    /// A unit failed and will not be retried. Without this a comic page
+    /// that failed to download stays a placeholder forever with nothing
+    /// able to say why.
+    /// </summary>
+    UnitFailed = 1,
+
+    /// <summary>
+    /// The reader is somewhere else — including moves the host did not
+    /// make: a restored position resolving after open, a load landing that
+    /// settles the page.
+    /// </summary>
+    PositionChanged = 2,
+
+    /// <summary>
+    /// The last page of the last unit, on the transition rather than on
+    /// every drain, re-arming if the reader leaves and comes back. Whether
+    /// it means "mark as read" is the host's policy.
+    /// </summary>
+    BookFinished = 3,
 }
 
 /// <summary>How much of a book has been read.</summary>
