@@ -66,6 +66,23 @@ fn fixture(rel: &str) -> String {
         .into_owned()
 }
 
+/// A library directory that cannot be created, on any host.
+///
+/// The trick is a path *under an existing file*: `create_dir_all` refuses
+/// it as `ENOTDIR` on Unix and with the same shape of error on Windows,
+/// because a file is not a directory anywhere. What this replaced was
+/// `/proc/nonexistent/chapbook`, which is unwritable only because Linux
+/// says so: Windows has no `/proc`, made the whole chain at the root of
+/// the current drive without complaint, and the two tests below were then
+/// asserting that a warning nothing had provoked would arrive.
+fn unusable_library_dir() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("Cargo.toml")
+        .join("chapbook")
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn fixture_fonts() -> FontSource {
     FontSource::embedded(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts"),
@@ -81,7 +98,7 @@ fn a_library_that_will_not_open_is_reported_and_not_fatal() {
     // the session is expected to read on without one.
     let session = Session::open_with(
         Source::from(fixture("epub/minimal.epub").as_str()),
-        SessionConfig::new(fixture_fonts()).with_library_dir("/proc/nonexistent/chapbook"),
+        SessionConfig::new(fixture_fonts()).with_library_dir(unusable_library_dir()),
     )
     .expect("a book still opens without a library");
     assert!(session.spine_len() > 0);
@@ -143,7 +160,7 @@ fn records_carry_the_crate_that_emitted_them() {
     // the target under assertion is the engine's and not this file's.
     let _ = Session::open_with(
         Source::from(fixture("epub/minimal.epub").as_str()),
-        SessionConfig::new(fixture_fonts()).with_library_dir("/proc/nonexistent/chapbook"),
+        SessionConfig::new(fixture_fonts()).with_library_dir(unusable_library_dir()),
     );
     let said = drain();
     assert!(

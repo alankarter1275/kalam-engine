@@ -20,3 +20,10 @@
 /ios/Chapbook/Chapbook.xcframework/
 /ios/Chapbook/.build/
 /ios/demo/build/
+
+# Windows: MSBuild's per-project output, and the native DLL that
+# `build-native.ps1` copies beside a package. The DLL is a build product of
+# the Rust workspace like every other one, not an artifact to check in.
+/windows/**/bin/
+/windows/**/obj/
+/windows/**/runtimes/

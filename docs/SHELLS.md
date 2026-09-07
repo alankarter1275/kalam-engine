@@ -11,13 +11,14 @@ explains how the engine computes a page; nothing here is about that.
 `PLATFORM.md` explains which seams are substitutable; this is how to sit
 on top of them.
 
-There are four shells in the workspace to read alongside it:
+There are five shells in the workspace to read alongside it:
 
 | | crate | what it shows |
 |---|---|---|
 | smallest | `chapbook-viewer/examples/minimal.rs` | the whole contract, nothing else |
 | desktop | `chapbook-viewer` | selection, links, clipboard, touch, GPU |
 | toolkit | `chapbook-viewer-gtk` (Linux only) | the same session under someone else's main loop |
+| platform | `chapbook-viewer-win32` (Windows only) | the same session under a main loop the shell pumps itself |
 | device | `tools/chapbook-cli/examples/show.rs` | rasterizing yourself, panel policy, damage |
 
 Start from `minimal.rs`. It exists to be copied.
@@ -148,11 +149,15 @@ The verbs below are the direct route and stay supported. Above them sits
   events into an `Action` and a binding is written once rather than once
   per shell. `Action` is `#[non_exhaustive]`: bookmarks and a jump to the
   table of contents are plainly coming, so match with a fallback arm.
-- **`KeyMap`** is the default binding table, and it already knows what no
-  desktop shell has ever exercised: `Key::TurnPrev`/`TurnNext` are the
-  bezel buttons on a Kobo or a PocketBook, and the volume keys Android
-  readers borrow are bound too. Your job is one function from your
-  platform's key names to `Key`; `bind` and `unbind` adjust the rest.
+- **`KeyMap`** is the default binding table, and it already knows more
+  than most shells deliver: `Key::TurnPrev`/`TurnNext` are the bezel
+  buttons on a Kobo or a PocketBook, and the volume keys Android readers
+  borrow are bound too. A desktop has a pair after all —
+  `chapbook-viewer-win32` hands the two thumb buttons of a mouse to
+  `TurnPrev`/`TurnNext` — which is the argument for the vocabulary being
+  the engine's rather than each shell's. Your job is one function from
+  your platform's key names to `Key`; `bind` and `unbind` adjust the
+  rest.
 - **`TapZones::action_at(x, y, &metrics)`** is the tap policy: three
   vertical bands in the reading direction, taking *panel* coordinates and
   undoing the rotation for you, so this is the one hit test you do not
@@ -190,6 +195,45 @@ always means "next page" is not an error anything can report.
 `chapbook-viewer-gtk` runs 1 and 3 and skips 2 — it has a key for adding
 a highlight and no gesture for touching one — so treat the ordering above
 as the contract rather than as a transcription of that file.
+`chapbook-viewer-win32` runs all three, which is what the ordering was
+written for: a press inside a highlight in the outer third of the page
+reports the highlight there and does not turn.
+
+## 3a. The page in front of a screen reader
+
+A rasterized page is a picture, and a picture of text is unusable with a
+screen reader. Three accessors exist for exactly that, and they are the
+whole of what an accessibility tree needs: `page_text_runs` for the
+lines, `speakable_page` for the words and the string they sit in, and
+`range_rects` for the geometry of any locator range. `word_at` answers a
+dictionary tap out of the same table.
+
+Two shells wrap them, and reading both is worthwhile because the two
+platforms ask opposite questions of the same data.
+`chapbook-viewer-gtk`'s `PageArea` implements GTK's `AccessibleText`,
+where the client asks for *text at a granularity around an offset*.
+`chapbook-viewer-win32`'s `uia` module implements `ITextProvider`, where
+the client is handed a *range object that moves its own endpoints by
+unit* and asks it questions. Neither shape is the accessor's, which is
+what makes the accessor a seam rather than one platform's tree written
+in Rust.
+
+Two things that module settles for anyone writing a third. Offsets on
+the boundary are character offsets into the speakable string, because
+that is the space `WordSpan` already carries — locator offsets stay
+inside the shell. And the tree is fed from a *snapshot* taken after each
+paint rather than from the session, because UI Automation calls a
+provider from its own threads and `Session` is `Send` but not `Sync`;
+the one thing a client asks for that a snapshot cannot answer is a
+mutation, and that posts back to the UI thread. A platform whose
+accessibility callbacks arrive on the UI thread — GTK's do — needs
+neither.
+
+The unit a screen reader actually navigates by is the line, and it is
+exact. Paragraphs are not: the speakable page collapses whitespace and
+carries no paragraph structure, so both shells resolve a paragraph to
+the whole page. Giving the text surface real paragraph spans is the
+engine change that would fix it in both at once.
 
 `apply` answers two questions, not one, and you need both:
 `ActionOutcome::needs_redraw()` says whether to repaint, and

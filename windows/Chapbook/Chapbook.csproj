@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The binding, and deliberately not a WinUI project.
+
+    Nothing in this library touches a UI framework: it is P/Invoke over
+    `chapbook.h` and the types that ABI names. That is the same argument
+    the engine makes about itself one layer down — a stack bundled into
+    the thing a host embeds is precisely the one a host cannot substitute
+    — so WinUI lives in `Chapbook.WinUI`, and a WPF, WinForms, MAUI or
+    console app can consume this one without it.
+
+    The target framework is plain `net9.0` rather than `net9.0-windows`
+    for the same reason: nothing here calls a Windows API. What is
+    Windows-only is the native library it loads, and that is a runtime
+    fact, not a compile-time one.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>Chapbook</RootNamespace>
+    <AssemblyName>Chapbook</AssemblyName>
+    <Description>A .NET binding for chapbook, over the C ABI in crates/chapbook-ffi</Description>
+  </PropertyGroup>
+
+  <!--
+    Where `build-native.ps1` left the DLL. Release by default because that
+    is what a host ships; pass `-p:ChapbookProfile=debug` while iterating
+    on the Rust, which is minutes faster per change.
+  -->
+  <PropertyGroup>
+    <ChapbookProfile Condition="'$(ChapbookProfile)' == ''">release</ChapbookProfile>
+    <ChapbookNativeDir Condition="'$(ChapbookNativeDir)' == ''">$(MSBuildThisFileDirectory)..\..\target\$(ChapbookProfile)\</ChapbookNativeDir>
+  </PropertyGroup>
+
+  <!--
+    Copied beside the assembly rather than packed, because in this
+    repository the consumer is a project reference. A NuGet package puts
+    the same file at `runtimes/win-x64/native/`, which is the layout
+    `DllImport` resolves without any help; `windows/README.md` says how.
+  -->
+  <ItemGroup>
+    <None Include="$(ChapbookNativeDir)chapbook_ffi.dll" Condition="Exists('$(ChapbookNativeDir)chapbook_ffi.dll')">
+      <Link>chapbook_ffi.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <Target Name="ChapbookNativeMissing" BeforeTargets="Build"
+          Condition="!Exists('$(ChapbookNativeDir)chapbook_ffi.dll')">
+    <Warning Text="chapbook_ffi.dll is not in $(ChapbookNativeDir). Run windows\build-native.ps1 first; without it this assembly builds and every call throws DllNotFoundException at runtime." />
+  </Target>
+
+</Project>

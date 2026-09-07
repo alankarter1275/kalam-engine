@@ -102,8 +102,19 @@ fn the_sink_carries_the_engines_own_diagnostics_and_not_just_the_hosts() {
         unsafe { cb_font_source_embedded(dir.as_ptr(), family.as_ptr()) }
     };
     let config = unsafe { cb_config_new(fonts) };
-    // A path, not a directory: opening a library there must fail.
-    let not_a_dir = CString::new("/etc/hostname").unwrap();
+    // A path, not a directory: opening a library there must fail. It has to
+    // be a file that *exists*, and this crate's own manifest is the one such
+    // path every host agrees on — `/etc/hostname` was here first, and on
+    // Windows there is no such file, so `Library::open` cheerfully created
+    // `C:\etc\hostname\`, warned about nothing, and left this test asserting
+    // that a warning it never provoked had arrived.
+    let not_a_dir = CString::new(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("Cargo.toml")
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .unwrap();
     unsafe { cb_config_set_library_dir(config, not_a_dir.as_ptr()) };
     let book = CString::new(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))

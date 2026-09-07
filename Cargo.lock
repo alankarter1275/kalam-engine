@@ -770,6 +770,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chapbook-viewer-win32"
+version = "0.1.0"
+dependencies = [
+ "chapbook-core",
+ "chapbook-reader",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "clap"
 version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
