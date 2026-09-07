@@ -19,6 +19,7 @@ members = [
     "crates/chapbook-jni",
     "crates/chapbook-viewer",
     "crates/chapbook-viewer-gtk",
+    "crates/chapbook-viewer-win32",
     "tools/chapbook-cli",
 ]
 
@@ -204,6 +205,23 @@ softbuffer = "0.4"
 # covers Wayland alongside X11.
 arboard = { version = "3", default-features = false, features = [
     "wayland-data-control",
+] }
+# The Win32 shell's whole platform surface. Already in the graph at this
+# version under wgpu-hal, which the vello backend pulls, so naming it here
+# adds no crate and no licence decision — it only lets one more member ask
+# for features of it. `windows` rather than `windows-sys`: the COM half is
+# what a UI Automation text provider needs, and that is where this shell is
+# going.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 # Misc

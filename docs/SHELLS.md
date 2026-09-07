@@ -11,13 +11,14 @@ explains how the engine computes a page; nothing here is about that.
 `PLATFORM.md` explains which seams are substitutable; this is how to sit
 on top of them.
 
-There are four shells in the workspace to read alongside it:
+There are five shells in the workspace to read alongside it:
 
 | | crate | what it shows |
 |---|---|---|
 | smallest | `chapbook-viewer/examples/minimal.rs` | the whole contract, nothing else |
 | desktop | `chapbook-viewer` | selection, links, clipboard, touch, GPU |
 | toolkit | `chapbook-viewer-gtk` (Linux only) | the same session under someone else's main loop |
+| platform | `chapbook-viewer-win32` (Windows only) | the same session under a main loop the shell pumps itself |
 | device | `tools/chapbook-cli/examples/show.rs` | rasterizing yourself, panel policy, damage |
 
 Start from `minimal.rs`. It exists to be copied.
@@ -148,11 +149,15 @@ The verbs below are the direct route and stay supported. Above them sits
   events into an `Action` and a binding is written once rather than once
   per shell. `Action` is `#[non_exhaustive]`: bookmarks and a jump to the
   table of contents are plainly coming, so match with a fallback arm.
-- **`KeyMap`** is the default binding table, and it already knows what no
-  desktop shell has ever exercised: `Key::TurnPrev`/`TurnNext` are the
-  bezel buttons on a Kobo or a PocketBook, and the volume keys Android
-  readers borrow are bound too. Your job is one function from your
-  platform's key names to `Key`; `bind` and `unbind` adjust the rest.
+- **`KeyMap`** is the default binding table, and it already knows more
+  than most shells deliver: `Key::TurnPrev`/`TurnNext` are the bezel
+  buttons on a Kobo or a PocketBook, and the volume keys Android readers
+  borrow are bound too. A desktop has a pair after all —
+  `chapbook-viewer-win32` hands the two thumb buttons of a mouse to
+  `TurnPrev`/`TurnNext` — which is the argument for the vocabulary being
+  the engine's rather than each shell's. Your job is one function from
+  your platform's key names to `Key`; `bind` and `unbind` adjust the
+  rest.
 - **`TapZones::action_at(x, y, &metrics)`** is the tap policy: three
   vertical bands in the reading direction, taking *panel* coordinates and
   undoing the rotation for you, so this is the one hit test you do not
@@ -190,6 +195,9 @@ always means "next page" is not an error anything can report.
 `chapbook-viewer-gtk` runs 1 and 3 and skips 2 — it has a key for adding
 a highlight and no gesture for touching one — so treat the ordering above
 as the contract rather than as a transcription of that file.
+`chapbook-viewer-win32` runs all three, which is what the ordering was
+written for: a press inside a highlight in the outer third of the page
+reports the highlight there and does not turn.
 
 `apply` answers two questions, not one, and you need both:
 `ActionOutcome::needs_redraw()` says whether to repaint, and

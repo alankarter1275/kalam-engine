@@ -121,6 +121,18 @@ at every level it names:
 - **iOS** is the Swift package in `ios/` over the header — the consumer
   that cannot route around it, which is what keeps a C ABI honest.
   `ios/README.md` has the platform notes.
+- **Windows** is `crates/chapbook-viewer-win32`, over `chapbook-reader`
+  in Rust rather than over the header — a desktop host has no boundary to
+  cross, so putting one there would be ceremony. What it is evidence for
+  is the *loop*: winit and GTK own the main loop and call into a shell,
+  and this one calls `GetMessageW` itself, which is the shape a Windows
+  app embedding chapbook as a child HWND under WinUI, WPF or MFC is
+  actually in. It is also the first shell to run all three press hit
+  tests in the order `SHELLS.md` specifies, and the first to deliver
+  `Key::TurnPrev`/`TurnNext`, which arrive on a desktop as the two thumb
+  buttons of a mouse. CI compiles and tests the workspace on
+  `windows-latest`, which nothing did before it: the crate is a stub
+  `main` everywhere else, so every line of it is judged there or nowhere.
 - **WASM stays a demo, deliberately**: `wasm-bindgen` wraps Rust, not C,
   so a browser build is a sibling exporter over the same shape. The
   EPUB-only profile it forces (`--no-default-features`: no SQLite, no
@@ -217,7 +229,7 @@ nothing:
 |---|---|---|---|
 | Kobo Clara, Kindle (i.MX, Carta) | fbdev + `mxcfb` ioctls | 8bpp grey preferred; RGB565 the common default | EPDC waveforms, hardware dither, `quant_bit` per update |
 | Kobo colour (Kaleido, MTK) | fbdev + MTK ioctls | 32bpp forced — the driver has no 8bpp | waveforms; colour via a filter array over a mono panel |
-| Desktop | swapchain (winit/GTK, tiny-skia or vello) | RGBA | none; present every frame |
+| Desktop | swapchain (winit/GTK, tiny-skia or vello) or a plain DIB blit (Win32 `StretchDIBits`) | RGBA | none; present every frame |
 | Android | JNI to a `Surface`; Onyx adds `EpdController` | ARGB_8888 | none, or Onyx's own DU/GC/A2/REGAL |
 | Pi + Waveshare SPI | SPI transfer plus a BUSY pin | 1bpp packed; some panels 2 or 4 levels | whole-panel or window refresh commands |
 

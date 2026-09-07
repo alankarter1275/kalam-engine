@@ -1,0 +1,21 @@
+[package]
+name = "chapbook-viewer-win32"
+description = "Win32 reference viewer for chapbook (Windows only)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Windows only, and gated the same way chapbook-viewer-gtk is gated to
+# Linux — for a weaker reason, which is worth saying. The `windows` crate
+# builds anywhere (it is metadata plus an import library, not a system
+# package), so an ungated dependency would compile on Linux and produce a
+# viewer that cannot open a window. The target gate makes the crate a stub
+# `main` off Windows, so the fallback message is a compile-time fact
+# rather than a runtime surprise.
+[target.'cfg(windows)'.dependencies]
+chapbook-core = { workspace = true }
+chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds", "svg", "mathml"] }
+windows = { workspace = true }

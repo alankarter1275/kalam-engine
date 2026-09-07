@@ -239,14 +239,18 @@ stays that way.
   is the same in every configuration, and an excluded format fails with
   `ChapbookError::FormatNotBuilt` rather than being mistaken for something
   else.
-- **chapbook-viewer** / **chapbook-viewer-gtk** — winit+softbuffer and GTK4
-  shells over `chapbook-reader::Session`; each translates input events and
-  blits the session's rasterized page, nothing more. `chapbook-viewer
-  --gpu` is the shell that rasterizes for itself: it takes
-  `Session::frame` and `paint_resources` and presents through
-  chapbook-render-vello's window surface, never calling `render()`. The
-  session needs no knowledge of which one it is talking to, which is the
-  evidence that the seam is a seam.
+- **chapbook-viewer** / **chapbook-viewer-gtk** / **chapbook-viewer-win32**
+  — winit+softbuffer, GTK4 and Win32 shells over
+  `chapbook-reader::Session`; each translates input events and blits the
+  session's rasterized page, nothing more. `chapbook-viewer --gpu` is the
+  shell that rasterizes for itself: it takes `Session::frame` and
+  `paint_resources` and presents through chapbook-render-vello's window
+  surface, never calling `render()`. The Win32 one varies a different
+  axis — who owns the loop. winit and GTK own it and call into the shell;
+  there the shell calls `GetMessageW` itself, which is the shape a host
+  embedding chapbook as a child window is in. The session needs no
+  knowledge of which one it is talking to, which is the evidence that the
+  seam is a seam.
 - **tools/chapbook-cli** — `meta|toc|text|styles|layout|render|opds|lib`;
   each subcommand exposes one pipeline stage and generates the snapshot
   inputs for that stage's golden tests. `--features fbdev --example show`

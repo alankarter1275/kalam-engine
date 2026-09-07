@@ -79,6 +79,37 @@ jobs:
       - run: cargo check -p chapbook-layout --target aarch64-linux-android
       - run: cargo check -p chapbook-layout --target aarch64-apple-ios
 
+  windows:
+    # The Win32 shell, on the only host that can judge it — and the first
+    # gate of any kind on a Windows build. `chapbook-viewer-win32` is a stub
+    # `main` off Windows, so every line of it is compiled here and nowhere
+    # else; the same was true of `ios/` before the job above existed, and
+    # that one landed broken.
+    #
+    # It is not only the shell. The README has claimed for a long time that
+    # `cargo test --workspace` runs on Windows without GTK or pkg-config,
+    # and nothing checked it — the same shape of claim as the Swift
+    # package's, and it was not true: the cbindgen header golden failed on
+    # any checkout with `core.autocrlf=true`, which is git's default there
+    # and this runner's. `.gitattributes` is the fix and this job is what
+    # keeps it fixed. `Library::default_dir` resolving `%APPDATA%` is the
+    # other Windows-only code path, and its test runs nowhere else either.
+    #
+    # The whole workspace rather than the one crate, because that is what
+    # the claim is about. The GTK viewer compiles here as its stub and needs
+    # no system library, so the runner image needs nothing installed.
+    name: clippy + test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets
+      - run: cargo test --workspace
+
   apple:
     # The Swift package, on the only host that can judge it. Every other
     # job here runs on Linux, so until this one existed `ios/` was the one

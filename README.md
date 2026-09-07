@@ -74,6 +74,7 @@ why. A shell depends on `chapbook-reader` alone; it re-exports the rest.
 | `chapbook-reader` | Shared reading session (open/layout/navigate/select/persist) | API |
 | `chapbook-viewer` | Minimal reference viewer (winit + softbuffer) | Not a library |
 | `chapbook-viewer-gtk` | GTK4 reference viewer (Linux only) | Not a library |
+| `chapbook-viewer-win32` | Win32 reference viewer (Windows only) | Not a library |
 | `tools/chapbook-cli` | Dev/test CLI exercising each pipeline stage | Not a library |
 | `chapbook-ffi` | The C ABI for hosts that speak C — iOS, embedders; `include/chapbook.h` | Contract |
 | `chapbook-jni` | Android JNI binding, paired with `android/` | Not a library |
@@ -160,12 +161,16 @@ pure-Rust parser — so skipping `chapbook-viewer-gtk` needs no system
 packages at all. Off Linux you skip it whether you meant to or not: `gtk4`
 is a target-gated dependency, the crate compiles to a stub `main`, and
 `cargo test --workspace` runs on macOS and Windows without GTK or
-pkg-config installed.
+pkg-config installed. `chapbook-viewer-win32` is the mirror image and needs
+nothing either way: the `windows` crate is metadata and an import library,
+not a system package, so the crate is gated to Windows because a viewer
+that cannot open a window is worse than one that says so at compile time.
 
 ```sh
 cargo run -p chapbook-viewer -- <book.epub|comic.cbz|doc.pdf|opds-url>
 cargo run -p chapbook-viewer -- --gpu <book.epub>   # vello + wgpu
 cargo run -p chapbook-viewer-gtk -- <book.epub>     # GTK4, Linux only
+cargo run -p chapbook-viewer-win32 -- <book.epub>   # Win32, Windows only
 cargo run -p chapbook-cli -- --help                 # the `chapbook` dev CLI
 ```
 
