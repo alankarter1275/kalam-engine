@@ -59,6 +59,20 @@ sealed class SyncReport {
         val marksRefreshed: Long,
         val marksMerged: Long,
         val marksConflicts: Long,
+        /**
+         * Another device's deletions arriving — taken off this shelf
+         * because a complete container listing no longer holds them.
+         * Distinct from [marksDeleted], this device's own deletions
+         * reaching the container.
+         */
+        val marksWithdrawn: Long,
+        /**
+         * The container had more pages than one pass reads: the pull saw
+         * a prefix and no deletion was inferred, so a mark another
+         * device removed may still be sitting here. Changes what the
+         * counts above mean, which is why it is worth showing.
+         */
+        val listingTruncated: Boolean,
         /** The container could not be reached, when it could not be. */
         val marksError: String?,
     ) : SyncReport()
@@ -124,6 +138,8 @@ class SyncWorker(
                         marksRefreshed = values[7],
                         marksMerged = values[8],
                         marksConflicts = values[9],
+                        marksWithdrawn = values[11],
+                        listingTruncated = values[12] != 0L,
                         marksError = Native.syncMarksError(handle),
                     )
                     1L -> SyncReport.BookFailed(values[1], Native.syncDetail(handle) ?: "")

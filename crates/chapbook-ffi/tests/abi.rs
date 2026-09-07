@@ -1889,8 +1889,10 @@ fn next_report(sync: *mut cb_sync) -> cb_sync_report {
         marks_deleted: 0,
         marks_adopted: 0,
         marks_refreshed: 0,
+        marks_withdrawn: 0,
         marks_merged: 0,
         marks_conflicts: 0,
+        listing_truncated: false,
         marks_error: std::ptr::null(),
         books: 0,
     };
