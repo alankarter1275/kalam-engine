@@ -31,18 +31,43 @@
 //! vocabulary does not wait for. Comics decode at native resolution and
 //! stay sharp until it.
 
-use chapbook_core::BookKind;
+use chapbook_core::{BookKind, Point, Rect, Size};
 
 use crate::Session;
 
 /// How far in a pinch may go. Past this a comic page is mostly grain.
 const MAX_PAGE_ZOOM: f32 = 8.0;
 
+/// Hold the pan inside the page, so the content always covers the panel.
+///
+/// At zoom `z` the content spans `[pan, pan + size * z]` and the panel
+/// wants `[0, size]`, so `pan` runs from `size * (1 - z)` to zero. Written
+/// once because it is needed in three places and wrong in all of them if
+/// it disagrees with itself.
+fn clamp_pan(x: f32, y: f32, zoom: f32, size: Size) -> (f32, f32) {
+    (
+        x.clamp(size.w * (1.0 - zoom), 0.0),
+        y.clamp(size.h * (1.0 - zoom), 0.0),
+    )
+}
+
 /// The zoomed view: `content * zoom + pan` fills the panel.
 pub(crate) struct PageView {
     pub(crate) zoom: f32,
     pub(crate) pan_x: f32,
     pub(crate) pan_y: f32,
+}
+
+/// A fit-page rect in a view's coordinates: `view = fit * zoom + pan`,
+/// the same forward map a shell is told to apply to its own overlays.
+fn map_rect(rect: Rect, view: &PageView) -> Rect {
+    Rect {
+        origin: Point::new(
+            rect.origin.x * view.zoom + view.pan_x,
+            rect.origin.y * view.zoom + view.pan_y,
+        ),
+        size: Size::new(rect.size.w * view.zoom, rect.size.h * view.zoom),
+    }
 }
 
 impl Session {
@@ -96,9 +121,7 @@ impl Session {
         };
         // Keep the content under the focal point under the focal point.
         let (cx, cy) = ((fx - old_pan_x) / old_zoom, (fy - old_pan_y) / old_zoom);
-        let size = metrics.size;
-        let pan_x = (fx - cx * zoom).clamp(size.w * (1.0 - zoom), 0.0);
-        let pan_y = (fy - cy * zoom).clamp(size.h * (1.0 - zoom), 0.0);
+        let (pan_x, pan_y) = clamp_pan(fx - cx * zoom, fy - cy * zoom, zoom, metrics.size);
         let changed = match &self.view {
             Some(view) => view.zoom != zoom || view.pan_x != pan_x || view.pan_y != pan_y,
             None => true,
@@ -127,9 +150,12 @@ impl Session {
         // difference.
         let (ax, ay) = metrics.panel_to_page(0.0, 0.0);
         let (bx, by) = metrics.panel_to_page(dx, dy);
-        let size = metrics.size;
-        let pan_x = (view.pan_x + (bx - ax)).clamp(size.w * (1.0 - view.zoom), 0.0);
-        let pan_y = (view.pan_y + (by - ay)).clamp(size.h * (1.0 - view.zoom), 0.0);
+        let (pan_x, pan_y) = clamp_pan(
+            view.pan_x + (bx - ax),
+            view.pan_y + (by - ay),
+            view.zoom,
+            metrics.size,
+        );
         let changed = pan_x != view.pan_x || pan_y != view.pan_y;
         if changed {
             self.view = Some(PageView {
@@ -142,6 +168,31 @@ impl Session {
         changed
     }
 
+    /// Re-clamp the pan after the page box changed.
+    ///
+    /// The clamp is a function of the panel's size, so a pan that was
+    /// legal at one size is not at a smaller one: shrink the window while
+    /// zoomed and the old pan leaves a gap between the page's edge and the
+    /// panel's — the one thing the clamp exists to prevent. Nothing else
+    /// re-checks it, because `set_page_zoom` and `pan_page` clamp on the
+    /// way in and a resize goes through neither.
+    ///
+    /// View state only: no relayout, no position, nothing persisted.
+    pub(crate) fn reclamp_view(&mut self) {
+        let (Some(metrics), Some(view)) = (self.metrics, &self.view) else {
+            return;
+        };
+        let (pan_x, pan_y) = clamp_pan(view.pan_x, view.pan_y, view.zoom, metrics.size);
+        if pan_x != view.pan_x || pan_y != view.pan_y {
+            self.view = Some(PageView {
+                zoom: view.zoom,
+                pan_x,
+                pan_y,
+            });
+            self.mark(chapbook_paint::FrameIntent::PageTurn);
+        }
+    }
+
     /// A panel point in fit-page content coordinates — the one door
     /// every hit test walks through, so zoom cannot be forgotten by a
     /// single call site.
@@ -150,6 +201,16 @@ impl Session {
         match &self.view {
             Some(view) => ((px - view.pan_x) / view.zoom, (py - view.pan_y) / view.zoom),
             None => (px, py),
+        }
+    }
+
+    /// A fit-page rect in the zoomed view's coordinates — the forward map
+    /// a shell is told to apply to its own overlays, applied here to the
+    /// one rect the engine itself hands out in that space.
+    pub(crate) fn view_rect(&self, rect: Rect) -> Rect {
+        match &self.view {
+            Some(view) => map_rect(rect, view),
+            None => rect,
         }
     }
 
@@ -180,5 +241,72 @@ impl Session {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The clamp holds the content over the panel: at zoom `z` the page
+    /// spans `[pan, pan + size * z]` and the panel wants `[0, size]`.
+    #[test]
+    fn the_clamp_keeps_the_page_over_the_panel() {
+        let size = Size::new(600.0, 800.0);
+
+        // Hard against both corners.
+        assert_eq!(clamp_pan(1000.0, 1000.0, 2.0, size), (0.0, 0.0));
+        assert_eq!(clamp_pan(-9999.0, -9999.0, 2.0, size), (-600.0, -800.0));
+
+        // And a legal pan is left alone.
+        assert_eq!(clamp_pan(-100.0, -200.0, 2.0, size), (-100.0, -200.0));
+
+        // The bound is a function of the *size*, which is why a resize has
+        // to re-run it: what was legal at 600 wide is not at 400.
+        assert_eq!(clamp_pan(-500.0, 0.0, 2.0, size), (-500.0, 0.0));
+        assert_eq!(
+            clamp_pan(-500.0, 0.0, 2.0, Size::new(400.0, 500.0)),
+            (-400.0, 0.0),
+            "the same pan, outside a smaller page, comes back to its edge"
+        );
+    }
+
+    /// Damage and overlays cross into view space by this map, and it has
+    /// to agree with what `apply_view` does to the ops themselves — the
+    /// two disagreeing is a region that names pixels the change never
+    /// touched.
+    #[test]
+    fn a_rect_maps_forward_the_way_the_display_list_does() {
+        let view = PageView {
+            zoom: 2.0,
+            pan_x: -50.0,
+            pan_y: -30.0,
+        };
+        let mapped = map_rect(
+            Rect {
+                origin: Point::new(10.0, 20.0),
+                size: Size::new(100.0, 40.0),
+            },
+            &view,
+        );
+        assert_eq!(mapped.origin.x, 10.0 * 2.0 - 50.0);
+        assert_eq!(mapped.origin.y, 20.0 * 2.0 - 30.0);
+        assert_eq!(mapped.size.w, 200.0);
+        assert_eq!(mapped.size.h, 80.0);
+
+        // At fit the map is the identity, so an unzoomed page pays nothing
+        // and reports exactly what it did before.
+        let fit = PageView {
+            zoom: 1.0,
+            pan_x: 0.0,
+            pan_y: 0.0,
+        };
+        let rect = Rect {
+            origin: Point::new(7.0, 9.0),
+            size: Size::new(11.0, 13.0),
+        };
+        let same = map_rect(rect, &fit);
+        assert_eq!((same.origin.x, same.origin.y), (7.0, 9.0));
+        assert_eq!((same.size.w, same.size.h), (11.0, 13.0));
     }
 }

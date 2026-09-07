@@ -111,3 +111,54 @@ fn fit_is_a_zoom_of_one_and_turns_keep_the_view() {
         "below fit clamps to fit, already there"
     );
 }
+
+/// The clamp is a function of the panel's size, so a pan legal at one size
+/// is not at a smaller one. Nothing re-checked it: `set_page_zoom` and
+/// `pan_page` clamp on the way in, and a resize goes through neither — so
+/// shrinking the window while zoomed left a gap between the page's edge
+/// and the panel's, which is the one thing the clamp exists to prevent.
+#[test]
+fn a_resize_brings_the_pan_back_inside_the_page() {
+    let mut s = comic();
+    assert!(s.set_page_zoom(2.0, 0.0, 0.0));
+
+    // Hard against the far corner at the original size.
+    s.pan_page(-100_000.0, -100_000.0);
+    let wide = common::metrics();
+    assert_eq!(
+        s.page_pan(),
+        (-wide.size.w, -wide.size.h),
+        "pinned to the corner before the resize"
+    );
+
+    // Shrink the page box. The old pan is now further out than the
+    // smaller page can justify.
+    let narrow = chapbook_reader::chapbook_core::PageMetrics {
+        size: chapbook_reader::chapbook_core::Size::new(400.0, 500.0),
+        ..wide
+    };
+    s.set_metrics(narrow);
+    render_loaded(&mut s);
+
+    let (pan_x, pan_y) = s.page_pan();
+    let (min_x, min_y) = (-narrow.size.w, -narrow.size.h);
+    assert!(
+        pan_x >= min_x && pan_y >= min_y,
+        "pan {:?} is outside the resized page's bounds {:?}",
+        (pan_x, pan_y),
+        (min_x, min_y)
+    );
+
+    // Panning is still possible and still bounded, which is what says the
+    // view is coherent rather than merely re-clamped once.
+    s.pan_page(-100_000.0, -100_000.0);
+    assert_eq!(s.page_pan(), (min_x, min_y));
+}
+
+// Damage on a zoomed page — the other half of the view transform — is
+// asserted in `src/zoom.rs`'s unit tests rather than here, because no
+// fixture in this repository can reach it end to end: `mark_range` needs a
+// selection, a selection needs text, and the only zoomable books are
+// comics (no text at all) and `pdf/minimal.pdf`, whose text layer is
+// empty. A PDF fixture carrying real text would let the path be walked;
+// until then the arithmetic is tested where it lives.

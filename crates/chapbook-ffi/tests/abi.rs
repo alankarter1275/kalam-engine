@@ -1845,6 +1845,17 @@ fn sync_targets_round_trip_through_the_shelf() {
 static SYNC_WAKES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static SYNC_FINALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// Serializes the two tests that count finalizer runs.
+///
+/// `SYNC_FINALIZED` is process-global, and both of them read it, do one
+/// thing that should finalize exactly once, and assert the count moved by
+/// one. Run in parallel — the default — each sees the other's finalizer
+/// and reads `+2`, which looks precisely like the ABI double-releasing a
+/// host's object and is not: it is two tests sharing a counter. The
+/// library tests serialize for the same reason, and the failure is worth
+/// naming because the thing it impersonates would be serious.
+static SYNC_COUNTER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 extern "C" fn sync_wake(_user: *mut std::ffi::c_void) {
     SYNC_WAKES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
@@ -1919,6 +1930,7 @@ fn a_dead_service_crosses_as_a_report_not_a_dead_batch() {
         eprintln!("skipped: this build has no sync");
         return;
     }
+    let _counting = SYNC_COUNTER.lock().unwrap_or_else(|e| e.into_inner());
     let session = open("sync-drive", "epub/minimal.epub");
     let mut book = 0i64;
     assert_eq!(
@@ -2021,6 +2033,7 @@ fn sync_refuses_a_transport_that_cannot_write() {
         eprintln!("skipped: this build has no sync");
         return;
     }
+    let _counting = SYNC_COUNTER.lock().unwrap_or_else(|e| e.into_inner());
     let dir = library_dir("sync-readonly");
     let dir_c = cstr(&dir.to_string_lossy());
     let device_id = cstr("abi-test-device");

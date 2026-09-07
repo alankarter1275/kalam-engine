@@ -650,6 +650,7 @@ impl Session {
             .is_some_and(|current| current.same_layout(&metrics))
         {
             self.metrics = Some(metrics);
+            self.reclamp_view();
             self.mark(FrameIntent::Relayout);
             return;
         }
@@ -663,6 +664,9 @@ impl Session {
                 self.page = layout.page_of(locator);
             }
         }
+        // The zoom survives a resize, so its pan has to be brought back
+        // inside a page box that may have shrunk under it.
+        self.reclamp_view();
         self.mark(FrameIntent::Relayout);
     }
 
