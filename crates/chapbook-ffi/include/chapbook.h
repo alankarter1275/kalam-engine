@@ -1118,6 +1118,13 @@ typedef struct cb_sync_report {
      */
     size_t marks_refreshed;
     /**
+     * Marks: another device's deletions arriving — taken off this shelf
+     * because a complete container listing no longer holds them.
+     * Distinct from `marks_deleted`, which is this device's own
+     * deletions reaching the container.
+     */
+    size_t marks_withdrawn;
+    /**
      * Marks: conflicts settled by re-reading the container — both edits
      * survive, nothing overwritten.
      */
@@ -1127,6 +1134,13 @@ typedef struct cb_sync_report {
      * pass tries again.
      */
     size_t marks_conflicts;
+    /**
+     * The container had more pages than one pass reads, so the pull saw
+     * a prefix and no deletion was inferred — a mark another device
+     * removed may still be sitting here. Worth saying to the reader,
+     * because it changes what the counts above mean.
+     */
+    bool listing_truncated;
     /**
      * The container could not be reached; whatever was pushed before it
      * failed stands. Null when the mark half ran to the end.

@@ -176,6 +176,7 @@ private func reports(from worker: SyncWorker, within seconds: TimeInterval = 10)
     #expect(report.position == .pushed)
     #expect(report.detail == nil)
     #expect(report.marksError == nil, "no container was recorded")
+    #expect(report.marksWithdrawn == 0 && !report.listingTruncated)
     #expect(AcceptingService.log.methods.contains("PUT"))
 
     #expect(drained.last == .finished(books: 1))

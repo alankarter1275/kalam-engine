@@ -238,6 +238,7 @@ pub(crate) fn describe_marks(report: &AnnotationReport) -> String {
         (report.deleted, "deleted"),
         (report.adopted, "adopted"),
         (report.refreshed, "refreshed"),
+        (report.withdrawn, "withdrawn"),
         (report.merged, "merged"),
         (report.conflicts, "in conflict"),
     ] {
@@ -245,11 +246,17 @@ pub(crate) fn describe_marks(report: &AnnotationReport) -> String {
             parts.push(format!("{count} {what}"));
         }
     }
-    let summary = if parts.is_empty() {
+    let mut summary = if parts.is_empty() {
         "idle".to_string()
     } else {
         parts.join(", ")
     };
+    // Said out loud, because it changes what the rest of the line means:
+    // no deletion was inferred, so a mark another device removed may
+    // still be sitting here.
+    if report.truncated {
+        summary.push_str(" — container longer than one sync reads");
+    }
     match &report.failed {
         Some(why) => format!("{summary} (container unreachable: {why})"),
         None => summary,
