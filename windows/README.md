@@ -6,6 +6,7 @@ which before reading further.
 | | |
 |---|---|
 | `Chapbook/` | A .NET binding over the C ABI — the analogue of `ios/Chapbook`, for a host that is not Rust |
+| `Chapbook.WinUI/` | A `SessionView` control and the automation peer that puts its page in front of Narrator |
 | `Chapbook.Tests/` | The gate: the binding driven against the real engine, headless |
 | `build-native.ps1` | `chapbook-ffi` → `chapbook_ffi.dll` |
 
@@ -90,6 +91,43 @@ called exactly once when the engine lets go — the last session closing, a
 worker closing, or a configuration disposed without ever being opened.
 A host that built something for the engine's sake releases it there,
 which is the only moment nothing is still inside a callback.
+
+## The WinUI half
+
+`SessionView` is a `UserControl` over a `WriteableBitmap`: metrics on every
+resize and every rasterization-scale change, a repaint when an action moved
+something, and presses and keys translated into the engine's own
+`ReaderAction` vocabulary rather than into opinions of its own. It renders
+**straight into the bitmap's back buffer** through `IBufferByteAccess` and
+swizzles RGBA to BGRA in place, so a page turn copies nothing.
+
+Two things it deliberately does not do. It does not own the session — a
+host does, because a session's lifetime is a file handle and a database
+connection and neither belongs to a visual tree. And it does not own
+chrome: `ToggleMenu` comes back as a `MenuRequested` event, because the
+engine answers that action `Unhandled` always and a reader's menu is the
+app's.
+
+`PagePeer` is the third implementation of the engine's text surface
+against a real assistive stack, after GTK's `AccessibleText` and the Win32
+shell's own `ITextProvider`. It is markedly less code than that one, and
+the reason is worth stating: WinUI implements the COM half, so there is no
+vtable, no `SAFEARRAY`, no reference counting — and because the framework
+marshals to the UI thread, no snapshot either. The Win32 provider keeps a
+snapshot because UI Automation calls a raw server-side provider from its
+own threads and a `Session` is not shareable; here the peer runs where the
+session already lives.
+
+Character, word and line are real units and line is exact. Paragraph
+resolves to the page, for the same reason it does everywhere else: the
+speakable page collapses whitespace and carries no paragraph structure,
+and inventing one from a gap in locator offsets would be a threshold
+dressed as a fact.
+
+**Windows App SDK 2.4, not 1.7.** The 1.7 targets reach for PRI and
+AppxPackage MSBuild tasks that the .NET 10 SDK does not carry where they
+look, and no combination of `EnableMsixTooling` and `AppxGeneratePriEnabled`
+gets past all of them. 2.4 builds clean with no workarounds.
 
 ## The layout gate
 
@@ -180,10 +218,16 @@ was actually built with — a header cannot answer either.
 
 ## What is not here yet
 
-No UI. `Chapbook.WinUI` — a `SessionView` control and the automation peer
-that puts its page in front of Narrator — and a demo app over it are the
-next thing, and the reason the binding was built first: everything above
-it is now a matter of drawing, not of boundary-crossing.
+A demo app. `Chapbook.WinUI` is a library, so CI compiles it and runs
+nothing — the same split `ios/` makes, where `swift test` runs the macOS
+slice and the iOS halves are only typechecked. A control needs a window
+and a window needs a desktop, so what a runner can prove is that it
+builds. Everything below the control is covered by the 52 tests next door.
+
+That means two things are written and unproven, and both want a person at
+a screen: the bitmap swizzle (a page that came out cold blue would be
+obvious in a second and is invisible to a compiler), and the automation
+peer under Narrator.
 
 The `download` callback is deliberately unbound. It exists for a host with
 a background transfer facility worth deferring to — an iOS background
