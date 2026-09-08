@@ -21,8 +21,8 @@ terms.
 | | |
 |---|---|
 | Imported from Chapbook | done — `ab14cb7` |
-| Verified on Kalam's target hardware (4 GB, HDD) | **not yet — this is the next step** |
-| Stripped to the Kalam subset | not started |
+| Verified on Kalam's target hardware (4 GB, HDD, Arch) | done, 2026-09-08 — builds in 15 min, opens real books, `f`/`s` overrides confirmed working |
+| Stripped to the Kalam subset | **next** — see `docs/kalam/PLAN.md` §4 |
 | Kalam adapter (GTK widget, theme, dictionary/position hooks) | not started |
 
 Until the strip happens, this repo builds and behaves exactly like Chapbook

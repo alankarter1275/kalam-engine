@@ -150,11 +150,14 @@ writing the adapter.
 
 ## 7. The order of work
 
-1. **Verify on real hardware** *(next step, before anything else)*. Build
-   the repo as-is on the 4 GB / HDD machine and read a few real books in
-   `chapbook-viewer-gtk`. Judge load time, memory (`htop`), and looks. If
-   it disappoints, we have lost an afternoon and this plan changes. If it
-   pleases, continue.
+1. ~~**Verify on real hardware.**~~ *Done 2026-09-08.* Built in 15 min on
+   the 4 GB / HDD Arch machine; real books open (5 s cold, 1 s warm);
+   151 MB RSS (mostly the 1031-font host catalog — see §6); the only
+   visual faults were publisher CSS and a Symbol-encoded font, both
+   answered by the `f`/`s` overrides that Kalam's theme will apply
+   permanently. One upstream bug found and fixed along the way
+   (`publisher_styles` was never read). Verdict: the engine holds up;
+   proceed.
 2. **Strip**, steps 1–7 of the table in §4, one commit each.
 3. **Build the adapter** (§6) against the stripped engine.
 4. **Remove `chapbook-library`** (step 8), now that Kalam's database does
