@@ -114,29 +114,36 @@ jobs:
       # Windows runner can judge — and unlike the shell it is not merely
       # compiled here: `dotnet test` drives the real engine through the C
       # ABI, which is the `swift test` half of this repository's other
-      # header consumer. It needs the DLL, so the Rust build comes first;
-      # release rather than debug because that is what a host ships and the
-      # workspace has already built most of it above.
-      - run: ./windows/build-native.ps1
+      # header consumer. It needs the DLL, so the Rust build comes first.
+      #
+      # The dev profile, deliberately. `cargo test --workspace` has just
+      # built every crate in it, so this step is a relink and the managed
+      # half gets its DLL in seconds. Release shares nothing with dev —
+      # thin LTO and one codegen unit meant rebuilding all 289 crates from
+      # cold, nine minutes on this runner, and the cache never held them
+      # because it only saves on a key miss. What the tests prove is the
+      # ABI's behaviour, which does not depend on the optimizer; a host
+      # ships release, and `build-native.ps1` still defaults to it.
+      - run: ./windows/build-native.ps1 -Profile debug
         shell: pwsh
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
-      - run: dotnet test windows/Chapbook.Tests/Chapbook.Tests.csproj
+      - run: dotnet test windows/Chapbook.Tests/Chapbook.Tests.csproj -p:ChapbookProfile=debug
       # The WinUI half is compiled and not run, which is the same split
       # `ios/` makes: `swift test` runs the macOS slice and the iOS ones are
       # typechecked. A control needs a window and a window needs a desktop,
       # so what a runner can prove is that it builds — which is what nothing
       # proved about the Swift package until a Mac was doing it.
-      - run: dotnet build windows/Chapbook.WinUI/Chapbook.WinUI.csproj
-      - run: dotnet build windows/Chapbook.Wpf/Chapbook.Wpf.csproj
+      - run: dotnet build windows/Chapbook.WinUI/Chapbook.WinUI.csproj -p:ChapbookProfile=debug
+      - run: dotnet build windows/Chapbook.Wpf/Chapbook.Wpf.csproj -p:ChapbookProfile=debug
       # The WPF demo is the only thing here that can be *run* without a
       # person: `--shot` draws one page through WPF's own renderer and
       # writes it, which is the one check a compiler cannot do — a page
       # that came out cold blue is a swizzle bug and looks like nothing
       # else. Screen-grabbing another process does not work for WPF, whose
       # content is composited by DWM, so the app captures itself.
-      - run: dotnet build windows/demo-wpf/Chapbook.Demo.Wpf.csproj
+      - run: dotnet build windows/demo-wpf/Chapbook.Demo.Wpf.csproj -p:ChapbookProfile=debug
 
   apple:
     # The Swift package, on the only host that can judge it. Every other
