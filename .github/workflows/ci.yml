@@ -30,7 +30,9 @@ permissions:
   checks: write
 
 env:
-  CARGO_TERM_COLOR: always
+  # No colour: the report step greps cargo's output, and the raw log is
+  # not what anyone reads here (the "CI details" check run is).
+  CARGO_TERM_COLOR: never
   RUSTFLAGS: -D warnings
 
 jobs:
@@ -78,7 +80,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          cargo test --workspace 2>&1 | tee test.txt
+          cargo test --workspace --no-fail-fast 2>&1 | tee test.txt
 
       # The output of whatever failed, published two ways: the job summary
       # (for a browser) and a check run named "CI details" (for the API —
@@ -93,7 +95,7 @@ jobs:
           CLIPPY: ${{ steps.clippy.outcome }}
           TEST: ${{ steps.test.outcome }}
         run: |
-          noise='^\s*\(Compiling\|Checking\|Downloaded\|Downloading\|Fresh\|Running\|Doc-tests\)\|\.\.\. ok$\|^running [0-9]* tests\?$\|^$'
+          noise='^\s*\(Compiling\|Checking\|Downloaded\|Downloading\|Updating\|Fresh\|Finished\|Running\|Doc-tests\)\|\.\.\. \(ok\|ignored.*\)$\|^running [0-9]* tests\?$\|^test result: ok\.\|^$'
           {
             echo "| step | result |"
             echo "|---|---|"

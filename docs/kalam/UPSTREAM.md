@@ -118,6 +118,9 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-library/src/lib.rs` | `palette: None` in the settings row read (one line) | Struct gained a field |
 | `crates/chapbook-layout/tests/pagination.rs` | One new test (`a_palette_supplies_the_colours_and_the_theme_the_rules`) | Covers the feature; appended, nothing existing touched |
 | `crates/chapbook-reader/src/lib.rs` | `mod host_position;` (gated on `library`, like `annotations`) | New file, see below |
+| `crates/chapbook-reader/tests/cache_budget.rs` | `PAGE` constant no longer gated on the removed `cbz` feature (the EPUB test uses it too) | Strip leftover; the file did not compile until CI ran the tests |
+| `docs/STABILITY.md` | Rewritten for the eleven crates that remain, with `kalam-reader` and the demo placed in tiers | The `stability` test in `tools/chapbook-cli` checks the doc against the workspace; upstream's text named twelve crates the strip removed |
+| `tools/chapbook-cli/tests/stability.rs` | Member-count floor 15 → 11 | Same test, same strip |
 
 New files inside inherited crates (no conflict risk, listed for completeness):
 
