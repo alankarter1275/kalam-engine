@@ -49,11 +49,19 @@ On Arch, GTK headers ship with the `gtk4` package itself (there is no
 separate `-dev` package), and Arch's GTK is new enough for the viewer's
 accessibility features (needs 4.16+; Arch has had it for a long time).
 
-Build and open a book in the reference viewer:
+Build first, run later — two separate steps:
 
 ```sh
-cargo run --release -p chapbook-viewer-gtk -- path/to/book.epub
+# 1. Build (slow the first time: 30–60 min; fast afterwards)
+cargo build --release -j 2 -p chapbook-viewer-gtk
+
+# 2. Open a book in the reference viewer (instant once built)
+./target/release/chapbook-viewer-gtk path/to/book.epub
 ```
+
+Step 1 succeeded if the last line starts with `Finished`. If it ends with
+`error:` lines instead, that is a setup problem — nothing to do with any
+book.
 
 Always test with `--release`. A debug build of a text engine is 5–10× slower
 and gives a false impression. On a machine with little RAM, add `-j 2` to
