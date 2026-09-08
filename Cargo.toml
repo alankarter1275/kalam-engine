@@ -10,6 +10,9 @@ members = [
     "crates/chapbook-reader",
     "crates/chapbook-viewer-gtk",
     "tools/chapbook-cli",
+    # Kalam's own: the widget Kalam embeds, and a bare window around it.
+    "crates/kalam-reader",
+    "tools/kalam-reader-demo",
 ]
 
 [workspace.package]

@@ -158,8 +158,8 @@ Everything else that needed naming
     Zlib, ISC, 0BSD      Permissive, attribution only.
 
 
-Embedded font
--------------
+Embedded fonts
+--------------
 
     STIX Two Math        SIL Open Font License 1.1
                          https://github.com/stipub/stixfonts
@@ -171,6 +171,17 @@ the math face of last resort. The OFL text travels next to it in
 is permissive with two teeth: the font may not be sold by itself, and a
 modified font may not use the reserved name "STIX" — neither of which
 embedding-unmodified triggers.
+
+    Literata             SIL Open Font License 1.1
+                         https://github.com/googlefonts/literata
+    Noto Sans            SIL Open Font License 1.1
+                         https://github.com/notofonts/latin-greek-cyrillic
+
+kalam-engine addition. `crates/kalam-reader/fonts/` holds four faces of
+each (regular, italic, bold, bold italic), compiled into any binary that
+links `kalam-reader` — Kalam itself and `kalam-reader-demo`. Same licence
+and same two teeth as STIX; the reserved names are "Literata" and "Noto".
+The OFL texts are `fonts/OFL-Literata.txt` and `fonts/OFL-NotoSans.txt`.
 
 
 What is in which build
