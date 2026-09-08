@@ -79,12 +79,12 @@ folders*, not surgery.
 
 | Step | Remove | Why it is safe |
 |---|---|---|
-| 1 | `android/`, `ios/`, `windows/` folders; `crates/chapbook-jni`, `chapbook-ffi`, `chapbook-viewer-win32` | Other platforms. Nothing in the engine depends on them. |
-| 2 | `crates/chapbook-render-vello` | GPU renderer. Desktop CPU rendering is instant already. |
+| ~~1~~ | ~~`android/`, `ios/`, `windows/` folders; `crates/chapbook-jni`, `chapbook-ffi`, `chapbook-viewer-win32`~~ | Other platforms. Nothing in the engine depends on them. **Done.** |
+| ~~2~~ | ~~`crates/chapbook-render-vello`~~ | GPU renderer. Desktop CPU rendering is instant already. **Done.** |
 | 3 | `crates/chapbook-opds`, `crates/opds-client`, `crates/chapbook-sync`, `crates/chapbook-annotations` | Online catalogs and cloud sync. Takes all networking (TLS, HTTP) out of the build. Kalam does not fetch books. |
 | 4 | `crates/chapbook-pdf`, `crates/chapbook-cbz` | PDF and comics. Kalam handles those with native GTK components. |
 | 5 | `crates/chapbook-app`, `crates/chapbook-app-gtk` | Chapbook's own full app (bookshelf + reader). Kalam *is* the app. `chapbook-viewer-gtk` is the one to keep, not this. |
-| 6 | `crates/chapbook-viewer` (the `winit` one) | Second demo window. GTK one is the one we build on. |
+| ~~6~~ | ~~`crates/chapbook-viewer` (the `winit` one)~~ | Second demo window. GTK one is the one we build on. **Done** (early — it was vello's only consumer). |
 | 7 | `mathml` feature (and the 820 KB STIX font in `chapbook-layout/assets/`) | Math formulas. Books with math fall back to their built-in alt text. Optional; decide when you get there. |
 | 8 | `crates/chapbook-library` | **Last, and carefully.** This is Chapbook's own SQLite bookshelf: books, positions, highlights. Kalam has its own database. But the *reading session* uses it to save and restore your place, so removing it means wiring Kalam's database in through the adapter first. See §6. |
 

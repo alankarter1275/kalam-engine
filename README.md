@@ -22,7 +22,7 @@ terms.
 |---|---|
 | Imported from Chapbook | done — `ab14cb7` |
 | Verified on Kalam's target hardware (4 GB, HDD, Arch) | done, 2026-09-08 — builds in 15 min, opens real books, `f`/`s` overrides confirmed working |
-| Stripped to the Kalam subset | **next** — see `docs/kalam/PLAN.md` §4 |
+| Stripped to the Kalam subset | in progress — steps 1, 2, 6 done (platform shells, GPU renderer, winit viewer); see `docs/kalam/PLAN.md` §4 |
 | Kalam adapter (GTK widget, theme, dictionary/position hooks) | not started |
 
 Until the strip happens, this repo builds and behaves exactly like Chapbook
@@ -99,7 +99,6 @@ crates/          the engine, one crate per stage — see docs/kalam/PLAN.md
 tools/           chapbook-cli, a dev tool that runs each stage by hand
 fixtures/        small test books and fonts used by the tests
 docs/            Chapbook's design docs (still accurate) + docs/kalam/ (ours)
-android/ ios/ windows/   Chapbook's platform shells — scheduled for removal
 ```
 
 ## Documentation

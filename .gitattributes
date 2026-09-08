@@ -1,27 +1,3 @@
-# Line endings, and the two files where they are load-bearing.
-#
-# `crates/chapbook-ffi/include/chapbook.h` is a checked-in cbindgen golden,
-# compared byte for byte against a fresh generation by
-# `chapbook-ffi/tests/header.rs`. Git's default on Windows is
-# `core.autocrlf=true` — a contributor's checkout and the GitHub Actions
-# `windows-latest` runner both have it — and it broke that comparison in two
-# separate ways, neither of which is a header anybody edited:
-#
-#   * the committed header is read from the working tree, so a CRLF copy
-#     never equals what cbindgen emits, which is LF; and
-#   * `cbindgen.toml` carries the header's own preamble as a multi-line TOML
-#     string, and cbindgen writes that through verbatim — so on a CRLF
-#     checkout the *generated* file has CRLF in its first eight lines and LF
-#     in the other seventeen hundred.
-#
-# The second is the nastier one: it fails with "the files differ in length
-# only" and a seven-byte difference, and `UPDATE_FFI_HEADER=1` then commits
-# the mixed-ending file, which breaks the same test everywhere else.
-# Pinning both to LF is what makes the golden mean the same thing on every
-# host.
-crates/chapbook-ffi/include/chapbook.h text eol=lf
-crates/chapbook-ffi/cbindgen.toml text eol=lf
-
 # The fixtures and the render goldens are bytes, not text. Git's content
 # heuristic gets this right today, but a fixture it guessed wrong about
 # would be silently corrupted on checkout and the failure would read as a

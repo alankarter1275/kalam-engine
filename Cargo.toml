@@ -6,7 +6,6 @@ members = [
     "crates/chapbook-layout",
     "crates/chapbook-paint",
     "crates/chapbook-render-tinyskia",
-    "crates/chapbook-render-vello",
     "crates/chapbook-opds",
     "crates/opds-client",
     "crates/chapbook-cbz",
@@ -15,11 +14,7 @@ members = [
     "crates/chapbook-annotations",
     "crates/chapbook-sync",
     "crates/chapbook-reader",
-    "crates/chapbook-ffi",
-    "crates/chapbook-jni",
-    "crates/chapbook-viewer",
     "crates/chapbook-viewer-gtk",
-    "crates/chapbook-viewer-win32",
     "crates/chapbook-app",
     "crates/chapbook-app-gtk",
     "tools/chapbook-cli",
@@ -45,7 +40,6 @@ chapbook-epub = { path = "crates/chapbook-epub" }
 chapbook-layout = { path = "crates/chapbook-layout", default-features = false }
 chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
-chapbook-render-vello = { path = "crates/chapbook-render-vello" }
 # `default-features = false` here so a member can drop the bundled ureq
 # transport: without it on the workspace entry, a member's own
 # `default-features = false` is silently ignored. Members that want the
@@ -67,7 +61,6 @@ chapbook-sync = { path = "crates/chapbook-sync", default-features = false }
 # device build's surface is visible in its own manifest rather than
 # inherited. External consumers get the full default set as usual.
 chapbook-reader = { path = "crates/chapbook-reader", default-features = false }
-chapbook-ffi = { path = "crates/chapbook-ffi", default-features = false }
 chapbook-app = { path = "crates/chapbook-app" }
 
 # The panel seam: update classes, the driver that holds the refresh rules,
@@ -122,11 +115,6 @@ unicode-segmentation = "1.12"
 sys-locale = "0.3"
 hyphenation = { version = "0.8", features = ["embed_en-us"] }
 tiny-skia = "0.12"
-# GPU backend. A second rasterizer over the same display list, to keep the
-# paint seam honest — vello maps glyph runs onto pre-shaped glyphs directly,
-# so nothing is re-shaped on the way to the GPU.
-vello = "0.10"
-pollster = "0.4"
 # Decode only, and only the formats EPUB 3 and comic archives actually
 # carry. `rayon` is deliberately absent: image gates only its opt-in
 # parallel ImageBuffer iterators and the avif/exr *encoders* on it, none of
@@ -190,8 +178,6 @@ url = "2"
 # Library persistence
 rusqlite = { version = "0.40", features = ["bundled"] }
 
-# Viewer
-winit = "0.30"
 # The GTK shell's cross-thread wakeup. Both arrive in the graph under glib
 # regardless — naming them here adds no crate, it only lets the shell say
 # what it is using. Default features off: the executor, the io-compat
@@ -202,46 +188,7 @@ futures-channel = { version = "0.3", default-features = false, features = [
 futures-util = { version = "0.3", default-features = false, features = [
     "std",
 ] }
-softbuffer = "0.4"
-# Clipboard for the winit shell (GTK has gdk's). Text only — the image-data
-# default feature would pull a second `image` build; wayland-data-control
-# covers Wayland alongside X11.
-arboard = { version = "3", default-features = false, features = [
-    "wayland-data-control",
-] }
-# The Win32 shell's whole platform surface. Already in the graph at this
-# version under wgpu-hal, which the vello backend pulls, so naming it here
-# adds no crate and no licence decision — it only lets one more member ask
-# for features of it. `windows` rather than `windows-sys`: the COM half is
-# what a UI Automation text provider needs, and that is where this shell is
-# going.
-# The `#[implement]` macro spells its own paths `windows_core::…`, so the
-# crate has to be nameable — `windows::core` is a re-export of exactly this
-# crate at exactly this version, so naming it costs nothing in the graph and
-# is what lets a COM interface be implemented in Rust at all.
-windows-core = "0.62"
-windows = { version = "0.62", features = [
-    "Win32_Foundation",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_System_Com",
-    "Win32_System_DataExchange",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
-    # Ole and Variant are not a widening for their own sake: the
-    # `IRawElementProviderSimple` and `ITextRangeProvider` vtables are
-    # `cfg`-gated on all three, because their methods traffic in `VARIANT`
-    # and `SAFEARRAY`. `CF_UNICODETEXT` arrives with them.
-    "Win32_System_Ole",
-    "Win32_System_Variant",
-    "Win32_UI_Accessibility",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_WindowsAndMessaging",
-] }
-
 # Misc
-libc = "0.2"
 slotmap = "1"
 thiserror = "2"
 # Diagnostics. Already in the graph via cosmic-text and fontdb, so the
