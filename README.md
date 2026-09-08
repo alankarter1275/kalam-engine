@@ -30,13 +30,24 @@ did on 2026-09-07. Chapbook's own docs below are still accurate for it.
 
 ## Getting started
 
-Rust (the exact version is pinned in `rust-toolchain.toml`; `rustup` picks
-it up automatically), Python 3 (used by the CSS engine's build step), and
-GTK4 development files for the viewer:
+Rust via **`rustup`** (not the distro's `rust` package — the repo pins an
+exact compiler version in `rust-toolchain.toml`, and only `rustup` can honor
+that), Python 3 (used by the CSS engine's build step), and GTK4 for the
+viewer:
 
 ```sh
-sudo apt install libgtk-4-dev python3      # Debian / Ubuntu
+# Arch Linux
+sudo pacman -S rustup gtk4 pkgconf python base-devel
+rustup default stable      # one-time; the repo then pins its own version on top
+
+# Debian / Ubuntu
+sudo apt install libgtk-4-dev python3
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
+
+On Arch, GTK headers ship with the `gtk4` package itself (there is no
+separate `-dev` package), and Arch's GTK is new enough for the viewer's
+accessibility features (needs 4.16+; Arch has had it for a long time).
 
 Build and open a book in the reference viewer:
 

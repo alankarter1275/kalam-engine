@@ -171,7 +171,7 @@ reason you cannot name is a bug you are about to bless.*
 
 ## 9. Hardware notes (the owner's machine)
 
-4 GB RAM, hard disk, Linux desktop. What that means in practice:
+4 GB RAM, hard disk, Arch Linux desktop. What that means in practice:
 
 - First build: expect 30–60 minutes and 5–10 GB of disk under `target/`.
   Close the browser. Use `cargo build --release -j 2` so cargo does not run
@@ -180,8 +180,16 @@ reason you cannot name is a bug you are about to bless.*
   cache that makes them fast.
 - **Always judge speed with `--release`.** Debug builds of text engines are
   5–10× slower and prove nothing.
-- Python 3 must be installed (stylo's build step uses it). Debian/Ubuntu
-  already have it.
+- Python 3 must be installed (stylo's build step uses it). Arch already
+  has it.
+- **Arch Linux specifics.** Install Rust through `rustup` (`pacman -S
+  rustup`), *not* the plain `rust` package — the repo pins an exact
+  compiler in `rust-toolchain.toml` and only `rustup` can obey that; with
+  the distro compiler cargo prints "toolchain '1.98.0' is not installed"
+  and stops. `pacman -S gtk4` is the whole GTK requirement (headers are
+  included; no `-dev` split on Arch). `pkgconf` and `base-devel` supply
+  `pkg-config` and a C compiler, which some dependencies' build scripts
+  need.
 
 ## 10. What the finished thing should feel like
 
