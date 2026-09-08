@@ -26,9 +26,10 @@ use gtk4 as gtk;
 
 use chapbook_app::chapbook_library::{BookId, BookRecord, ReadingState, Sort};
 use chapbook_app::chapbook_reader::chapbook_core::{
-    self, ActionOutcome, BookKind, EdgeSizes, Key, KeyMap, PageMetrics, Rotation, Size, TapZones,
+    self, Action, ActionOutcome, BookKind, EdgeSizes, Key, KeyMap, PageMetrics, Rotation, Size,
+    TapZones,
 };
-use chapbook_app::chapbook_reader::SessionEvent;
+use chapbook_app::chapbook_reader::{SessionEvent, SettingsScope};
 use chapbook_app::{App, ShelfFilter, SyncStatus};
 
 use crate::page_area::{PageArea, SessionSlot};
@@ -71,6 +72,19 @@ struct Shell {
     status: gtk::Label,
     back: gtk::Button,
     area: PageArea,
+    /// The reader's own chrome, shown only while a book is open.
+    nav_menu: gtk::MenuButton,
+    settings_menu: gtk::MenuButton,
+    marks_menu: gtk::MenuButton,
+    /// The open book's contents, flattened, row index aligned.
+    toc: RefCell<Vec<chapbook_app::chapbook_reader::chapbook_core::TocEntry>>,
+    toc_list: gtk::ListBox,
+    marks_box: gtk::Box,
+    theme_drop: gtk::DropDown,
+    family_drop: gtk::DropDown,
+    /// True while code sets the dropdowns, so their notify handlers know
+    /// a change came from the session rather than the reader's hand.
+    syncing: Cell<bool>,
 }
 
 fn build_ui(app: &gtk::Application, model: Rc<RefCell<App>>) {
@@ -91,6 +105,89 @@ fn build_ui(app: &gtk::Application, model: Rc<RefCell<App>>) {
     header.pack_start(&back);
     header.pack_end(&sync);
     header.pack_end(&import);
+
+    // ---- Reader chrome: contents, settings, marks ----
+    //
+    // Widgets only; every decision they surface — what a theme is, what
+    // the contents are, the wording of a mark — comes from the model or
+    // the session. Hidden until a book is open.
+    let nav_menu = gtk::MenuButton::new();
+    nav_menu.set_icon_name("view-list-symbolic");
+    nav_menu.set_tooltip_text(Some("Contents"));
+    nav_menu.set_visible(false);
+    let toc_list = gtk::ListBox::new();
+    toc_list.set_selection_mode(gtk::SelectionMode::None);
+    {
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_child(Some(&toc_list));
+        scroll.set_propagate_natural_width(true);
+        scroll.set_propagate_natural_height(true);
+        scroll.set_max_content_height(500);
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&scroll));
+        nav_menu.set_popover(Some(&popover));
+    }
+
+    let settings_menu = gtk::MenuButton::new();
+    settings_menu.set_label("Aa");
+    settings_menu.set_tooltip_text(Some("Reading settings"));
+    settings_menu.set_visible(false);
+    let theme_drop =
+        gtk::DropDown::from_strings(&chapbook_app::theme_names().map(|(name, _)| name));
+    let family_drop = gtk::DropDown::from_strings(&["Publisher\u{2019}s default"]);
+    let (smaller, larger) = (
+        gtk::Button::with_label("A\u{2212}"),
+        gtk::Button::with_label("A+"),
+    );
+    {
+        let size = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        size.set_homogeneous(true);
+        size.append(&smaller);
+        size.append(&larger);
+        let grid = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        grid.set_margin_start(10);
+        grid.set_margin_end(10);
+        grid.set_margin_top(10);
+        grid.set_margin_bottom(10);
+        grid.append(&size);
+        let theme_label = gtk::Label::new(Some("Theme"));
+        theme_label.set_xalign(0.0);
+        theme_label.add_css_class("dim-label");
+        grid.append(&theme_label);
+        grid.append(&theme_drop);
+        let family_label = gtk::Label::new(Some("Typeface"));
+        family_label.set_xalign(0.0);
+        family_label.add_css_class("dim-label");
+        grid.append(&family_label);
+        grid.append(&family_drop);
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&grid));
+        settings_menu.set_popover(Some(&popover));
+    }
+
+    let marks_menu = gtk::MenuButton::new();
+    marks_menu.set_icon_name("user-bookmarks-symbolic");
+    marks_menu.set_tooltip_text(Some("Bookmarks and marks"));
+    marks_menu.set_visible(false);
+    let marks_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    marks_box.set_margin_start(8);
+    marks_box.set_margin_end(8);
+    marks_box.set_margin_top(8);
+    marks_box.set_margin_bottom(8);
+    {
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_child(Some(&marks_box));
+        scroll.set_propagate_natural_width(true);
+        scroll.set_propagate_natural_height(true);
+        scroll.set_max_content_height(500);
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&scroll));
+        marks_menu.set_popover(Some(&popover));
+    }
+
+    header.pack_end(&marks_menu);
+    header.pack_end(&settings_menu);
+    header.pack_end(&nav_menu);
     window.set_titlebar(Some(&header));
 
     // ---- Shelf page ----
@@ -165,7 +262,114 @@ fn build_ui(app: &gtk::Application, model: Rc<RefCell<App>>) {
         status,
         back: back.clone(),
         area: area.clone(),
+        nav_menu: nav_menu.clone(),
+        settings_menu: settings_menu.clone(),
+        marks_menu: marks_menu.clone(),
+        toc: RefCell::new(Vec::new()),
+        toc_list: toc_list.clone(),
+        marks_box: marks_box.clone(),
+        theme_drop: theme_drop.clone(),
+        family_drop: family_drop.clone(),
+        syncing: Cell::new(false),
     });
+
+    // ---- Reader chrome wiring ----
+    {
+        // Contents: a row per flattened entry; a click jumps and closes.
+        let shell = shell.clone();
+        toc_list.connect_row_activated(move |_, row| {
+            let index = row.index();
+            if index < 0 {
+                return;
+            }
+            let entry = shell.toc.borrow().get(index as usize).cloned();
+            let Some(entry) = entry else { return };
+            let moved = shell
+                .session
+                .borrow_mut()
+                .as_mut()
+                .is_some_and(|s| s.goto_toc(&entry));
+            if moved {
+                shell.area.queue_draw();
+            }
+            if let Some(popover) = shell.nav_menu.popover() {
+                popover.popdown();
+            }
+        });
+    }
+    {
+        let shell = shell.clone();
+        smaller.connect_clicked(move |_| shell.apply_reader_action(Action::FontDown));
+    }
+    {
+        let shell = shell.clone();
+        larger.connect_clicked(move |_| shell.apply_reader_action(Action::FontUp));
+    }
+    {
+        // The dropdowns speak both ways: the session sets them when the
+        // popover opens, the reader sets the session when they change.
+        // `syncing` is what keeps those two from echoing.
+        let shell = shell.clone();
+        if let Some(popover) = settings_menu.popover() {
+            popover.connect_show(move |_| shell.sync_settings_widgets());
+        }
+    }
+    {
+        let shell = shell.clone();
+        theme_drop.connect_selected_notify(move |dropdown| {
+            if shell.syncing.get() {
+                return;
+            }
+            let Some((_, theme)) = chapbook_app::theme_names()
+                .into_iter()
+                .nth(dropdown.selected() as usize)
+            else {
+                return;
+            };
+            {
+                let mut slot = shell.session.borrow_mut();
+                if let Some(s) = slot.as_mut() {
+                    let settings = chapbook_app::chapbook_reader::chapbook_core::ReadingSettings {
+                        theme,
+                        ..s.settings().clone()
+                    };
+                    s.set_settings(settings, SettingsScope::Global);
+                }
+            }
+            shell.area.queue_draw();
+        });
+    }
+    {
+        let shell = shell.clone();
+        family_drop.connect_selected_notify(move |dropdown| {
+            if shell.syncing.get() {
+                return;
+            }
+            let selected = dropdown.selected();
+            let family = if selected == 0 {
+                None
+            } else {
+                dropdown
+                    .model()
+                    .and_then(|m| m.item(selected))
+                    .and_then(|item| item.downcast::<gtk::StringObject>().ok())
+                    .map(|s| s.string().to_string())
+            };
+            {
+                let mut slot = shell.session.borrow_mut();
+                if let Some(s) = slot.as_mut() {
+                    s.set_font_family(family, SettingsScope::Global);
+                }
+            }
+            shell.area.queue_draw();
+        });
+    }
+    {
+        let shell = shell.clone();
+        if let Some(popover) = marks_menu.popover() {
+            popover.connect_show(move |_| shell.rebuild_marks());
+        }
+    }
 
     // ---- Shelf interactions ----
     {
@@ -365,6 +569,34 @@ fn build_ui(app: &gtk::Application, model: Rc<RefCell<App>>) {
     }
 
     // ---- Links, selection and tap zones (press-drag) ----
+    // ---- Double-click selects a word ----
+    //
+    // The desktop's spelling of the long press: `select_word_at` is what
+    // a touch shell calls, and a mouse gets the same range so the mark
+    // buttons in the chrome have something to act on without a drag.
+    {
+        let shell = shell.clone();
+        let click = gtk::GestureClick::new();
+        click.set_button(1);
+        click.connect_pressed(move |gesture, presses, x, y| {
+            if presses != 2 {
+                return;
+            }
+            let selected = shell
+                .session
+                .borrow_mut()
+                .as_mut()
+                .is_some_and(|s| s.select_word_at(x as f32, y as f32));
+            if selected {
+                // Claim it, or the drag gesture below sees the second
+                // press as the start of a new empty selection.
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                shell.area.queue_draw();
+            }
+        });
+        area.add_controller(click);
+    }
+
     {
         let drag = gtk::GestureDrag::new();
         drag.set_button(1);
@@ -567,8 +799,29 @@ impl Shell {
             ..TapZones::new(session.reading_direction())
         };
         self.window.set_title(Some(session.title()));
+        // The contents are fixed per book: flatten once, rows aligned to
+        // the stored entries by index.
+        let toc = chapbook_app::flatten_toc(session.toc());
+        while let Some(child) = self.toc_list.first_child() {
+            self.toc_list.remove(&child);
+        }
+        for (depth, entry) in &toc {
+            let label = gtk::Label::new(Some(&entry.label));
+            label.set_xalign(0.0);
+            label.set_margin_start(8 + (*depth as i32) * 14);
+            label.set_margin_end(8);
+            label.set_margin_top(4);
+            label.set_margin_bottom(4);
+            let row = gtk::ListBoxRow::new();
+            row.set_child(Some(&label));
+            self.toc_list.append(&row);
+        }
+        *self.toc.borrow_mut() = toc.into_iter().map(|(_, entry)| entry).collect();
         *self.session.borrow_mut() = Some(session);
         self.back.set_visible(true);
+        self.nav_menu.set_visible(true);
+        self.settings_menu.set_visible(true);
+        self.marks_menu.set_visible(true);
         self.stack.set_visible_child_name("reader");
         self.area.grab_focus();
         self.area.queue_draw();
@@ -582,6 +835,9 @@ impl Shell {
         }
         self.window.set_title(Some("Chapbook"));
         self.back.set_visible(false);
+        self.nav_menu.set_visible(false);
+        self.settings_menu.set_visible(false);
+        self.marks_menu.set_visible(false);
         self.stack.set_visible_child_name("shelf");
         // The position (and maybe a finished flag) just moved under the
         // shelf; and with the slot empty, retract the announced page.
@@ -617,6 +873,245 @@ impl Shell {
                 Err(e) => shell.set_status(&format!("import: {e}")),
             }
         });
+    }
+
+    /// One engine action from a chrome button — the same door the keys
+    /// use, so a button and a keystroke can never disagree.
+    fn apply_reader_action(&self, action: Action) {
+        let outcome = {
+            let mut slot = self.session.borrow_mut();
+            let Some(s) = slot.as_mut() else { return };
+            s.apply(action)
+        };
+        if outcome.needs_redraw() {
+            self.area.queue_draw();
+        }
+    }
+
+    /// Point the settings popover's widgets at what the session holds —
+    /// called as the popover opens, under the `syncing` flag so the
+    /// notify handlers know nobody's hand is on the dial.
+    fn sync_settings_widgets(&self) {
+        let slot = self.session.borrow();
+        let Some(s) = slot.as_ref() else { return };
+        self.syncing.set(true);
+        let theme = s.settings().theme;
+        if let Some(index) = chapbook_app::theme_names()
+            .iter()
+            .position(|(_, t)| *t == theme)
+        {
+            self.theme_drop.set_selected(index as u32);
+        }
+        // The family list is the session's own font database, headed by
+        // the publisher's default.
+        let mut names = vec!["Publisher\u{2019}s default".to_string()];
+        names.extend(s.font_families());
+        let current = s.settings().font_family.clone();
+        let selected = current
+            .as_deref()
+            .and_then(|family| names.iter().position(|n| n == family))
+            .unwrap_or(0);
+        let strs: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.family_drop
+            .set_model(Some(&gtk::StringList::new(&strs)));
+        self.family_drop.set_selected(selected as u32);
+        self.syncing.set(false);
+    }
+
+    /// Rebuild the marks popover: the actions at the top, then every
+    /// mark the book carries, in reading order.
+    fn rebuild_marks(self: &Rc<Self>) {
+        while let Some(child) = self.marks_box.first_child() {
+            self.marks_box.remove(&child);
+        }
+        let bookmark = gtk::Button::with_label("Bookmark this page");
+        bookmark.set_has_frame(false);
+        {
+            let shell = self.clone();
+            bookmark.connect_clicked(move |_| {
+                let added = shell
+                    .session
+                    .borrow_mut()
+                    .as_mut()
+                    .and_then(|s| s.add_bookmark());
+                shell.set_status(if added.is_some() {
+                    "bookmarked"
+                } else {
+                    "nothing to bookmark yet"
+                });
+                if let Some(popover) = shell.marks_menu.popover() {
+                    popover.popdown();
+                }
+            });
+        }
+        self.marks_box.append(&bookmark);
+
+        let has_selection = self
+            .session
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.selected_range())
+            .is_some();
+        let highlight = gtk::Button::with_label("Highlight the selection");
+        highlight.set_has_frame(false);
+        highlight.set_sensitive(has_selection);
+        {
+            let shell = self.clone();
+            highlight.connect_clicked(move |_| {
+                {
+                    let mut slot = shell.session.borrow_mut();
+                    if let Some(s) = slot.as_mut() {
+                        if s.add_highlight().is_some() {
+                            s.selection_clear();
+                        }
+                    }
+                }
+                shell.area.queue_draw();
+                if let Some(popover) = shell.marks_menu.popover() {
+                    popover.popdown();
+                }
+            });
+        }
+        self.marks_box.append(&highlight);
+
+        let note = gtk::Button::with_label("Note on the selection\u{2026}");
+        note.set_has_frame(false);
+        note.set_sensitive(has_selection);
+        {
+            let shell = self.clone();
+            note.connect_clicked(move |_| {
+                if let Some(popover) = shell.marks_menu.popover() {
+                    popover.popdown();
+                }
+                shell.open_note_dialog();
+            });
+        }
+        self.marks_box.append(&note);
+
+        let marks = self
+            .session
+            .borrow()
+            .as_ref()
+            .map(|s| s.annotations())
+            .unwrap_or_default();
+        if marks.is_empty() {
+            let empty = gtk::Label::new(Some("no marks in this book yet"));
+            empty.add_css_class("dim-label");
+            empty.set_margin_top(6);
+            self.marks_box.append(&empty);
+            return;
+        }
+        self.marks_box
+            .append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        for mark in marks {
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let jump = gtk::Button::with_label(&chapbook_app::describe_annotation(&mark));
+            jump.set_has_frame(false);
+            jump.set_hexpand(true);
+            if let Some(child) = jump.child().and_then(|c| c.downcast::<gtk::Label>().ok()) {
+                child.set_xalign(0.0);
+                child.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                child.set_max_width_chars(48);
+            }
+            {
+                let shell = self.clone();
+                let id = mark.id;
+                jump.connect_clicked(move |_| {
+                    let moved = shell
+                        .session
+                        .borrow_mut()
+                        .as_mut()
+                        .is_some_and(|s| s.goto_annotation(id));
+                    if moved {
+                        shell.area.queue_draw();
+                    }
+                    if let Some(popover) = shell.marks_menu.popover() {
+                        popover.popdown();
+                    }
+                });
+            }
+            line.append(&jump);
+            let remove = gtk::Button::from_icon_name("user-trash-symbolic");
+            remove.set_has_frame(false);
+            remove.set_tooltip_text(Some("Remove this mark"));
+            {
+                let shell = self.clone();
+                let id = mark.id;
+                remove.connect_clicked(move |_| {
+                    if let Some(s) = shell.session.borrow_mut().as_mut() {
+                        s.remove_annotation(id);
+                    }
+                    shell.area.queue_draw();
+                    shell.rebuild_marks();
+                });
+            }
+            line.append(&remove);
+            self.marks_box.append(&line);
+        }
+    }
+
+    /// A small modal asking for the note's words; the selection it
+    /// annotates is still live underneath.
+    fn open_note_dialog(self: &Rc<Self>) {
+        let entry = gtk::Entry::new();
+        entry.set_placeholder_text(Some("The note\u{2026}"));
+        entry.set_activates_default(true);
+        let add = gtk::Button::with_label("Add note");
+        add.add_css_class("suggested-action");
+        let cancel = gtk::Button::with_label("Cancel");
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        buttons.set_halign(gtk::Align::End);
+        buttons.append(&cancel);
+        buttons.append(&add);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        content.set_margin_start(12);
+        content.set_margin_end(12);
+        content.set_margin_top(12);
+        content.set_margin_bottom(12);
+        content.append(&entry);
+        content.append(&buttons);
+        let dialog = gtk::Window::builder()
+            .transient_for(&self.window)
+            .modal(true)
+            .title("Note on the selection")
+            .default_width(360)
+            .build();
+        dialog.set_child(Some(&content));
+        dialog.set_default_widget(Some(&add));
+        {
+            let dialog = dialog.clone();
+            cancel.connect_clicked(move |_| dialog.close());
+        }
+        {
+            let shell = self.clone();
+            let dialog = dialog.clone();
+            let entry = entry.clone();
+            add.connect_clicked(move |_| {
+                let body = entry.text();
+                let body = body.trim();
+                if !body.is_empty() {
+                    let added = {
+                        let mut slot = shell.session.borrow_mut();
+                        slot.as_mut().and_then(|s| {
+                            let id = s.add_note(body);
+                            if id.is_some() {
+                                s.selection_clear();
+                            }
+                            id
+                        })
+                    };
+                    shell.set_status(if added.is_some() {
+                        "noted"
+                    } else {
+                        "select some text first"
+                    });
+                    shell.area.queue_draw();
+                }
+                dialog.close();
+            });
+        }
+        dialog.present();
+        entry.grab_focus();
     }
 
     fn start_sync(&self) {
