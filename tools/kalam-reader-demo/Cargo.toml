@@ -1,0 +1,17 @@
+[package]
+name = "kalam-reader-demo"
+description = "A bare window around kalam-reader's ReaderView, for trying the widget outside Kalam"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-or-later"
+repository = "https://github.com/alankarter1275/kalam-engine"
+
+[[bin]]
+name = "kalam-reader-demo"
+path = "src/main.rs"
+
+[dependencies]
+kalam-reader = { path = "../../crates/kalam-reader" }
+chapbook-core = { workspace = true }
+gtk4 = { version = "0.11", features = ["v4_16"] }

@@ -163,6 +163,15 @@ Kalam and the engine. It starts as a copy of `chapbook-viewer-gtk/src/`
 `docs/SHELLS.md` is Chapbook's contract for exactly this job. Read it before
 writing the adapter.
 
+**Status (2026-09-09):** first version written — `crates/kalam-reader`
+(`ReaderView`, `KalamPrefs`, bundled Literata + Noto Sans compiled in with
+`Faces::Bytes`, not a font folder) and `tools/kalam-reader-demo`. Paged
+view; continuous scrolling is the next step. Its `README.md` is the
+current description; where it and this section disagree, the README is
+right. Two small engine additions were needed and are logged in
+`UPSTREAM.md`: a `Palette` on `ReadingSettings` (Kalam's exact colours) and
+`host_position.rs` (positions as values for Kalam's database).
+
 ## 7. The order of work
 
 1. ~~**Verify on real hardware.**~~ *Done 2026-09-08.* Built in 15 min on
@@ -174,7 +183,9 @@ writing the adapter.
    (`publisher_styles` was never read). Verdict: the engine holds up;
    proceed.
 2. **Strip**, steps 1–6 of the table in §4 (7 was kept). **Done** in two rounds, both built and run on the target machine.
-3. **Build the adapter** (§6) against the stripped engine.
+3. **Build the adapter** (§6) against the stripped engine. **First
+   version written 2026-09-09**; awaiting a build and a run on the target
+   machine.
 4. **Remove `chapbook-library`** (step 8), now that Kalam's database does
    its job.
 5. **Integrate into Kalam**: path dependency, swap the WebKit view for the

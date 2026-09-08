@@ -23,12 +23,19 @@ terms.
 | Imported from Chapbook | done — `ab14cb7` |
 | Verified on Kalam's target hardware (4 GB, HDD, Arch) | done, 2026-09-08 — builds in 15 min, opens real books, `f`/`s` overrides confirmed working |
 | Stripped to the Kalam subset | done — other platforms, GPU renderer, networking/catalogs/sync, PDF and comics, and Chapbook's own app are gone; MathML kept; `chapbook-library` stays until Kalam's database is wired in. See `docs/kalam/PLAN.md` §4 |
-| Kalam adapter (GTK widget, theme, dictionary/position hooks) | not started |
+| Kalam adapter (GTK widget, theme, dictionary/position hooks) | first version written, 2026-09-09 — `crates/kalam-reader` + `tools/kalam-reader-demo`; paged; awaiting a build on the target machine |
 
 What is left is Chapbook's EPUB core, its GTK4 demo window and its
-command-line tool. Chapbook's own docs below still describe that code
-accurately; where they mention PDF, comics, catalogs, sync or other
-platforms, that part no longer exists here.
+command-line tool, plus the two Kalam crates. Chapbook's own docs below
+still describe the inherited code accurately; where they mention PDF,
+comics, catalogs, sync or other platforms, that part no longer exists
+here. The adapter has its own [`README`](crates/kalam-reader/README.md).
+
+```sh
+# The widget Kalam will embed, in a bare window
+cargo build --release -j 2 -p kalam-reader-demo
+./target/release/kalam-reader-demo path/to/book.epub
+```
 
 ## Getting started
 
