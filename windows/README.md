@@ -6,6 +6,9 @@ which before reading further.
 | | |
 |---|---|
 | `Chapbook/` | A .NET binding over the C ABI — the analogue of `ios/Chapbook`, for a host that is not Rust |
+| `Chapbook.WinUI/` | A `SessionView` control and its automation peer, for WinUI 3 |
+| `Chapbook.Wpf/` | The same two, for WPF |
+| `demo-wpf/` | A window and a book — the only thing here that can be *run* |
 | `Chapbook.Tests/` | The gate: the binding driven against the real engine, headless |
 | `build-native.ps1` | `chapbook-ffi` → `chapbook_ffi.dll` |
 
@@ -90,6 +93,85 @@ called exactly once when the engine lets go — the last session closing, a
 worker closing, or a configuration disposed without ever being opened.
 A host that built something for the engine's sake releases it there,
 which is the only moment nothing is still inside a callback.
+
+## WPF or WinUI
+
+Both exist, both sit on the same binding, and the point of building both
+was to make the choice on evidence. What the spike found:
+
+**Most of the usual comparison does not apply.** The page is a bitmap the
+engine rasterized, so neither framework's text stack, typography or
+content theming is doing anything. The reading surface is "blit a
+premultiplied buffer" either way, and the two views are within fifteen
+lines of each other.
+
+**Four things actually differ.**
+
+- *Deployment.* WPF is `UseWPF` and an `.exe`. WinUI needs the Windows App
+  SDK package and its runtime — MSIX, or unpackaged plus the bootstrapper.
+- *Toolchain.* Windows App SDK **1.7 will not build under the .NET 10
+  SDK**: its PRI and AppxPackage MSBuild tasks are not where its targets
+  look, and disabling `AppxGeneratePriEnabled` only moves the failure to
+  the next missing task. 2.4 builds clean. WPF needed no version
+  archaeology at all.
+- *Buffer access.* WPF's `WriteableBitmap` hands over `BackBuffer`
+  directly. WinUI needs an `IBufferByteAccess` COM declaration to get the
+  same pointer. Both end up zero-copy; only one needs the incantation.
+- *Automation.* WPF has `AutomationElementIdentifiers.NotSupported`, the
+  sentinel for "this control does not report that attribute". WinUI
+  exposes no equivalent, so its peer answers `null` and cannot say
+  anything more specific. `GetBoundingRectangles` also returns its array
+  in WPF and takes an `out` parameter in WinUI.
+
+**And one thing that is not a tie at all: only the WPF side can be
+verified.** `demo-wpf --shot` renders a page through WPF's own renderer
+and writes a PNG, which is how the swizzle was finally checked — sepia
+comes out as warm paper rather than cold blue, which is the failure that
+looks like nothing else and that no compiler can see. A UI Automation
+client then walks the peer from another process: word and line units
+step, `GetBoundingRectangles` returns one screen rect per line, and
+`RangeFromPoint` into the middle of a line lands on a word that is on it.
+The WinUI peer is compiled and has never been run.
+
+Where WinUI still wins is the *chrome* — the shelf, settings, a modern
+Windows 11 look. That is everything except the page.
+
+## The WinUI half
+
+`SessionView` is a `UserControl` over a `WriteableBitmap`: metrics on every
+resize and every rasterization-scale change, a repaint when an action moved
+something, and presses and keys translated into the engine's own
+`ReaderAction` vocabulary rather than into opinions of its own. It renders
+**straight into the bitmap's back buffer** through `IBufferByteAccess` and
+swizzles RGBA to BGRA in place, so a page turn copies nothing.
+
+Two things it deliberately does not do. It does not own the session — a
+host does, because a session's lifetime is a file handle and a database
+connection and neither belongs to a visual tree. And it does not own
+chrome: `ToggleMenu` comes back as a `MenuRequested` event, because the
+engine answers that action `Unhandled` always and a reader's menu is the
+app's.
+
+`PagePeer` is the third implementation of the engine's text surface
+against a real assistive stack, after GTK's `AccessibleText` and the Win32
+shell's own `ITextProvider`. It is markedly less code than that one, and
+the reason is worth stating: WinUI implements the COM half, so there is no
+vtable, no `SAFEARRAY`, no reference counting — and because the framework
+marshals to the UI thread, no snapshot either. The Win32 provider keeps a
+snapshot because UI Automation calls a raw server-side provider from its
+own threads and a `Session` is not shareable; here the peer runs where the
+session already lives.
+
+Character, word and line are real units and line is exact. Paragraph
+resolves to the page, for the same reason it does everywhere else: the
+speakable page collapses whitespace and carries no paragraph structure,
+and inventing one from a gap in locator offsets would be a threshold
+dressed as a fact.
+
+**Windows App SDK 2.4, not 1.7.** The 1.7 targets reach for PRI and
+AppxPackage MSBuild tasks that the .NET 10 SDK does not carry where they
+look, and no combination of `EnableMsixTooling` and `AppxGeneratePriEnabled`
+gets past all of them. 2.4 builds clean with no workarounds.
 
 ## The layout gate
 
@@ -180,10 +262,21 @@ was actually built with — a header cannot answer either.
 
 ## What is not here yet
 
-No UI. `Chapbook.WinUI` — a `SessionView` control and the automation peer
-that puts its page in front of Narrator — and a demo app over it are the
-next thing, and the reason the binding was built first: everything above
-it is now a matter of drawing, not of boundary-crossing.
+A WinUI demo. The WinUI library is compiled and never run, which is what
+leaves its swizzle and its peer unverified — the WPF ones are not, and
+since the swizzle is the same three lines in both, the colour question is
+settled for both. The peer is not: WinUI's is a different implementation
+of the same shape and only WPF's has had a client walk it.
+
+Neither peer has been in front of **Narrator** itself. A UIA client
+exercises the same interfaces a screen reader does, which is most of the
+way there and not all of it.
+
+`crates/chapbook-app` is the thing to read before building a real
+application on either. It is the shared model the GTK app sits on, and a
+Windows app belongs over an equivalent rather than over a second viewer —
+though a .NET front end reaches the engine through *this* binding, not
+through that crate.
 
 The `download` callback is deliberately unbound. It exists for a host with
 a background transfer facility worth deferring to — an iOS background
