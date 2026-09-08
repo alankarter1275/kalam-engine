@@ -105,6 +105,7 @@ conflict. Prefix such commits with `kalam:`.
 | `README.md` | Replaced | Describes this fork, not Chapbook |
 | `crates/chapbook-reader/src/layout.rs` | Honour `ReadingSettings::publisher_styles` (pass no author sheets when off) | Upstream flag was persisted but never read — a bug. **Candidate to send upstream.** |
 | `crates/chapbook-viewer-gtk/src/linux.rs` | `f` (force reader font) and `s` (publisher styles off) toggles | Testing aid; Kalam's adapter sets both permanently |
+| `crates/chapbook-core/src/diagnostics.rs` | Filter html5ever's stale "foster parenting not implemented" warning from the stderr logger | It fires per malformed table row in real books and means nothing |
 
 ## If upstream goes quiet or goes a direction we dislike
 

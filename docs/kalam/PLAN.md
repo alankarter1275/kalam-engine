@@ -136,6 +136,15 @@ Kalam and the engine. It starts as a copy of `chapbook-viewer-gtk/src/`
   Kalam's library database; on open, ask for the last one back. This is
   what lets `chapbook-library` go.
 
+- a **restricted font set**. The reference viewer loads every font on the
+  system (`FontSource::host()`); on the owner's machine that is 1031
+  fonts, ~150 MB of mostly memory-mapped files, and a share of the
+  5-second cold start on an HDD. Kalam should use `FontSource`'s `Dir`
+  mode with a small bundled folder: the reader font, plus fallbacks for
+  the scripts Kalam's users read (Devanagari, Arabic, CJK as needed).
+  Chapbook's own `chapbook-core/src/font.rs` explains the three axes
+  (faces, generics, fallback) and why they are explicit.
+
 `docs/SHELLS.md` is Chapbook's contract for exactly this job. Read it before
 writing the adapter.
 

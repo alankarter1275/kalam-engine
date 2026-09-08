@@ -85,6 +85,12 @@ toggles so you can compare.
 > Press `f`. A proper fix (detect and skip Symbol-encoded fonts) is on
 > the list.
 
+> **`html5ever: warn: foster parenting not implemented`** in the terminal is
+> harmless. The HTML parser prints it when a book's table has stray text
+> between its rows (invalid markup, common in published EPUBs); despite
+> the wording it does handle the case — the message is stale. The viewer
+> now filters it out of the log.
+
 ## Layout of the repo
 
 ```

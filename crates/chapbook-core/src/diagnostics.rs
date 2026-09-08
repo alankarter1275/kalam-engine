@@ -49,6 +49,16 @@ impl log::Log for Stderr {
         if !self.enabled(record.metadata()) {
             return;
         }
+        // kalam: html5ever's tree builder logs this on every table with
+        // stray text between its rows (a common publisher error), then
+        // goes on to foster-parent the text anyway — the message is
+        // stale, not a lost feature. One real book printed it dozens of
+        // times; hide this one line rather than lower html5ever's level.
+        if record.target().starts_with("html5ever")
+            && record.args().to_string() == "foster parenting not implemented"
+        {
+            return;
+        }
         // One line, prefixed by the crate that emitted it. Locking once
         // keeps a line from being interleaved with the loader thread's.
         let target = record.target().split("::").next().unwrap_or("chapbook");
