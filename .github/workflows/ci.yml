@@ -9,9 +9,19 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # Work branches too, not just the trunk: the sandbox that writes most of
+    # this code has no Rust toolchain, so a push is how it compiles. Every
+    # push gets fmt + clippy + tests; the owner's machine is then only
+    # needed for what CI cannot see (a window, speed, memory).
+    branches: [main, master, "arena/**"]
   pull_request:
   workflow_dispatch:
+
+# A new push to the same branch cancels the run for the old one. Saves
+# minutes when fixes land in quick succession.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,6 +34,8 @@ jobs:
     # GTK >= 4.16 API (gated `v4_16` in gtk4-rs) and 24.04 ships 4.14.
     # Inherited from Chapbook's CI; revisit when -latest reaches 26.04.
     runs-on: ubuntu-26.04
+    # A hung build must not eat the month's free minutes.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       # The only system library the workspace needs (gtk4-sys probes for
