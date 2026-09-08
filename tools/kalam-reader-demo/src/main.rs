@@ -79,7 +79,10 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
         let window = window.downgrade();
         view.connect_position(move |pos| {
             if first.replace(false) {
-                eprintln!("demo: first page on screen {:?} after launch", started.elapsed());
+                eprintln!(
+                    "demo: first page on screen {:?} after launch",
+                    started.elapsed()
+                );
             }
             eprintln!(
                 "demo: position chapter {}/{} page {}/{} fraction {:.3}",

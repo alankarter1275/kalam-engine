@@ -14,8 +14,8 @@ use common::*;
 mod cache_budget {
     use super::*;
 
-    /// One page of the comic fixture, decoded.
-    #[cfg(feature = "cbz")]
+    /// One page of the comic fixture, decoded. Not gated with the comic
+    /// tests: the text test below uses it as its ceiling too.
     const PAGE: usize = 120 * 180 * 4;
 
     #[cfg(feature = "cbz")]

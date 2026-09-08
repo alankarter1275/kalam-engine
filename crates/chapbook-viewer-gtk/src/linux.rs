@@ -209,7 +209,11 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                     settings.publisher_styles = !settings.publisher_styles;
                     eprintln!(
                         "chapbook-viewer-gtk: publisher styles {}",
-                        if settings.publisher_styles { "on" } else { "off" }
+                        if settings.publisher_styles {
+                            "on"
+                        } else {
+                            "off"
+                        }
                     );
                     s.set_settings(settings, chapbook_reader::SettingsScope::ThisBook);
                     ActionOutcome::Changed

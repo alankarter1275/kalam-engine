@@ -52,17 +52,18 @@ pub fn font_source(host_fonts: bool) -> FontSource {
     if host_fonts {
         faces.push(Faces::Host);
     }
+    // Say what the five CSS generics mean rather than let fontconfig
+    // answer: `serif` is Literata, everything else Noto Sans. With the
+    // host's fonts loaded, `monospace` is left to them (a code listing in
+    // a proportional face comes apart); without them it is Noto Sans too,
+    // the only sans there is.
+    let monospace = if host_fonts { "monospace" } else { SANS_FONT };
     FontSource {
         faces,
-        // Say what the five CSS generics mean rather than let fontconfig
-        // answer: `serif` is Literata, everything else Noto Sans. With the
-        // host's fonts loaded, `monospace` is left to them (a code listing
-        // in a proportional face comes apart); without them it is Noto
-        // Sans too, the only sans there is.
         generics: Generics::Explicit(GenericFamilies {
             serif: crate::prefs::BODY_FONT.to_string(),
             sans_serif: SANS_FONT.to_string(),
-            monospace: if host_fonts { "monospace" } else { SANS_FONT }.to_string(),
+            monospace: monospace.to_string(),
             cursive: SANS_FONT.to_string(),
             fantasy: SANS_FONT.to_string(),
         }),

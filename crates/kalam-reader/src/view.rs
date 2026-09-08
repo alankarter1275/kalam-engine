@@ -172,7 +172,10 @@ impl ReaderView {
         // out twice. `ThisBook` rather than `Global`: the engine's own
         // record of the reader's default is not Kalam's to overwrite, and
         // Kalam re-applies its preferences on every open anyway.
-        session.set_settings(prefs.reading_settings(), chapbook_reader::SettingsScope::ThisBook);
+        session.set_settings(
+            prefs.reading_settings(),
+            chapbook_reader::SettingsScope::ThisBook,
+        );
         // Thirds, with an inert middle: Kalam's chrome is Kalam's, so the
         // band that would toggle a menu does nothing here. The direction
         // comes from the book.
@@ -269,7 +272,10 @@ impl ReaderView {
         }
         {
             let mut s = self.inner.session.borrow_mut();
-            s.set_settings(prefs.reading_settings(), chapbook_reader::SettingsScope::ThisBook);
+            s.set_settings(
+                prefs.reading_settings(),
+                chapbook_reader::SettingsScope::ThisBook,
+            );
         }
         // The column width is page geometry, not a setting; the draw
         // function recomputes it from the widget size.
@@ -349,7 +355,11 @@ impl ReaderView {
     /// (Kalam knows: same `books.id`, unchanged file); when unsure pass
     /// `false` and the engine re-finds the text by its quote context.
     pub fn goto_locator(&self, locator: &LayeredLocator, same_edition: bool) -> bool {
-        let moved = self.inner.session.borrow_mut().goto_layered(locator, same_edition);
+        let moved = self
+            .inner
+            .session
+            .borrow_mut()
+            .goto_layered(locator, same_edition);
         if moved {
             self.area.queue_draw();
         }
@@ -442,7 +452,10 @@ impl ReaderView {
     }
 
     pub fn recolor_highlight(&self, id: i64, color: HighlightColor) {
-        self.inner.session.borrow_mut().set_highlight_color(id, Some(color.css()));
+        self.inner
+            .session
+            .borrow_mut()
+            .set_highlight_color(id, Some(color.css()));
         self.area.queue_draw();
     }
 
@@ -577,7 +590,10 @@ impl ReaderView {
                     view.clear_selection();
                     return glib::Propagation::Stop;
                 }
-                name => match name.and_then(engine_key).and_then(|k| view.inner.keys.action(k)) {
+                name => match name
+                    .and_then(engine_key)
+                    .and_then(|k| view.inner.keys.action(k))
+                {
                     Some(action) => view.inner.session.borrow_mut().apply(action),
                     None => return glib::Propagation::Proceed,
                 },
@@ -706,7 +722,10 @@ impl ReaderView {
                 let redraw = s.poll_loaded();
                 for event in s.drain_events() {
                     if let SessionEvent::UnitFailed { spine, message } = event {
-                        log::warn!("kalam-reader: chapter {} will not load: {message}", spine + 1);
+                        log::warn!(
+                            "kalam-reader: chapter {} will not load: {message}",
+                            spine + 1
+                        );
                     }
                 }
                 drop(s);
@@ -841,7 +860,10 @@ mod tests {
     fn sentence_is_cut_at_punctuation_and_collapsed() {
         let text: Vec<char> = "First one. The  bank\nwas closed! Third?".chars().collect();
         let start = text.iter().position(|&c| c == 'b').unwrap();
-        assert_eq!(sentence_around(&text, start, start + 4), "The bank was closed!");
+        assert_eq!(
+            sentence_around(&text, start, start + 4),
+            "The bank was closed!"
+        );
         assert_eq!(sentence_around(&text, 0, 5), "First one.");
         let last = text.len() - 6;
         assert_eq!(sentence_around(&text, last, last + 5), "Third?");

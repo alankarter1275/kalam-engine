@@ -99,7 +99,8 @@ impl Session {
         if spine >= self.book.publication().spine().len() {
             return None;
         }
-        self.cached_unit_text(spine).map(|text| text.chars().count() as u64)
+        self.cached_unit_text(spine)
+            .map(|text| text.chars().count() as u64)
     }
 
     /// Land on a stored layered locator.

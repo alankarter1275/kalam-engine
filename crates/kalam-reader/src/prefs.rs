@@ -92,10 +92,14 @@ impl KalamTheme {
     /// Kalam's `::selection` rgba values, alpha rounded to a byte.
     pub fn selection(self) -> Rgba {
         match self {
-            KalamTheme::Light => Rgba::new(211, 137, 148, 107), // rgba(211,137,148,.42)
-            KalamTheme::Sepia => Rgba::new(202, 126, 136, 112), // rgba(202,126,136,.44)
-            KalamTheme::Dark => Rgba::new(184, 93, 112, 133),   // rgba(184,93,112,.52)
-            KalamTheme::Ink => Rgba::new(204, 104, 132, 133),   // rgba(204,104,132,.52)
+            // rgba(211,137,148,.42)
+            KalamTheme::Light => Rgba::new(211, 137, 148, 107),
+            // rgba(202,126,136,.44)
+            KalamTheme::Sepia => Rgba::new(202, 126, 136, 112),
+            // rgba(184,93,112,.52)
+            KalamTheme::Dark => Rgba::new(184, 93, 112, 133),
+            // rgba(204,104,132,.52)
+            KalamTheme::Ink => Rgba::new(204, 104, 132, 133),
         }
     }
 
@@ -204,7 +208,9 @@ impl KalamPrefs {
     pub fn clamped(self) -> KalamPrefs {
         KalamPrefs {
             theme: self.theme,
-            font_px: self.font_px.clamp(Self::FONT_PX_RANGE.0, Self::FONT_PX_RANGE.1),
+            font_px: self
+                .font_px
+                .clamp(Self::FONT_PX_RANGE.0, Self::FONT_PX_RANGE.1),
             line_height: self
                 .line_height
                 .clamp(Self::LINE_HEIGHT_RANGE.0, Self::LINE_HEIGHT_RANGE.1),
@@ -266,9 +272,18 @@ mod tests {
 
     #[test]
     fn colours_are_kalams() {
-        assert_eq!(KalamTheme::Sepia.background(), Rgba::new(0xf5, 0xf0, 0xe8, 255));
-        assert_eq!(KalamTheme::Dark.foreground(), Rgba::new(0xab, 0xb2, 0xbf, 255));
-        assert_eq!(KalamTheme::Ink.background(), Rgba::new(0x0d, 0x0d, 0x0d, 255));
+        assert_eq!(
+            KalamTheme::Sepia.background(),
+            Rgba::new(0xf5, 0xf0, 0xe8, 255)
+        );
+        assert_eq!(
+            KalamTheme::Dark.foreground(),
+            Rgba::new(0xab, 0xb2, 0xbf, 255)
+        );
+        assert_eq!(
+            KalamTheme::Ink.background(),
+            Rgba::new(0x0d, 0x0d, 0x0d, 255)
+        );
     }
 
     #[test]
@@ -277,7 +292,10 @@ mod tests {
         assert!(!settings.publisher_styles);
         assert_eq!(settings.font_family.as_deref(), Some(BODY_FONT));
         assert_eq!(settings.theme, Theme::Sepia);
-        assert_eq!(settings.palette().background, KalamTheme::Sepia.background());
+        assert_eq!(
+            settings.palette().background,
+            KalamTheme::Sepia.background()
+        );
         let night = KalamPrefs {
             theme: KalamTheme::Ink,
             ..KalamPrefs::default()
@@ -310,9 +328,17 @@ mod tests {
             HighlightColor::Pink,
             HighlightColor::Orange,
         ] {
-            assert!(Rgba::from_hex(color.css(), 255).is_some(), "{}", color.name());
+            assert!(
+                Rgba::from_hex(color.css(), 255).is_some(),
+                "{}",
+                color.name()
+            );
             assert_eq!(HighlightColor::from_name(color.name()), Some(color));
-            let alpha = if color == HighlightColor::Pink { 0xad } else { 0xa3 };
+            let alpha = if color == HighlightColor::Pink {
+                0xad
+            } else {
+                0xa3
+            };
             assert_eq!(color.rgba().a, alpha);
         }
     }
