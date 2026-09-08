@@ -117,6 +117,43 @@ impl Theme {
     }
 }
 
+/// kalam: exact page colours a shell supplies, overriding the preset the
+/// [`Theme`] variant would otherwise paint with.
+///
+/// [`Theme`] stays the light/dark *flavour* — it still decides the
+/// `prefers-color-scheme` books see and whether publisher colours are
+/// forced (`Dark`) or only defaulted — while the palette supplies the
+/// actual pixels. A host with its own theme system (Kalam has four reading
+/// themes with hand-picked paper and ink) sets one; every other caller
+/// leaves it `None` and nothing changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Palette {
+    /// Page ground.
+    pub background: Rgba,
+    /// Default text colour.
+    pub foreground: Rgba,
+    /// Default link colour.
+    pub link: Rgba,
+    /// Transient selection fill (semi-transparent, painted under text).
+    pub selection: Rgba,
+    /// Stored-highlight fill when a highlight names no colour of its own.
+    pub highlight: Rgba,
+}
+
+impl Palette {
+    /// The colours `theme` paints with by default, as a palette a caller
+    /// can then adjust field by field.
+    pub fn of(theme: Theme) -> Palette {
+        Palette {
+            background: theme.background(),
+            foreground: theme.foreground(),
+            link: theme.link(),
+            selection: theme.selection(),
+            highlight: theme.highlight(),
+        }
+    }
+}
+
 /// Physical page geometry that layout targets, in CSS px.
 ///
 /// The entire layout/paint pipeline works in CSS px; hidpi scaling happens
@@ -249,6 +286,10 @@ pub struct ReadingSettings {
     /// Color theme: page ground, default text/link colors, and the
     /// `prefers-color-scheme` the cascade sees.
     pub theme: Theme,
+    /// kalam: exact colours to paint with instead of `theme`'s presets.
+    /// `None` — the default, and what every upstream caller has — paints
+    /// the preset. See [`Palette`].
+    pub palette: Option<Palette>,
 }
 
 impl Default for ReadingSettings {
@@ -260,12 +301,19 @@ impl Default for ReadingSettings {
             publisher_styles: true,
             font_family: None,
             theme: Theme::default(),
+            palette: None,
         }
     }
 }
 
 impl ReadingSettings {
     /// Stable hash of everything that affects layout, for keying layout caches.
+    /// kalam: the colours this configuration paints with — the explicit
+    /// palette if the shell set one, else the theme's presets.
+    pub fn palette(&self) -> Palette {
+        self.palette.unwrap_or_else(|| Palette::of(self.theme))
+    }
+
     pub fn cache_key(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -275,6 +323,7 @@ impl ReadingSettings {
         self.publisher_styles.hash(&mut h);
         self.font_family.hash(&mut h);
         self.theme.hash(&mut h);
+        self.palette.hash(&mut h);
         h.finish()
     }
 }

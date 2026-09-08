@@ -91,7 +91,7 @@ impl StyleEngine {
 
         engine.append_sheet(UA_CSS, Origin::UserAgent);
         engine.append_sheet(&settings_css(settings), Origin::UserAgent);
-        if let Some(css) = theme_css(settings.theme) {
+        if let Some(css) = theme_css(settings) {
             // User origin: beats the UA defaults; whether it also beats
             // publisher declarations is per-theme (see `theme_css`).
             engine.append_sheet(&css, Origin::User);
@@ -200,13 +200,24 @@ impl StyleEngine {
 /// `Dark` forces: publisher text/background colors are overridden with
 /// `!important` — a light-on-light aside is unreadable in night mode, and
 /// readability beats design there (the Readium/Calibre convention).
-fn theme_css(theme: chapbook_core::Theme) -> Option<String> {
+///
+/// kalam: with a [`Palette`](chapbook_core::Palette) set, the colours are
+/// the palette's and `Light` behaves like `Sepia` (its ink is no longer
+/// the default black, so the sheet has to say so).
+fn theme_css(settings: &ReadingSettings) -> Option<String> {
     use chapbook_core::Theme;
     let hex = |c: chapbook_core::Rgba| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
-    let (fg, link) = (hex(theme.foreground()), hex(theme.link()));
+    // kalam: the colours are the effective palette's — a shell's exact ink
+    // and link colours when it set a `Palette`, the theme's presets
+    // otherwise. Which *rule shape* applies (nothing / defaults / forced)
+    // is still the theme's decision, so a Light palette with custom
+    // colours gets the gentle Sepia-style sheet rather than none.
+    let theme = settings.theme;
+    let palette = settings.palette();
+    let (fg, link) = (hex(palette.foreground), hex(palette.link));
     match theme {
-        Theme::Light => None,
-        Theme::Sepia => Some(format!(
+        Theme::Light if settings.palette.is_none() => None,
+        Theme::Light | Theme::Sepia => Some(format!(
             ":root {{ color: {fg}; }}\na {{ color: {link}; }}\n"
         )),
         Theme::Dark => Some(format!(

@@ -112,6 +112,18 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-core/tests/sniff.rs` | CBZ/PDF fixture tests removed; the "bytes beat the extension" test keeps its EPUB half | Fixtures are gone; `Format::sniff` itself is untouched |
 | `tools/chapbook-cli/src/{main,commands}.rs`, `tests/`, `examples/show.rs` | `opds`, `lib add`, `lib sync` subcommands and image-book paths removed; `open_publication` is EPUB-only | The crates behind them are gone |
 | `crates/chapbook-viewer-gtk/src/linux.rs` | Usage string says `<book.epub>` | Only format left |
+| `crates/chapbook-core/src/page.rs`, `src/lib.rs` | New `Palette` type; `ReadingSettings.palette: Option<Palette>` (+ `palette()` accessor, hashed into `cache_key`) | Kalam's four themes have exact paper/ink colours; upstream's `Theme` is three fixed presets. `None` everywhere upstream constructs settings, so upstream behaviour is unchanged. **Candidate to send upstream.** |
+| `crates/chapbook-layout/src/cascade/engine.rs` | `theme_css` takes `&ReadingSettings`, uses the effective palette's colours; `Light`+palette gets the Sepia-style sheet | Same feature |
+| `crates/chapbook-reader/src/frame.rs` | Background / selection / highlight colours from `settings.palette()` | Same feature |
+| `crates/chapbook-library/src/lib.rs` | `palette: None` in the settings row read (one line) | Struct gained a field |
+| `crates/chapbook-layout/tests/pagination.rs` | One new test (`a_palette_supplies_the_colours_and_the_theme_the_rules`) | Covers the feature; appended, nothing existing touched |
+| `crates/chapbook-reader/src/lib.rs` | `mod host_position;` (gated on `library`, like `annotations`) | New file, see below |
+
+New files inside inherited crates (no conflict risk, listed for completeness):
+
+| File | What |
+|---|---|
+| `crates/chapbook-reader/src/host_position.rs` | `Session::layered_locator()`, `layered_locator_at()`, `goto_layered()`, `unit_fraction()`, `chapter_char_count()`, `word_at_exact()` — positions as *values* for a host with its own database, and the tap hit-test |
 
 ## If upstream goes quiet or goes a direction we dislike
 

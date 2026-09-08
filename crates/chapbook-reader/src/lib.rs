@@ -31,6 +31,10 @@ mod annotations;
 mod cache;
 pub mod conformance;
 mod frame;
+// kalam: layered positions as values, for a host with its own database.
+// Rides on the annotation module's char-count context, so the same gate.
+#[cfg(feature = "library")]
+mod host_position;
 mod layout;
 #[cfg(feature = "_image-book")]
 mod loader;

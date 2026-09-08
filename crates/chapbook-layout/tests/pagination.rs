@@ -1304,6 +1304,55 @@ fn sepia_recolors_defaults_dark_forces_everything() {
 }
 
 #[test]
+fn a_palette_supplies_the_colours_and_the_theme_the_rules() {
+    // kalam: a shell with its own theme system hands over exact colours.
+    // The theme variant still decides the rule shape — Dark forces, the
+    // others only default — but the ink is the palette's, not the preset's.
+    use chapbook_core::{Palette, Rgba, Theme};
+    let html = "<html><body><p>plain text</p><p class=\"red\">warm text</p></body></html>";
+    let css = ".red { color: #c04030; }";
+    let author_red = Rgba::new(0xc0, 0x40, 0x30, 255);
+    let ink = Rgba::new(0xab, 0xb2, 0xbf, 255);
+
+    // Dark + palette: everything is the palette's ink.
+    let dark = ReadingSettings {
+        theme: Theme::Dark,
+        palette: Some(Palette {
+            foreground: ink,
+            ..Palette::of(Theme::Dark)
+        }),
+        ..ReadingSettings::default()
+    };
+    let layout = layout_html_settings(html, css, &page_for_lines(10), &dark);
+    assert_eq!(first_run_color(&layout, "plain"), ink);
+    assert_eq!(first_run_color(&layout, "warm"), ink);
+
+    // Light + palette: no longer the identity theme — defaults take the
+    // palette's ink — but author colours still win, as in Sepia.
+    let sepia_ink = Rgba::new(0x2c, 0x28, 0x20, 255);
+    let light = ReadingSettings {
+        theme: Theme::Light,
+        palette: Some(Palette {
+            foreground: sepia_ink,
+            ..Palette::of(Theme::Light)
+        }),
+        ..ReadingSettings::default()
+    };
+    let layout = layout_html_settings(html, css, &page_for_lines(10), &light);
+    assert_eq!(first_run_color(&layout, "plain"), sepia_ink);
+    assert_eq!(first_run_color(&layout, "warm"), author_red);
+
+    // And with no palette, nothing moved: the presets still apply.
+    let plain = ReadingSettings::default();
+    assert_eq!(plain.palette(), Palette::of(Theme::Light));
+    assert_ne!(
+        plain.cache_key(),
+        light.cache_key(),
+        "a palette change must invalidate cached layout"
+    );
+}
+
+#[test]
 fn dark_theme_flips_prefers_color_scheme() {
     use chapbook_core::Theme;
     let html =

@@ -191,8 +191,10 @@ impl Session {
         // the only thing that paints.
         #[cfg(not(feature = "library"))]
         let mut selections: Vec<Selection> = Vec::new();
+        // kalam: colours come from the effective palette (a shell's exact
+        // colours if it set them, else the theme's presets).
         #[cfg(feature = "library")]
-        let highlight_color = self.settings.theme.highlight();
+        let highlight_color = self.settings.palette().highlight;
         #[cfg(feature = "library")]
         let mut selections: Vec<Selection> = self
             .highlights(spine)
@@ -214,10 +216,10 @@ impl Session {
             selections.push(Selection {
                 start,
                 end,
-                color: self.settings.theme.selection(),
+                color: self.settings.palette().selection,
             });
         }
-        let background = self.settings.theme.background();
+        let background = self.settings.palette().background;
         let page_count = self.layout_unit(spine).map_or(0, |l| l.pages.len());
         if page_count == 0 {
             return None;

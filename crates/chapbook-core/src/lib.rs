@@ -37,7 +37,7 @@ pub use locator::{
     book_progression, find_quote_nearest, resolve_in_text, LayeredLocator, Locator, Quote,
     ResolvedOffset, LOCATOR_VERSION, QUOTE_CONTEXT_CHARS,
 };
-pub use page::{PageMetrics, ReadingSettings, Rotation, Theme};
+pub use page::{PageMetrics, Palette, ReadingSettings, Rotation, Theme};
 pub use source::{Format, ReadSeek, Source, FORMAT_SNIFF_BYTES};
 
 /// The panel vocabulary, from [mezzotint].

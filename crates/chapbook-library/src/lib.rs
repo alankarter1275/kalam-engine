@@ -940,6 +940,10 @@ impl Library {
                         // NULL is the publisher's font, which is what every
                         // row written before v5 means.
                         font_family: row.get::<_, Option<String>>(5)?,
+                        // kalam: exact colours are the shell's to apply on
+                        // top of what it loads; the library stores the
+                        // theme name only.
+                        palette: None,
                     })
                 },
             )
