@@ -180,6 +180,40 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                     }
                     return glib::Propagation::Stop;
                 }
+                // kalam: two reader-override toggles the reference viewer
+                // never exposed. Kalam's adapter will set both permanently;
+                // here they let a tester see the difference on a real book.
+                //
+                // `f` forces the reader's typeface over the publisher's
+                // (`ReadingSettings::font_family`, which wins even against
+                // `body { font-family }` — the fix for books that embed a
+                // Symbol-encoded font and come out looking Greek).
+                // `s` drops the publisher's stylesheets altogether
+                // (`publisher_styles`), the blunter instrument.
+                Some("f") => {
+                    let mut settings = s.settings().clone();
+                    settings.font_family = match settings.font_family {
+                        Some(_) => None,
+                        None => Some("serif".to_string()),
+                    };
+                    let title = match &settings.font_family {
+                        Some(name) => format!("font: {name}"),
+                        None => "font: publisher's".to_string(),
+                    };
+                    eprintln!("chapbook-viewer-gtk: {title}");
+                    s.set_settings(settings, chapbook_reader::SettingsScope::ThisBook);
+                    ActionOutcome::Changed
+                }
+                Some("s") => {
+                    let mut settings = s.settings().clone();
+                    settings.publisher_styles = !settings.publisher_styles;
+                    eprintln!(
+                        "chapbook-viewer-gtk: publisher styles {}",
+                        if settings.publisher_styles { "on" } else { "off" }
+                    );
+                    s.set_settings(settings, chapbook_reader::SettingsScope::ThisBook);
+                    ActionOutcome::Changed
+                }
                 Some("q") | Some("Escape") => {
                     s.save_position();
                     drop(s);

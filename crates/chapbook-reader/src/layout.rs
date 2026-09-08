@@ -282,7 +282,15 @@ impl Session {
         // a retained engine would cost `Session: Send` — the FFI contract.
         // Revisit at the next stylo upgrade.
         let mut engine = cascade::StyleEngine::new(metrics, &self.settings);
-        engine.set_author_sheets(&sheets);
+        // kalam: `ReadingSettings::publisher_styles` was documented ("off =
+        // UA + user sheets only") and persisted but never consulted, so the
+        // flag did nothing. `set_author_sheets` already documents the empty
+        // slice as publisher-styles-off reading; this is the missing call.
+        if self.settings.publisher_styles {
+            engine.set_author_sheets(&sheets);
+        } else {
+            engine.set_author_sheets(&[]);
+        }
         engine.style_document(&mut doc);
         // The document is parsed here and nowhere else; take its links
         // while we have it.

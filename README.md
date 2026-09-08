@@ -71,7 +71,19 @@ run `cargo clean` unless something is truly broken — it throws that cache
 away.
 
 Keys in the viewer: arrows / PageUp / PageDown / space turn pages, `+`/`-`
-change text size, `t` cycles the theme, `q` quits.
+change text size, `t` cycles the theme, `q` quits. Two Kalam additions:
+**`f`** forces the reader's own typeface over the publisher's (fixes books
+whose embedded font renders as Greek — see below), **`s`** switches the
+publisher's stylesheets off entirely (their margins, indents, fonts).
+Both are what Kalam's theme will do permanently; in the viewer they are
+toggles so you can compare.
+
+> **"My book's contents page looks Greek."** Some (notably Indian-published)
+> EPUBs embed a copy of the old *Symbol* font, which draws Greek letters
+> in place of Latin ones. The text is fine; the font is lying. Browsers
+> carry a decades-old hack for it; Chapbook honours the font literally.
+> Press `f`. A proper fix (detect and skip Symbol-encoded fonts) is on
+> the list.
 
 ## Layout of the repo
 

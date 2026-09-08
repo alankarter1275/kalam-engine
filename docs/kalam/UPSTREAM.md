@@ -103,6 +103,8 @@ conflict. Prefix such commits with `kalam:`.
 |---|---|---|
 | `.github/workflows/ci.yml` | Replaced Chapbook's 9-job matrix with a single Linux job | We ship to one platform |
 | `README.md` | Replaced | Describes this fork, not Chapbook |
+| `crates/chapbook-reader/src/layout.rs` | Honour `ReadingSettings::publisher_styles` (pass no author sheets when off) | Upstream flag was persisted but never read — a bug. **Candidate to send upstream.** |
+| `crates/chapbook-viewer-gtk/src/linux.rs` | `f` (force reader font) and `s` (publisher styles off) toggles | Testing aid; Kalam's adapter sets both permanently |
 
 ## If upstream goes quiet or goes a direction we dislike
 
