@@ -31,7 +31,9 @@
 //! vocabulary does not wait for. Comics decode at native resolution and
 //! stay sharp until it.
 
-use chapbook_core::{BookKind, Point, Rect, Size};
+use chapbook_core::{BookKind, Size};
+#[cfg(any(feature = "library", test))]
+use chapbook_core::{Point, Rect};
 
 use crate::Session;
 
@@ -60,6 +62,10 @@ pub(crate) struct PageView {
 
 /// A fit-page rect in a view's coordinates: `view = fit * zoom + pan`,
 /// the same forward map a shell is told to apply to its own overlays.
+///
+/// Reached only through `Session::view_rect`, whose one caller is
+/// `library`-gated; the tests below exercise it directly.
+#[cfg(any(feature = "library", test))]
 fn map_rect(rect: Rect, view: &PageView) -> Rect {
     Rect {
         origin: Point::new(
@@ -207,6 +213,10 @@ impl Session {
     /// A fit-page rect in the zoomed view's coordinates — the forward map
     /// a shell is told to apply to its own overlays, applied here to the
     /// one rect the engine itself hands out in that space.
+    ///
+    /// Its one caller is `range_damage`, which is `library`-gated, so the
+    /// mapping shares the gate rather than reading as dead code without it.
+    #[cfg(feature = "library")]
     pub(crate) fn view_rect(&self, rect: Rect) -> Rect {
         match &self.view {
             Some(view) => map_rect(rect, view),
