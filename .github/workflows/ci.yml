@@ -116,16 +116,26 @@ jobs:
       # ABI, which is the `swift test` half of this repository's other
       # header consumer. It needs the DLL, so the Rust build comes first.
       #
-      # The dev profile, deliberately. `cargo test --workspace` has just
-      # built every crate in it, so this step is a relink and the managed
-      # half gets its DLL in seconds. Release shares nothing with dev —
-      # thin LTO and one codegen unit meant rebuilding all 289 crates from
-      # cold, nine minutes on this runner, and the cache never held them
-      # because it only saves on a key miss. What the tests prove is the
-      # ABI's behaviour, which does not depend on the optimizer; a host
-      # ships release, and `build-native.ps1` still defaults to it.
-      - run: ./windows/build-native.ps1 -Profile debug
-        shell: pwsh
+      # Not `build-native.ps1`, and not release, and both on purpose. The
+      # script builds `-p chapbook-ffi`, and a one-package build resolves
+      # features for that package alone — the workspace build above
+      # unified them across every member, so `smallvec`, `syn`, `once_cell`
+      # and twenty more come out with a different feature set and
+      # everything above them recompiles: 99 crates, eight minutes on this
+      # runner, in *either* profile. Release was worse still — thin LTO
+      # and one codegen unit rebuilt all 289 from cold, and the cache never
+      # held them because it only saves on a key miss.
+      #
+      # This line is the same package set and the same target set as
+      # `cargo test --workspace` (test targets pull dev-dependencies into
+      # the resolution, so `--all-targets` matters), which makes it a
+      # relink: four bins and the cdylib, five seconds. `cargo test` on its
+      # own does not emit the cdylib — only the rlib its integration tests
+      # link — so the build is still needed, just not a different one.
+      # What the .NET tests prove is the ABI's behaviour, which does not
+      # depend on the optimizer; a host ships release, and the script
+      # still defaults to it.
+      - run: cargo build --workspace --all-targets
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
