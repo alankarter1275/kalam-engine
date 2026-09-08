@@ -1,0 +1,18 @@
+---
+source: tools/chapbook-cli/tests/layout_snapshot.rs
+expression: "commands::layout(&fixture(), 0).unwrap()"
+---
+pages: 1
+anchor #ch1 -> page 0
+-- page 0 (locator start 9)
+  [   99.7,   40.0  400.6x 54.0] base= 37.8 loc=9     "Chapter One: A Beginning"
+  [   40.0,  118.1  512.9x 27.0] base= 18.9 loc=38    "It was a truth universally acknowledged that a fixture file, however small,"
+  [   40.0,  145.1  464.9x 27.0] base= 18.9 loc=118   "must be in want of some emphasis, a bit of weight, and at least one"
+  [   40.0,  172.1  208.1x 27.0] base= 18.9 loc=190   "hyperlink to the next chapter."
+  [   61.6,  199.1  488.9x 27.0] base= 18.9 loc=229   "A second paragraph exercises inheritance: the chapter class sets a serif"
+  [   40.0,  226.1  518.3x 27.0] base= 18.9 loc=306   "family and this paragraph should inherit it, while its inner annotated span"
+  [   40.0,  253.1  136.8x 27.0] base= 18.9 loc=386   "overrides the color."
+  [   97.6,  298.1  411.9x 27.0] base= 18.9 loc=418   "Block quotations get their own margins, and their text should be"
+  [   76.0,  325.1  339.0x 27.0] base= 18.9 loc=489   "indented on both sides according to the UA stylesheet."
+  [   85.0,  370.1  105.7x 27.0] base= 18.9 loc=560   "• First list item"
+  [   85.0,  397.1  268.7x 27.0] base= 18.9 loc=582   "• Second list item, with nested emphasis"

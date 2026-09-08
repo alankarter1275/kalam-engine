@@ -1,0 +1,84 @@
+@font-face {
+  font-family: "Fixture Fancy";
+  src: url(fonts/fancy.ttf) format("truetype");
+}
+
+@font-face {
+  font-family: "Fixture Obfuscated";
+  src: url(fonts/obf-italic.ttf);
+}
+
+.fancy {
+  font-family: "Fixture Fancy", serif;
+}
+
+.fancy-italic {
+  font-family: "Fixture Obfuscated", serif;
+}
+
+img {
+  margin: 1em 0;
+}
+
+.boxed {
+  background-color: #f2ead9;
+  border: 2px solid #8b5a2b;
+  padding: 8px 12px;
+  margin: 1em 0;
+}
+
+.spaced {
+  letter-spacing: 3px;
+}
+
+.indented {
+  text-indent: 2em;
+}
+
+.noted::before {
+  content: "\2619\00a0";
+  color: #8b5a2b;
+}
+
+.noted::after {
+  content: " \2619";
+  color: #8b5a2b;
+}
+
+.specs {
+  width: 100%;
+}
+
+.specs caption {
+  font-style: italic;
+}
+
+.specs th, .specs td {
+  border: 1px solid #8b5a2b;
+  padding: 3px 6px;
+  text-align: left;
+}
+
+.specs th {
+  background-color: #f2ead9;
+}
+
+.floated {
+  float: left;
+  margin: 0 10px 6px 0;
+}
+
+.breakable {
+  hyphens: auto;
+  text-align: justify;
+}
+
+.pulled {
+  float: right;
+  width: 150px;
+  margin: 0 0 8px 10px;
+  padding: 4px 8px;
+  border-left: 2px solid #8b5a2b;
+  background-color: #f2ead9;
+  font-style: italic;
+}

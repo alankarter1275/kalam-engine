@@ -1,0 +1,11 @@
+---
+source: tools/chapbook-cli/tests/snapshots.rs
+expression: "commands::meta(&fixture()).unwrap()"
+---
+title:      The Minimal Book
+author:     Ada Fixture
+language:   en
+identifier: urn:uuid:3c5b7a02-1f10-4e3c-9e40-chapbook0001
+version:    3.0
+layout:     reflowable
+spine:      2 items

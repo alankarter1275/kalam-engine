@@ -1,0 +1,17 @@
+[package]
+name = "chapbook-viewer"
+description = "Minimal reference viewer for chapbook: winit + softbuffer, a thin shell over chapbook-reader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds", "svg", "mathml"] }
+winit = { workspace = true }
+softbuffer = { workspace = true }
+arboard = { workspace = true }
+chapbook-render-vello = { workspace = true }

@@ -1,0 +1,18 @@
+---
+source: crates/opds-client/tests/fixtures.rs
+expression: dump(&feed)
+---
+version: V1
+title: Comics
+id: Some("urn:feed:comics")
+totals: Totals { total_results: None, items_per_page: None, start_index: None, current_page: None }
+link ["self"] -> https://cat.example.com/opds/feed/comics [application/atom+xml]
+link ["start"] -> https://cat.example.com/opds/ [application/atom+xml]
+entry: Example Comic, Vol. 1 | id=urn:comic:vol1 authors=["Example Artist"] lang=Some("en") published=None series=None
+  ["http://opds-spec.org/image"] -> https://cat.example.com/covers/vol1.jpg
+  ["http://opds-spec.org/image/thumbnail"] -> https://cat.example.com/covers/vol1-t.jpg
+  ["http://opds-spec.org/acquisition/open-access"] -> https://cat.example.com/dl/vol1.cbz
+  ["http://vaemendis.net/opds-pse/stream"] -> https://cat.example.com/opds/page/vol1?page={pageNumber}&width={maxWidth} pse:count=35 lastRead=Some(10) lastReadDate=Some("2026-01-02T03:04:05Z")
+entry: Example Comic, Vol. 2 | id=urn:comic:vol2 authors=["Example Artist"] lang=Some("en") published=None series=None
+  ["http://opds-spec.org/acquisition/open-access"] -> https://cat.example.com/dl/vol2.cbz
+  ["http://vaemendis.net/opds-pse/stream"] -> https://cat.example.com/opds/page/vol2?page={pageNumber}&width={maxWidth} pse:count=42 lastRead=None lastReadDate=None

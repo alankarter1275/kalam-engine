@@ -1,0 +1,28 @@
+[package]
+name = "chapbook-viewer-gtk"
+description = "GTK4 reference viewer for chapbook"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Linux only. gtk4-sys probes for gtk4.pc through pkg-config, so every
+# dependency here is unbuildable on a stock macOS or Windows box — including
+# the chapbook crates, which nothing outside `src/linux.rs` uses. Off this
+# target the crate is a stub `main` and no dependencies at all.
+[target.'cfg(target_os = "linux")'.dependencies]
+chapbook-core = { workspace = true }
+chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds", "svg", "mathml"] }
+chapbook-render-tinyskia = { workspace = true }
+# v4_16 raises this viewer's — not the engine's — runtime floor to GTK
+# 4.16, for the AccessibleText interface (4.14) and its extents/offset
+# geometry (4.16), which is what puts the page in front of a screen reader.
+gtk4 = { version = "0.11", features = ["v4_16"] }
+# The wakeup, not a new dependency: both are already in the graph under
+# glib, which is what `spawn_future_local` runs on. A `Sender` is `Send`
+# and so can go to the loader thread; the receiving half is spawned on the
+# main context, where it may touch a session that is not.
+futures-channel = { workspace = true }
+futures-util = { workspace = true }

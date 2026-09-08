@@ -1,0 +1,42 @@
+# cargo-deny license policy. Run by CI as `cargo deny check licenses`.
+#
+# The point is not to discover that the tree is permissive — it is, and NOTICE
+# explains where it is not purely MIT/Apache. The point is that the next
+# dependency bump cannot quietly widen this list. If a new crate arrives under
+# a license not named here, the build fails and somebody has to decide, rather
+# than finding out at release time.
+#
+# Targets are deliberately unset, so every platform's dependencies are checked
+# — including the Windows-only crates a Linux build never sees.
+
+[licenses]
+# Every license the graph currently resolves to. Where a crate offers a
+# choice, cargo-deny takes the first allowed option, so listing MIT and
+# Apache-2.0 covers the ~355 crates that offer one of them.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception", # target-lexicon, build-time only
+    "BSD-2-Clause",
+    "BSD-3-Clause",                   # tiny-skia, subtle, brotli, alloc-*
+    "BSL-1.0",                        # clipboard-win, error-code (Windows)
+    "CC0-1.0",                        # hexf-parse, via wgpu's shader compiler
+    "CDLA-Permissive-2.0",            # webpki-roots: a CA bundle, as data
+    "ISC",
+    "MIT",
+    "MPL-2.0",                        # the stylo stack; see NOTICE
+    "Unicode-3.0",                    # ICU4X
+    "Unlicense",
+    "Zlib",
+]
+
+# Deliberately absent, and each absence is load-bearing:
+#
+#   GPL-2.0-only  `self_cell` is "Apache-2.0 OR GPL-2.0-only". Leaving GPL
+#                 out is what forces the Apache-2.0 option to be taken. If
+#                 a crate ever arrives GPL-only, this list is what catches it.
+#   OpenSSL       not in the graph, and would want a conscious decision.
+
+# A crate whose license text does not match its SPDX declaration closely
+# enough gets flagged rather than guessed at.
+confidence-threshold = 0.8

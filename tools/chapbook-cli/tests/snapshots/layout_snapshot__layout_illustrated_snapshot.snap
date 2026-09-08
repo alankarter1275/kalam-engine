@@ -1,0 +1,63 @@
+---
+source: tools/chapbook-cli/tests/layout_snapshot.rs
+expression: "commands::layout(&path, 0).unwrap()"
+---
+pages: 2
+anchor #ch1 -> page 0
+-- page 0 (locator start 9)
+  [   40.0,   40.0  365.9x 54.0] base= 37.8 loc=9     "The Illustrated Chapter"
+  [   40.0,  118.1  507.7x 27.0] base= 18.9 loc=37    "Text before the picture, with a underlined link and some struck-through"
+  [   40.0,  145.1  203.9x 27.0] base= 18.9 loc=113   "words for decoration testing."
+  [  268.0,  190.1   64.0x 48.0] Image { resource: 4294967324 }
+  [   40.0,  256.1  419.6x 27.0] base= 18.9 loc=152   "This paragraph uses the aliased embedded font family."
+  [   40.0,  301.1  273.2x 27.0] base= 18.9 loc=210   "And this one uses the obfuscated italic font."
+  [   40.0,  346.1  520.0x  3.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 0, g: 0, b: 0, a: 255 }, first_slice: true, last_slice: true })
+  [   41.0,  347.1  518.0x  1.0] Rule { color: Rgba { r: 0, g: 0, b: 0, a: 255 } }
+  [   40.0,  367.1  520.0x 65.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 2.0, right: 2.0, bottom: 2.0, left: 2.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   54.0,  395.1  394.8x 27.0] base= 18.9 loc=272   "A framed aside with a background, border, and padding."
+  [   40.0,  450.1  294.7x 27.0] base= 18.9 loc=336   "Letter-spaced small caps line."
+  [   76.0,  495.1  464.2x 27.0] base= 18.9 loc=371   "An indented paragraph long enough to wrap onto a second line so"
+  [   40.0,  522.1  475.2x 27.0] base= 18.9 loc=439   "the first-line indent is visible against the following lines of the same"
+  [   40.0,  549.1   75.4x 27.0] base= 18.9 loc=516   "paragraph."
+  [   40.0,  594.1  369.5x 27.0] base= 18.9 loc=531   "☙\u{a0}A paragraph with generated content around it. ☙"
+  [   40.0,  639.1   64.0x 48.0] Image { resource: 4294967350 }
+  [  114.0,  639.1  435.2x 27.0] base= 18.9 loc=581   "Text that wraps beside a floated illustration, shortened against"
+  [  114.0,  666.1  439.2x 27.0] base= 18.9 loc=650   "its margin edge for as many lines as the picture is tall, and then"
+-- page 1 (locator start 721)
+  [   40.0,   40.0  497.7x 27.0] base= 18.9 loc=721   "returning to the full measure below it once the float has been passed by"
+  [   40.0,   67.0  496.1x 27.0] base= 18.9 loc=798   "the flow of the paragraph, which needs a few more words to make that"
+  [   40.0,   94.0   49.7x 27.0] base= 18.9 loc=871   "visible."
+  [   40.0,  139.0  520.0x 27.0] base= 18.9 loc=884   "An extraordinarily hyphenatable paragraph: photography, consideration,"
+  [   40.0,  166.0  520.0x 27.0] base= 18.9 loc=959   "internationalization, magnificent developments in contemporary biblio-"
+  [   40.0,  193.0  171.8x 27.0] base= 18.9 loc=1032  "graphical craftsmanship."
+  [  244.2,  238.0  111.6x 27.0] base= 18.9 loc=1068  "Vessel Particulars"
+  [   42.0,  267.0  123.5x 35.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  271.0   69.6x 27.0] base= 18.9 loc=1093  "Property"
+  [  167.5,  267.0  390.5x 35.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  271.0   44.5x 27.0] base= 18.9 loc=1101  "Value"
+  [   42.0,  304.0  123.5x 62.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  308.0   24.9x 27.0] base= 18.9 loc=1113  "Rig"
+  [  167.5,  304.0  390.5x 62.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  308.0  341.1x 27.0] base= 18.9 loc=1116  "Three-masted barque, square-rigged on fore and"
+  [  174.5,  335.0   36.0x 27.0] base= 18.9 loc=1163  "main"
+  [   42.0,  368.0  123.5x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  372.0   61.7x 27.0] base= 18.9 loc=1174  "Tonnage"
+  [  167.5,  368.0  390.5x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  372.0  120.0x 27.0] base= 18.9 loc=1181  "238 tons burthen"
+  [   42.0,  405.0  123.5x 72.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  409.0   84.9x 27.0] base= 18.9 loc=1204  "Dimensions"
+  [  167.5,  405.0  390.5x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  409.0  133.3x 27.0] base= 18.9 loc=1214  "90 ft length overall"
+  [  167.5,  442.0  390.5x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [  174.5,  446.0   73.7x 27.0] base= 18.9 loc=1241  "24 ft beam"
+  [   42.0,  479.0  516.0x 35.0] Box(BoxDecoration { background: None, border_widths: EdgeSizes { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 }, border_color: Rgba { r: 139, g: 90, b: 43, a: 255 }, first_slice: true, last_slice: true })
+  [   49.0,  483.0  235.4x 27.0] base= 18.9 loc=1258  "Figures as recorded at first survey"
+  [   40.0,  534.0  507.1x 27.0] base= 18.9 loc=1303  "As the log has it, “we sighted land at dawn, and the men cried ‘land, land’"
+  [   40.0,  561.0  258.1x 27.0] base= 18.9 loc=1380  "with one voice” — so the entry ends."
+  [  392.0,  606.0  168.0x 62.0] Box(BoxDecoration { background: Some(Rgba { r: 242, g: 234, b: 217, a: 255 }), border_widths: EdgeSizes { top: 0.0, right: 0.0, bottom: 0.0, left: 2.0 }, border_color: Rgba { r: 0, g: 0, b: 0, a: 255 }, first_slice: true, last_slice: true })
+  [  402.0,  610.0  104.8x 27.0] base= 18.9 loc=1420  "Set to one side, a"
+  [  402.0,  637.0  124.8x 27.0] base= 18.9 loc=1439  "narrow pulled note."
+  [   40.0,  606.0  320.0x 27.0] base= 18.9 loc=1463  "Text after the rule closes the chapter, running"
+  [   40.0,  633.0  333.5x 27.0] base= 18.9 loc=1511  "long enough to wrap beside the pulled note and"
+  [   40.0,  676.0  494.0x 27.0] base= 18.9 loc=1562  "then recover the full measure beneath it, as the last lines of the chapter"
+  [   40.0,  703.0  140.7x 27.0] base= 18.9 loc=1641  "settle onto the page."

@@ -1,0 +1,14 @@
+/* Deliberately plain. Every question this fixture asks is about the text
+   itself — shaping, visual order, hit-testing — so nothing here should
+   move a glyph that bidi did not move. No text-indent, no justification. */
+body {
+  font-family: serif;
+}
+
+h1 {
+  text-align: center;
+}
+
+p {
+  margin: 0;
+}

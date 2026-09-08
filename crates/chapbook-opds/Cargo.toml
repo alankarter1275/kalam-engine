@@ -1,0 +1,29 @@
+[package]
+name = "chapbook-opds"
+description = "Chapbook's binding to opds-client: OPDS-PSE streamed comics as Publications"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+opds-client = { workspace = true }
+sha1 = { workspace = true } # cache-dir key for streamed comics
+
+[dev-dependencies]
+insta = { workspace = true }
+
+[features]
+# Forwards opds-client's bundled transport. On by default because chapbook's
+# own shells are desktop processes; a build whose networking belongs to the
+# host (iOS URLSession, Android WorkManager, WASM fetch) turns it off and
+# constructs `OpdsClient::new` with its own `HttpClient`.
+default = ["ureq"]
+ureq = ["opds-client/ureq"]
+# OPDS Progression 1.0 position sync, and the LayeredLocator mapping onto
+# it. Off by default for the same reason opds-client gates it: the spec is
+# an unreleased draft whose wire format can still move.
+progression = ["opds-client/progression"]

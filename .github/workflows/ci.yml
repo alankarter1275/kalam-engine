@@ -1,0 +1,337 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # The toolchain is pinned, not floating: `@stable` let a Rust release turn
+  # the repo red with no commit, and 1.98 did. Keep in lockstep with
+  # rust-toolchain.toml, which is what cargo actually obeys here — the action
+  # only sets rustup's *default*, and a toolchain file outranks the default.
+  RUST_PIN: "1.98.0"
+  MSRV: "1.92"
+
+jobs:
+  check:
+    name: fmt + clippy + test (pinned stable)
+    # 26.04 rather than `-latest` (24.04): the GTK viewer's AccessibleText
+    # surface needs system GTK >= 4.16 — its extents/offset vfuncs are
+    # 4.16 API, gated as `v4_16` in gtk4-rs — and 24.04 ships 4.14.5, so
+    # gdk4-sys fails in its build script before any Rust is judged. Only
+    # the two workspace-wide jobs care; the rest never touch GTK. Fold
+    # back into `-latest` when it reaches 26.04.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      # The only system library the workspace needs: gtk4-sys probes for
+      # gtk4.pc through pkg-config, and the runner image ships pkg-config
+      # but no GTK. Everything else builds from source — sqlite is bundled,
+      # fontconfig is the pure-Rust parser.
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets
+      - run: cargo test --workspace
+
+  device-targets:
+    # Every e-ink device is 32- or 64-bit ARM, and chapbook-core is where a
+    # device build starts, so it has to cross-compile — including the panel
+    # vocabulary it now re-exports from mezzotint. The kernel-struct
+    # transcription that used to be checked here went with the backend;
+    # mezzotint's own CI holds those layout assertions.
+    #
+    # Scoped to the crates that cross-compile without system libraries —
+    # the rest of the workspace wants sqlite, fontconfig and GTK.
+    name: check (armv7 + aarch64 + android + ios)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          targets: >-
+            armv7-unknown-linux-gnueabihf,
+            aarch64-unknown-linux-gnu,
+            aarch64-linux-android,
+            aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p chapbook-core --target armv7-unknown-linux-gnueabihf
+      - run: cargo check -p chapbook-core --target aarch64-unknown-linux-gnu
+      # The two device platforms, against the crate that carries the font
+      # policy. The iOS one earns its place twice: cosmic-text's
+      # `fontconfig` feature is excluded per target in chapbook-layout's
+      # manifest, and a Cargo `cfg` is exactly the kind of thing no other
+      # job here would notice breaking. `check` needs no linker and no
+      # Apple SDK, which is why the iOS half can run on Linux at all.
+      #
+      # The generic-family tables themselves are deliberately NOT behind a
+      # `cfg` — they match on `std::env::consts::OS`, so every one of them
+      # compiles and is unit-tested on every host. That was the point of
+      # writing them that way.
+      - run: cargo check -p chapbook-layout --target aarch64-linux-android
+      - run: cargo check -p chapbook-layout --target aarch64-apple-ios
+
+  windows:
+    # The Win32 shell, on the only host that can judge it — and the first
+    # gate of any kind on a Windows build. `chapbook-viewer-win32` is a stub
+    # `main` off Windows, so every line of it is compiled here and nowhere
+    # else; the same was true of `ios/` before the job above existed, and
+    # that one landed broken.
+    #
+    # It is not only the shell. The README has claimed for a long time that
+    # `cargo test --workspace` runs on Windows without GTK or pkg-config,
+    # and nothing checked it — the same shape of claim as the Swift
+    # package's, and it was not true: the cbindgen header golden failed on
+    # any checkout with `core.autocrlf=true`, which is git's default there
+    # and this runner's. `.gitattributes` is the fix and this job is what
+    # keeps it fixed. `Library::default_dir` resolving `%APPDATA%` is the
+    # other Windows-only code path, and its test runs nowhere else either.
+    #
+    # The whole workspace rather than the one crate, because that is what
+    # the claim is about. The GTK viewer and the GTK app both compile here
+    # as their stubs and need no system library, so the runner image needs
+    # nothing installed beyond the .NET SDK the last step asks for.
+    name: clippy + test (Windows) + dotnet test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets
+      - run: cargo test --workspace
+      # The .NET binding under `windows/`, which is the other thing only a
+      # Windows runner can judge — and unlike the shell it is not merely
+      # compiled here: `dotnet test` drives the real engine through the C
+      # ABI, which is the `swift test` half of this repository's other
+      # header consumer. It needs the DLL, so the Rust build comes first.
+      #
+      # Not `build-native.ps1`, and not release, and both on purpose. The
+      # script builds `-p chapbook-ffi`, and a one-package build resolves
+      # features for that package alone — the workspace build above
+      # unified them across every member, so `smallvec`, `syn`, `once_cell`
+      # and twenty more come out with a different feature set and
+      # everything above them recompiles: 99 crates, eight minutes on this
+      # runner, in *either* profile. Release was worse still — thin LTO
+      # and one codegen unit rebuilt all 289 from cold, and the cache never
+      # held them because it only saves on a key miss.
+      #
+      # This line is the same package set and the same target set as
+      # `cargo test --workspace` (test targets pull dev-dependencies into
+      # the resolution, so `--all-targets` matters), which makes it a
+      # relink: four bins and the cdylib, five seconds. `cargo test` on its
+      # own does not emit the cdylib — only the rlib its integration tests
+      # link — so the build is still needed, just not a different one.
+      # What the .NET tests prove is the ABI's behaviour, which does not
+      # depend on the optimizer; a host ships release, and the script
+      # still defaults to it.
+      - run: cargo build --workspace --all-targets
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - run: dotnet test windows/Chapbook.Tests/Chapbook.Tests.csproj -p:ChapbookProfile=debug
+      # The WinUI half is compiled and not run, which is the same split
+      # `ios/` makes: `swift test` runs the macOS slice and the iOS ones are
+      # typechecked. A control needs a window and a window needs a desktop,
+      # so what a runner can prove is that it builds — which is what nothing
+      # proved about the Swift package until a Mac was doing it.
+      - run: dotnet build windows/Chapbook.WinUI/Chapbook.WinUI.csproj -p:ChapbookProfile=debug
+      - run: dotnet build windows/Chapbook.Wpf/Chapbook.Wpf.csproj -p:ChapbookProfile=debug
+      # The WPF demo is the only thing here that can be *run* without a
+      # person: `--shot` draws one page through WPF's own renderer and
+      # writes it, which is the one check a compiler cannot do — a page
+      # that came out cold blue is a swizzle bug and looks like nothing
+      # else. Screen-grabbing another process does not work for WPF, whose
+      # content is composited by DWM, so the app captures itself.
+      - run: dotnet build windows/demo-wpf/Chapbook.Demo.Wpf.csproj -p:ChapbookProfile=debug
+
+  apple:
+    # The Swift package, on the only host that can judge it. Every other
+    # job here runs on Linux, so until this one existed `ios/` was the one
+    # host binding no gate compiled — and it landed broken: `#require`
+    # expands its argument into a closure the outer `try` does not cover,
+    # so the test target did not build. A Mac was the only thing that
+    # could say so, which is the whole argument for the runner cost.
+    #
+    # Three slices, because they fail differently. `swift test` runs the
+    # macOS one natively and is the only *runtime* evidence that the C ABI
+    # works from Swift at all — the job above proves the Rust compiles for
+    # Apple, not that anything can call it. The two iOS slices are
+    # typechecked rather than run: PageAccessibility puts its UIKit half
+    # behind `canImport(UIKit)`, which a macOS build never compiles, so
+    # without the device typecheck that file is half-gated.
+    #
+    # Apple silicon is required, not incidental: build-xcframework.sh
+    # names aarch64 for all three slices, and `swift test` runs the macOS
+    # one on the runner's own architecture. `-latest` has been arm64 since
+    # macos-14.
+    name: swift test + iOS typecheck (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          targets: >-
+            aarch64-apple-ios,
+            aarch64-apple-ios-sim,
+            aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      # Three release staticlibs, then the XCFramework around them. The
+      # slow step by a wide margin — stylo compiled once per slice — and
+      # the reason the cache above earns its place here more than anywhere.
+      - run: ./ios/build-xcframework.sh
+      # The gate: the shelf and the session driven against the real
+      # boundary, on the macOS slice, with no simulator in the loop.
+      - run: swift test
+        working-directory: ios/Chapbook
+      # What `swift test` structurally cannot reach: the UIKit half of
+      # PageAccessibility, and Swift 6 concurrency on both iOS slices. A
+      # script rather than a block scalar here, so the same check a
+      # contributor runs is the one CI runs.
+      - run: ./ios/typecheck-slices.sh
+      # The only link check for a slice that is not macOS: the demo has to
+      # resolve every symbol Swift names against the simulator staticlib. A
+      # header that drifted from the library it ships beside passes both
+      # steps above and fails here.
+      - run: ./ios/demo/build.sh
+
+  reader-features:
+    # chapbook-reader's formats are separately compilable, and a device
+    # build turns off what its hardware will never open. Nothing in the
+    # workspace builds those narrow configurations — every shell here asks
+    # for all three — so without this job an EPUB-only build would rot
+    # silently between releases. `check` catches it, since what breaks is
+    # a `cfg` that stops compiling, and `-D warnings` catches the other
+    # half: code that goes dead when a format leaves.
+    #
+    # `opds` without `ureq` is the device shape — OPDS parsing with the
+    # host's own transport and no TLS stack in the build — so it is listed
+    # alongside `opds,ureq` rather than only implied by the default build.
+    #
+    # The empty entry is now the EPUB-only profile: no library, and so no
+    # rusqlite and no bundled SQLite. It is the smallest thing chapbook
+    # builds and the one a browser forces.
+    # The C ABI forwards the same feature names verbatim and is checked
+    # in the same configurations, because it has the other half of the
+    # problem: every `cb_library_*` entry point has a body for a build
+    # with no library, and those bodies are compiled nowhere else. A
+    # decline path that stopped compiling would reach a host as a build
+    # failure in their project, not ours.
+    name: check (chapbook-reader and the C ABI, feature matrix)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - ""
+          - "library"
+          - "cbz"
+          - "pdf"
+          - "opds"
+          - "opds,ureq"
+          - "cbz,pdf"
+          - "cbz,opds"
+          - "pdf,opds"
+          - "library,cbz,pdf"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p chapbook-reader --no-default-features --features "${{ matrix.features }}"
+      - run: cargo check -p chapbook-ffi --no-default-features --features "${{ matrix.features }}"
+      # `sync` is the C ABI's own feature — chapbook-reader has no such
+      # switch — so it gets its own line rather than a matrix row the
+      # reader check would refuse. Without `ureq`, which is the device
+      # shape: sync over the host's transport, no TLS stack in the build.
+      - run: cargo check -p chapbook-ffi --no-default-features --features sync
+        if: matrix.features == ''
+
+  progression-feature:
+    # OPDS Progression 1.0 is off by default because the spec is an
+    # unreleased draft, which means the workspace-wide `clippy` and `test`
+    # jobs never compile a line of it. Without this job the whole feature
+    # would rot unnoticed — the failure mode a gate invites and the reason
+    # `reader-features` exists one job up.
+    #
+    # Both shapes, because they differ: with `ureq` exercises the bundled
+    # transport's `put`, and without it proves the flow stays reachable for
+    # a host that brought its own network, which is the configuration an
+    # iOS or Android build actually ships.
+    name: check (opds-client, progression draft)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p opds-client --all-targets --features progression
+      - run: cargo clippy -p opds-client --all-targets --no-default-features --features progression
+      - run: cargo test -p opds-client --features progression
+
+  wasm-profile:
+    # The EPUB-only profile — no library, no loader thread, no networking —
+    # checked for wasm32. Not a build: no linker, no wasm-bindgen, no Node.
+    #
+    # What it catches is narrow, and worth saying, because a job that looks
+    # like it proves more than it does is worse than no job. It does *not*
+    # prove SQLite is gone: `chapbook-library` compiles for wasm32 perfectly
+    # well and merely fails to work, which is why the `library` feature
+    # exists and why the dependency count is the evidence there. What this
+    # catches is a new ambient dependency quietly closing the door — an
+    # `std::fs` call, an `Instant::now`, a thread spawned on the EPUB path.
+    name: check (wasm32, EPUB-only profile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_PIN }}
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p chapbook-reader --no-default-features --target wasm32-unknown-unknown
+
+  licenses:
+    # chapbook is MIT OR Apache-2.0, but the graph is not uniformly either —
+    # stylo is MPL-2.0, tiny-skia is BSD-3-Clause, rbook is Apache-2.0 only.
+    # NOTICE records where and why. This job exists so a dependency bump
+    # cannot widen that set without somebody deciding to; the allow-list in
+    # deny.toml is the decision record.
+    name: licenses (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+
+  msrv:
+    name: build (MSRV 1.92)
+    # 26.04 for GTK >= 4.16, as in `check` above.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+      - uses: Swatinem/rust-cache@v2
+      # RUSTUP_TOOLCHAIN, not just the installed default: rust-toolchain.toml
+      # outranks `rustup default`, so without this the job silently rebuilt on
+      # the pinned stable and proved nothing about the MSRV.
+      - run: cargo build --workspace
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.MSRV }}

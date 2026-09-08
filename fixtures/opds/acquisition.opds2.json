@@ -1,0 +1,221 @@
+{
+  "metadata": {
+    "title": "New Releases",
+    "identifier": "urn:cat:new",
+    "modified": "2026-01-02T03:04:05Z",
+    "numberOfItems": 120,
+    "itemsPerPage": 50,
+    "currentPage": 2
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "/opds/feed/new?page=2",
+      "type": "application/atom+xml;profile=opds-catalog;kind=acquisition"
+    },
+    {
+      "rel": "start",
+      "href": "/opds/",
+      "type": "application/atom+xml;profile=opds-catalog;kind=navigation"
+    },
+    {
+      "rel": "next",
+      "href": "/opds/feed/new?page=3",
+      "type": "application/atom+xml;profile=opds-catalog;kind=acquisition"
+    },
+    {
+      "rel": "previous",
+      "href": "/opds/feed/new",
+      "type": "application/atom+xml;profile=opds-catalog;kind=acquisition"
+    },
+    {
+      "rel": "search",
+      "href": "/opds/opensearch.xml",
+      "type": "application/opensearchdescription+xml"
+    }
+  ],
+  "publications": [
+    {
+      "metadata": {
+        "@type": "http://schema.org/Book",
+        "title": "The Go Programming Language",
+        "identifier": "urn:isbn:9780134190440",
+        "author": [
+          {
+            "name": "Alan Donovan",
+            "sortAs": "Donovan, Alan",
+            "links": [
+              {
+                "href": "https://example.com/authors/donovan"
+              }
+            ]
+          },
+          "Brian Kernighan"
+        ],
+        "publisher": "Addison-Wesley",
+        "language": [
+          "en"
+        ],
+        "subject": [
+          {
+            "name": "Computers",
+            "code": "COM051000",
+            "scheme": "https://bisg.org"
+          }
+        ],
+        "modified": "2026-01-02T03:04:05Z",
+        "published": "2026-01-02T03:04:05Z",
+        "description": "\u003cp\u003eThe authoritative resource for the Go language.\u003c/p\u003e",
+        "belongsTo": {
+          "series": {
+            "name": "Professional Computing",
+            "position": 1
+          }
+        }
+      },
+      "links": [
+        {
+          "rel": "alternate",
+          "href": "/opds/publication/gopl",
+          "type": "application/atom+xml;type=entry;profile=opds-catalog"
+        },
+        {
+          "rel": "http://opds-spec.org/acquisition/buy",
+          "href": "/buy/gopl",
+          "type": "text/html",
+          "properties": {
+            "price": {
+              "currency": "USD",
+              "value": 39.99
+            },
+            "indirectAcquisition": [
+              {
+                "type": "application/vnd.readium.lcp.license.v1.0+json",
+                "child": [
+                  {
+                    "type": "application/epub+zip"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "rel": "http://opds-spec.org/acquisition/borrow",
+          "href": "/borrow/gopl",
+          "type": "application/epub+zip",
+          "properties": {
+            "availability": {
+              "state": "unavailable",
+              "since": "2026-01-02T03:04:05Z",
+              "until": "2026-01-02T03:04:05Z"
+            },
+            "holds": {
+              "total": 12,
+              "position": 3
+            },
+            "copies": {
+              "total": 3,
+              "available": 0
+            }
+          }
+        },
+        {
+          "rel": "http://opds-spec.org/acquisition/open-access",
+          "href": "/dl/gopl.epub",
+          "type": "application/epub+zip"
+        }
+      ],
+      "images": [
+        {
+          "href": "/covers/gopl.jpg",
+          "type": "image/jpeg",
+          "height": 1200,
+          "width": 800
+        },
+        {
+          "href": "/covers/gopl-t.jpg",
+          "type": "image/jpeg"
+        }
+      ]
+    },
+    {
+      "metadata": {
+        "@type": "http://schema.org/Book",
+        "title": "Demo Series — Chapter 12",
+        "identifier": "urn:example:chapter/demo/c12",
+        "author": [
+          "Mangaka Example"
+        ],
+        "language": [
+          "en"
+        ],
+        "modified": "2026-01-02T03:04:05Z",
+        "description": "Chapter 12 — 35 pages"
+      },
+      "links": [
+        {
+          "rel": "alternate",
+          "href": "/opds/publication/chapter/demo/c12",
+          "type": "application/atom+xml;type=entry;profile=opds-catalog"
+        },
+        {
+          "rel": "http://opds-spec.org/acquisition/open-access",
+          "href": "/dl/demo/c12.cbz",
+          "type": "application/vnd.comicbook+zip"
+        },
+        {
+          "rel": "http://opds-spec.org/acquisition/open-access",
+          "href": "/dl/demo/c12.epub",
+          "type": "application/epub+zip"
+        }
+      ],
+      "images": [
+        {
+          "href": "/dl/demo/cover",
+          "type": "image/jpeg"
+        }
+      ]
+    }
+  ],
+  "facets": [
+    {
+      "metadata": {
+        "title": "Language"
+      },
+      "links": [
+        {
+          "href": "/opds/feed/new?lang=en",
+          "type": "application/atom+xml;profile=opds-catalog;kind=acquisition",
+          "title": "English",
+          "properties": {
+            "numberOfItems": 80
+          }
+        },
+        {
+          "href": "/opds/feed/new?lang=fr",
+          "type": "application/atom+xml;profile=opds-catalog;kind=acquisition",
+          "title": "French",
+          "properties": {
+            "numberOfItems": 40
+          }
+        }
+      ]
+    },
+    {
+      "metadata": {
+        "title": "Format"
+      },
+      "links": [
+        {
+          "href": "/opds/feed/new?fmt=epub",
+          "type": "application/atom+xml;profile=opds-catalog;kind=acquisition",
+          "title": "EPUB",
+          "properties": {
+            "numberOfItems": 100
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+[package]
+name = "chapbook-epub"
+description = "EPUB container/package/spine/TOC reading for chapbook, wrapping rbook"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+chapbook-core = { workspace = true }
+rbook = { workspace = true }
+url = { workspace = true }
+quick-xml = { workspace = true }
+sha1 = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
