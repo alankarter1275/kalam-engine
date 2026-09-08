@@ -1,5 +1,11 @@
 # Contributing
 
+> **kalam-engine note.** This file is inherited from Chapbook and still
+> applies to the code. Two differences: the plan and the rules for *this*
+> fork are in [docs/kalam/PLAN.md](docs/kalam/PLAN.md) — read that first —
+> and CI is a single Linux job, so the device-target, Windows, macOS, WASM
+> and `cargo deny` checks described below no longer run here.
+
 Design lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the rationale
 behind reading positions in [docs/LOCATORS.md](docs/LOCATORS.md) (the spec
 is `chapbook_core::locator`'s docs), the OPDS wire contract in
