@@ -37,7 +37,7 @@ cosmic-text = { workspace = true }
 insta = { workspace = true }
 # For `show`, which drives a whole reading session onto a panel. The
 # binary itself works a stage at a time and needs no session.
-chapbook-reader = { workspace = true, features = ["svg", "mathml"] }
+chapbook-reader = { workspace = true, features = ["library", "svg", "mathml"] }
 
 # The chapbook half of the panel seam: mezzotint's own examples cover a
 # panel with no book behind it, and this one covers the pairing.
