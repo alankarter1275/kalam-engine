@@ -94,6 +94,24 @@ typedef int32_t cb_status;
 #endif // __cplusplus
 
 /**
+ * What kind of mark a row is.
+ */
+typedef enum cb_annotation_kind {
+    /**
+     * A point remembered, nothing painted.
+     */
+    CB_ANNOTATION_BOOKMARK = 0,
+    /**
+     * A range painted on the page.
+     */
+    CB_ANNOTATION_HIGHLIGHT = 1,
+    /**
+     * A range with words attached.
+     */
+    CB_ANNOTATION_NOTE = 2,
+} cb_annotation_kind;
+
+/**
  * Which physical edge reading starts from. The book declares it — EPUB's
  * `page-progression-direction` — and the engine consults it; it crosses
  * the boundary so a host can *show* it, which is the only way a reader
@@ -697,6 +715,36 @@ typedef struct cb_shelf cb_shelf;
 typedef struct cb_sync cb_sync;
 
 /**
+ * One row of [`cb_session_annotation`] — plain data; the two strings
+ * travel on their own calls.
+ */
+typedef struct cb_annotation {
+    /**
+     * The id every mutating call takes. Stable for the mark's life,
+     * including across sync.
+     */
+    int64_t id;
+    enum cb_annotation_kind kind;
+    /**
+     * The spine unit the mark resolves against in this book.
+     */
+    size_t spine;
+    /**
+     * Whole-book progression of its start, 0.0..=1.0 — what orders a
+     * marks list and places its gutter dots.
+     */
+    double progression;
+    /**
+     * Whether [`cb_session_annotation_text`] has anything for this row.
+     */
+    bool has_text;
+    /**
+     * Whether [`cb_session_annotation_color`] does.
+     */
+    bool has_color;
+} cb_annotation;
+
+/**
  * One request header, borrowed for the duration of the callback.
  */
 typedef struct cb_http_header {
@@ -1169,6 +1217,88 @@ uint32_t cb_abi_version(void);
  * A bitmask of [`cb_capability`].
  */
 uint32_t cb_capabilities(void);
+
+/**
+ * Turn the live selection into a stored highlight, in the theme's
+ * color until one is chosen. The caller still owns the selection;
+ * clearing it afterwards is the shell's move, so the paint order —
+ * highlight replaces selection — is explicit rather than implied.
+ * `CB_ERR_UNAVAILABLE` with nothing selected.
+ */
+cb_status cb_session_add_highlight(struct cb_session *session, int64_t *id);
+
+/**
+ * Turn the live selection into a note carrying `body`.
+ * `CB_ERR_UNAVAILABLE` with nothing selected.
+ */
+cb_status cb_session_add_note(struct cb_session *session, const char *body, int64_t *id);
+
+/**
+ * Bookmark the current position — a point, nothing painted.
+ */
+cb_status cb_session_add_bookmark(struct cb_session *session, int64_t *id);
+
+/**
+ * The highlight under a point, `CB_ERR_UNAVAILABLE` on a miss — what a
+ * tap on marked text asks before a shell opens its recolor-or-remove
+ * menu. Checked after links and before tap zones, per `docs/SHELLS.md`.
+ */
+cb_status cb_session_highlight_at(struct cb_session *session, float x, float y, int64_t *id);
+
+/**
+ * Recolor a highlight — `"#rrggbb"` or `"#rrggbbaa"`, or null to give
+ * the theme's color back.
+ */
+cb_status cb_session_set_highlight_color(struct cb_session *session, int64_t id, const char *color);
+
+/**
+ * Remove a mark, whatever its kind. The removal reaches the book's
+ * annotation container on the next sync; nothing here is silent.
+ */
+cb_status cb_session_remove_annotation(struct cb_session *session, int64_t id);
+
+/**
+ * Jump to a mark. `*moved` reports whether the reader went anywhere; a
+ * jump pushes the return position for the `Back` action, same as a
+ * followed link.
+ */
+cb_status cb_session_goto_annotation(struct cb_session *session, int64_t id, bool *moved);
+
+/**
+ * How many marks this book carries — the count for the per-index calls
+ * below. The list is re-read from the library per call and ordered by
+ * progression, so indices are stable between mutations and not across
+ * them; re-enumerate after any add or remove.
+ */
+cb_status cb_session_annotation_count(const struct cb_session *session, size_t *count);
+
+/**
+ * One mark's plain data, by index. Its strings travel on
+ * [`cb_session_annotation_text`] and [`cb_session_annotation_color`].
+ */
+cb_status cb_session_annotation(const struct cb_session *session,
+                                size_t index,
+                                struct cb_annotation *out);
+
+/**
+ * The quoted text of a highlight or the body of a note, by index.
+ * `CB_ERR_UNAVAILABLE` for a row whose `has_text` was false.
+ */
+cb_status cb_session_annotation_text(const struct cb_session *session,
+                                     size_t index,
+                                     char *buf,
+                                     size_t cap,
+                                     size_t *needed);
+
+/**
+ * A mark's chosen color, by index, as the hex string it was set with.
+ * `CB_ERR_UNAVAILABLE` for a mark wearing the theme's color.
+ */
+cb_status cb_session_annotation_color(const struct cb_session *session,
+                                      size_t index,
+                                      char *buf,
+                                      size_t cap,
+                                      size_t *needed);
 
 /**
  * The host's installed fonts, its idea of the generics, its fallback list.
@@ -2189,6 +2319,123 @@ cb_status cb_session_has_pending_loads(const struct cb_session *session, bool *p
  * move by draining rarely.
  */
 cb_status cb_session_next_event(struct cb_session *session, struct cb_session_event *out);
+
+/**
+ * Anchor a selection at a point. `*started` reports whether text was
+ * there to anchor on — a press on bare page starts nothing, and a shell
+ * that treats that as a tap wants to know. The anchor is empty until a
+ * drag extends it; a press that never moves should be cleared rather
+ * than left to outlive the page.
+ */
+cb_status cb_session_selection_begin(struct cb_session *session, float x, float y, bool *started);
+
+/**
+ * Extend the selection to a point — the move half of press-drag, and
+ * equally the move half of dragging a selection handle.
+ */
+cb_status cb_session_selection_drag(struct cb_session *session, float x, float y);
+
+/**
+ * Select the word under a point — what a long press means on glass.
+ * `*selected` reports whether a word was there. The selected range then
+ * answers through [`cb_session_selected_range`], and its geometry
+ * through [`cb_session_range_rects`] — which is how a shell draws its
+ * grab handles.
+ */
+cb_status cb_session_select_word_at(struct cb_session *session, float x, float y, bool *selected);
+
+/**
+ * Select an exact locator range — how a search hit or an adjusted
+ * handle position becomes the selection. Offsets beyond the unit's text
+ * clamp rather than fail, matching the engine.
+ */
+cb_status cb_session_select_range(struct cb_session *session, uint32_t start, uint32_t end);
+
+/**
+ * Drop the selection. A no-op when there is none.
+ */
+cb_status cb_session_selection_clear(struct cb_session *session);
+
+/**
+ * The selection as a locator range, `CB_ERR_UNAVAILABLE` when there is
+ * none — including the empty anchor a press leaves before any drag,
+ * which is deliberately not a selection yet.
+ */
+cb_status cb_session_selected_range(const struct cb_session *session,
+                                    uint32_t *start,
+                                    uint32_t *end);
+
+/**
+ * The selected text, whitespace collapsed the way a clipboard wants it.
+ * `CB_ERR_UNAVAILABLE` when nothing is selected.
+ */
+cb_status cb_session_selected_text(const struct cb_session *session,
+                                   char *buf,
+                                   size_t cap,
+                                   size_t *needed);
+
+/**
+ * The link under a point, as the href the book wrote.
+ * `CB_ERR_UNAVAILABLE` when the point is not on a link. A shell checks
+ * this before starting a selection, so a press on a link follows it —
+ * the ordering `docs/SHELLS.md` specifies.
+ */
+cb_status cb_session_link_at(struct cb_session *session,
+                             float x,
+                             float y,
+                             char *buf,
+                             size_t cap,
+                             size_t *needed);
+
+/**
+ * Follow an href — one [`cb_session_link_at`] answered, or a TOC
+ * entry's. `*moved` reports whether the reader went anywhere; an
+ * external `http(s)` href answers false and is the shell's to open in a
+ * browser. A followed link pushes the return position for the `Back`
+ * action.
+ */
+cb_status cb_session_follow_link(struct cb_session *session, const char *href, bool *moved);
+
+/**
+ * Zoom the page around a focal point in panel coordinates — the pinch.
+ * Image books only, clamped to `[1.0, 8.0]`, 1.0 returning to fit;
+ * `*changed` reports whether the view moved. **Always false on
+ * reflowable text**, where the same gesture means "make the text
+ * bigger" — a settings change the shell maps to the `FontUp`/`FontDown`
+ * actions itself. Zoom is view state: nothing persists it, and it
+ * survives a page turn on purpose (a shell wanting turn-resets sets
+ * 1.0 on turn).
+ *
+ * Input crossing this boundary is mapped through the zoom
+ * automatically. Output geometry — `cb_session_range_rects`, the text
+ * surface — stays in fit-page space; a shell drawing overlays on a
+ * zoomed page maps forward with [`cb_session_page_zoom`] and
+ * [`cb_session_page_pan`]: `view = fit * zoom + pan`.
+ */
+cb_status cb_session_set_page_zoom(struct cb_session *session,
+                                   float zoom,
+                                   float focus_x,
+                                   float focus_y,
+                                   bool *changed);
+
+/**
+ * Pan the zoomed page by a pointer delta in panel coordinates, clamped
+ * at the page's edges. `*changed` is false at fit — how a shell knows
+ * the same drag should fall through to whatever an unzoomed drag means
+ * (a selection, a swipe turn).
+ */
+cb_status cb_session_pan_page(struct cb_session *session, float dx, float dy, bool *changed);
+
+/**
+ * The current zoom, 1.0 at fit.
+ */
+cb_status cb_session_page_zoom(const struct cb_session *session, float *zoom);
+
+/**
+ * The current pan in page units — with the zoom, the forward map for a
+ * shell's own overlays.
+ */
+cb_status cb_session_page_pan(const struct cb_session *session, float *x, float *y);
 
 /**
  * Start a sync worker over the library at `library_dir`.

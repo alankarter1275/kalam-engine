@@ -2250,3 +2250,368 @@ pub extern "system" fn Java_com_ophymx_chapbook_Native_librarySyncAnnotationCont
         None => JObject::null().into_raw(),
     }
 }
+
+// ---- Selection, links and marks ----
+//
+// The gesture-shaped surface, and on Android the one that matters most:
+// long-press selects a word, handles adjust by exact range, and the
+// selection becomes a highlight the library keeps. Coordinates are
+// logical units, the same space `tapAction` reads; locator offsets ride
+// `jint` as raw `u32` bits, as the word table already does.
+
+/// Anchor a selection at a point. Returns whether text was there.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_selectionBegin(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    x: jfloat,
+    y: jfloat,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.selection_begin(x, y)) as jboolean
+}
+
+/// Extend the selection to a point — press-drag, or a moving handle.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_selectionDrag(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    x: jfloat,
+    y: jfloat,
+) {
+    if let Some(s) = unsafe { session(handle) } {
+        s.selection_drag(x, y);
+    }
+}
+
+/// Select the word under a point — what a long press means on glass.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_selectWordAt(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    x: jfloat,
+    y: jfloat,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.select_word_at(x, y)) as jboolean
+}
+
+/// Select an exact locator range — a search hit, an adjusted handle.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_selectRange(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    start: jint,
+    end: jint,
+) {
+    if let Some(s) = unsafe { session(handle) } {
+        s.select_range(start as u32, end as u32);
+    }
+}
+
+/// Drop the selection.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_selectionClear(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if let Some(s) = unsafe { session(handle) } {
+        s.selection_clear();
+    }
+}
+
+/// The selection as `(start << 32) | end`, or -1 when there is none.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_selectedRange(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    unsafe { session(handle) }
+        .and_then(|s| s.selected_range())
+        .map_or(-1, |(start, end)| {
+            ((start as jlong) << 32) | (end as jlong & 0xffff_ffff)
+        })
+}
+
+/// The selected text, collapsed the way a clipboard wants it, or null.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_selectedText(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    match unsafe { session(handle) }.and_then(|s| s.selected_text()) {
+        Some(text) => string_out(&env, &text),
+        None => JObject::null().into_raw(),
+    }
+}
+
+/// The link under a point, or null — checked before starting a
+/// selection, so a press on a link follows it.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_linkAt(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    x: jfloat,
+    y: jfloat,
+) -> jstring {
+    match unsafe { session(handle) }.and_then(|s| s.link_at(x, y)) {
+        Some(href) => string_out(&env, &href),
+        None => JObject::null().into_raw(),
+    }
+}
+
+/// Follow an href. Returns whether the reader moved; an external
+/// `http(s)` link answers false and is the shell's to open.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_followLink(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    href: JString,
+) -> jboolean {
+    let Some(href) = string_in(&mut env, &href) else {
+        return 0;
+    };
+    unsafe { session(handle) }.is_some_and(|s| s.follow_link(&href)) as jboolean
+}
+
+/// The selection becomes a stored highlight. Returns its id, or 0 with
+/// nothing selected (or no library to remember it).
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_addHighlight(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    unsafe { session(handle) }
+        .and_then(|s| s.add_highlight())
+        .unwrap_or(0)
+}
+
+/// The selection becomes a note carrying `body`. Returns its id, or 0.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_addNote(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    body: JString,
+) -> jlong {
+    let Some(body) = string_in(&mut env, &body) else {
+        return 0;
+    };
+    unsafe { session(handle) }
+        .and_then(|s| s.add_note(&body))
+        .unwrap_or(0)
+}
+
+/// Bookmark the current position. Returns its id, or 0.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_addBookmark(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    unsafe { session(handle) }
+        .and_then(|s| s.add_bookmark())
+        .unwrap_or(0)
+}
+
+/// The stored highlight under a point, or 0 — what a tap on marked text
+/// asks before the recolor-or-remove menu opens.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_highlightAt(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    x: jfloat,
+    y: jfloat,
+) -> jlong {
+    unsafe { session(handle) }
+        .and_then(|s| s.highlight_at(x, y))
+        .unwrap_or(0)
+}
+
+/// Recolor a highlight — `"#rrggbb"`/`"#rrggbbaa"`, null for the theme's.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_setHighlightColor(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    id: jlong,
+    color: JString,
+) {
+    let Some(s) = (unsafe { session(handle) }) else {
+        return;
+    };
+    let color = if color.is_null() {
+        None
+    } else {
+        string_in(&mut env, &color)
+    };
+    s.set_highlight_color(id, color.as_deref());
+}
+
+/// Remove a mark; the removal reaches the container on the next sync.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_removeAnnotation(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    id: jlong,
+) {
+    if let Some(s) = unsafe { session(handle) } {
+        s.remove_annotation(id);
+    }
+}
+
+/// Jump to a mark. Returns whether the reader moved; the jump pushes
+/// the return position for Back, like a followed link.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_gotoAnnotation(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    id: jlong,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.goto_annotation(id)) as jboolean
+}
+
+/// How many marks the book carries.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_annotationCount(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    unsafe { session(handle) }.map_or(-1, |s| s.annotations().len() as jint)
+}
+
+/// One mark's plain data: `[id, kind, spine, progressionBits]`, the
+/// last a double's raw bits. Empty past the end. Its strings ride
+/// [`annotationText`] and [`annotationColor`].
+///
+/// [`annotationText`]: Java_com_ophymx_chapbook_Native_annotationText
+/// [`annotationColor`]: Java_com_ophymx_chapbook_Native_annotationColor
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_annotation(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jlongArray {
+    use chapbook_reader::chapbook_library::AnnotationKind;
+    let values: Vec<jlong> = unsafe { session(handle) }
+        .and_then(|s| {
+            let rows = s.annotations();
+            rows.get(index as usize).map(|row| {
+                vec![
+                    row.id,
+                    match row.kind {
+                        AnnotationKind::Bookmark => 0,
+                        AnnotationKind::Highlight => 1,
+                        AnnotationKind::Note => 2,
+                    },
+                    row.spine_index as jlong,
+                    row.progression.to_bits() as jlong,
+                ]
+            })
+        })
+        .unwrap_or_default();
+    long_array_out(&env, &values)
+}
+
+/// A mark's quoted text or note body, by index, or null.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_annotationText(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let text = unsafe { session(handle) }.and_then(|s| {
+        s.annotations()
+            .get(index as usize)
+            .and_then(|r| r.text.clone())
+    });
+    match text {
+        Some(text) => string_out(&env, &text),
+        None => JObject::null().into_raw(),
+    }
+}
+
+/// A mark's chosen color, by index, or null for the theme's.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_annotationColor(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let color = unsafe { session(handle) }.and_then(|s| {
+        s.annotations()
+            .get(index as usize)
+            .and_then(|r| r.color.clone())
+    });
+    match color {
+        Some(color) => string_out(&env, &color),
+        None => JObject::null().into_raw(),
+    }
+}
+
+// ---- Page zoom (image books) ----
+
+/// The pinch: zoom around a focal point in logical units. Image books
+/// only — returns whether the view changed, and always false on prose,
+/// where the shell maps the gesture to font size instead.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_setPageZoom(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    zoom: jfloat,
+    focus_x: jfloat,
+    focus_y: jfloat,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.set_page_zoom(zoom, focus_x, focus_y)) as jboolean
+}
+
+/// Pan the zoomed page by a pointer delta, clamped at the edges. False
+/// at fit, so the drag falls through to a selection or a swipe turn.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_panPage(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    dx: jfloat,
+    dy: jfloat,
+) -> jboolean {
+    unsafe { session(handle) }.is_some_and(|s| s.pan_page(dx, dy)) as jboolean
+}
+
+/// The current zoom, 1.0 at fit.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pageZoom(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jfloat {
+    unsafe { session(handle) }.map_or(1.0, |s| s.page_zoom())
+}
+
+/// The current pan `[x, y]` in page units — with the zoom, the forward
+/// map for overlays a shell draws on a zoomed page.
+#[no_mangle]
+pub extern "system" fn Java_com_ophymx_chapbook_Native_pagePan(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jfloatArray {
+    let (x, y) = unsafe { session(handle) }.map_or((0.0, 0.0), |s| s.page_pan());
+    float_array_out(&env, &[x, y])
+}

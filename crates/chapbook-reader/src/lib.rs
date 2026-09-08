@@ -38,6 +38,7 @@ mod nav;
 mod open;
 mod render;
 mod text_surface;
+mod zoom;
 
 #[cfg(feature = "library")]
 use chapbook_core::LayeredLocator;
@@ -223,6 +224,9 @@ pub struct Session {
     renderer: chapbook_render_tinyskia::Renderer,
     settings: ReadingSettings,
     metrics: Option<PageMetrics>,
+    /// The image-book zoom view, `None` at fit — see [`zoom`](self) for
+    /// the vocabulary. View state, not reading state: nothing persists it.
+    view: Option<zoom::PageView>,
     /// Everything the session caches per spine unit — see [`UnitState`].
     units: HashMap<usize, UnitState>,
     /// Bytes the unit caches may hold between them.
@@ -646,6 +650,7 @@ impl Session {
             .is_some_and(|current| current.same_layout(&metrics))
         {
             self.metrics = Some(metrics);
+            self.reclamp_view();
             self.mark(FrameIntent::Relayout);
             return;
         }
@@ -659,6 +664,9 @@ impl Session {
                 self.page = layout.page_of(locator);
             }
         }
+        // The zoom survives a resize, so its pan has to be brought back
+        // inside a page box that may have shrunk under it.
+        self.reclamp_view();
         self.mark(FrameIntent::Relayout);
     }
 

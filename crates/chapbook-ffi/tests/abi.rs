@@ -1845,6 +1845,17 @@ fn sync_targets_round_trip_through_the_shelf() {
 static SYNC_WAKES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static SYNC_FINALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// Serializes the two tests that count finalizer runs.
+///
+/// `SYNC_FINALIZED` is process-global, and both of them read it, do one
+/// thing that should finalize exactly once, and assert the count moved by
+/// one. Run in parallel — the default — each sees the other's finalizer
+/// and reads `+2`, which looks precisely like the ABI double-releasing a
+/// host's object and is not: it is two tests sharing a counter. The
+/// library tests serialize for the same reason, and the failure is worth
+/// naming because the thing it impersonates would be serious.
+static SYNC_COUNTER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 extern "C" fn sync_wake(_user: *mut std::ffi::c_void) {
     SYNC_WAKES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
@@ -1919,6 +1930,7 @@ fn a_dead_service_crosses_as_a_report_not_a_dead_batch() {
         eprintln!("skipped: this build has no sync");
         return;
     }
+    let _counting = SYNC_COUNTER.lock().unwrap_or_else(|e| e.into_inner());
     let session = open("sync-drive", "epub/minimal.epub");
     let mut book = 0i64;
     assert_eq!(
@@ -2021,6 +2033,7 @@ fn sync_refuses_a_transport_that_cannot_write() {
         eprintln!("skipped: this build has no sync");
         return;
     }
+    let _counting = SYNC_COUNTER.lock().unwrap_or_else(|e| e.into_inner());
     let dir = library_dir("sync-readonly");
     let dir_c = cstr(&dir.to_string_lossy());
     let device_id = cstr("abi-test-device");
@@ -2111,5 +2124,242 @@ fn session_events_cross_oldest_first() {
         cb_status::CB_ERR_UNAVAILABLE,
         "quiet between drains"
     );
+    unsafe { cb_session_close(session) };
+}
+
+/// The loop a touch reader runs, spelled across the boundary: long-press
+/// selects a word, the selection becomes a highlight, the highlight is
+/// found again under a finger, listed, recolored, jumped to, removed.
+#[test]
+fn a_mark_lives_its_whole_life_across_the_boundary() {
+    if cb_capabilities() & cb_capability::CB_CAP_LIBRARY as u32 == 0 {
+        eprintln!("skipped: marks persist through the library");
+        return;
+    }
+    let session = open("marks", "epub/minimal.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+
+    // Where the text sits depends on the fixture fonts, so sweep for a
+    // word rather than knowing a coordinate.
+    let (mut wx, mut wy, mut selected) = (0f32, 0f32, false);
+    'sweep: for y in (40..760).step_by(20) {
+        for x in (40..560).step_by(20) {
+            unsafe {
+                cb_session_select_word_at(session, x as f32, y as f32, &mut selected);
+            }
+            if selected {
+                wx = x as f32;
+                wy = y as f32;
+                break 'sweep;
+            }
+        }
+    }
+    assert!(selected, "a page of text has a word to long-press");
+
+    let (mut start, mut end) = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_selected_range(session, &mut start, &mut end) },
+        cb_status::CB_OK
+    );
+    assert!(end > start, "a word is a non-empty range");
+    let word = read_string(|buf, cap, needed| unsafe {
+        cb_session_selected_text(session, buf, cap, needed)
+    })
+    .expect("selected text crosses");
+    assert!(!word.trim().is_empty());
+
+    // Grow the selection by exact range — the adjusted-handle move.
+    unsafe { cb_session_select_range(session, start, end + 4) };
+
+    let mut id = 0i64;
+    assert_eq!(
+        unsafe { cb_session_add_highlight(session, &mut id) },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert!(id > 0);
+    // The highlight replaces the selection, and saying so is the shell's
+    // move — the paint order is explicit.
+    unsafe { cb_session_selection_clear(session) };
+    let mut none = (0u32, 0u32);
+    assert_eq!(
+        unsafe { cb_session_selected_range(session, &mut none.0, &mut none.1) },
+        cb_status::CB_ERR_UNAVAILABLE
+    );
+
+    // The tap that opens the recolor menu — aimed at the highlight's own
+    // ink, since `highlight_at` hit-tests exactly (inside the marked
+    // text, like a link) while the word sweep above was allowed to snap.
+    let mut rect = cb_rect {
+        x: 0.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+    };
+    let mut filled = 0usize;
+    assert_eq!(
+        unsafe { cb_session_range_rects(session, start, end + 4, &mut rect, 1, &mut filled) },
+        cb_status::CB_OK
+    );
+    let _ = (wx, wy);
+    let mut found = 0i64;
+    assert_eq!(
+        unsafe {
+            cb_session_highlight_at(
+                session,
+                rect.x + rect.w / 2.0,
+                rect.y + rect.h / 2.0,
+                &mut found,
+            )
+        },
+        cb_status::CB_OK,
+        "{}",
+        last_error()
+    );
+    assert_eq!(found, id);
+
+    // Listed, recolored, read back.
+    let mut count = 0usize;
+    assert_eq!(
+        unsafe { cb_session_annotation_count(session, &mut count) },
+        cb_status::CB_OK
+    );
+    assert_eq!(count, 1);
+    let color = cstr("#ffcc00");
+    assert_eq!(
+        unsafe { cb_session_set_highlight_color(session, id, color.as_ptr()) },
+        cb_status::CB_OK
+    );
+    let mut row = cb_annotation {
+        id: 0,
+        kind: cb_annotation_kind::CB_ANNOTATION_BOOKMARK,
+        spine: 0,
+        progression: 0.0,
+        has_text: false,
+        has_color: false,
+    };
+    assert_eq!(
+        unsafe { cb_session_annotation(session, 0, &mut row) },
+        cb_status::CB_OK
+    );
+    assert_eq!(row.id, id);
+    assert_eq!(row.kind, cb_annotation_kind::CB_ANNOTATION_HIGHLIGHT);
+    assert!(row.has_text && row.has_color);
+    assert_eq!(
+        read_string(|buf, cap, needed| unsafe {
+            cb_session_annotation_color(session, 0, buf, cap, needed)
+        })
+        .as_deref(),
+        Ok("#ffcc00")
+    );
+    let quote = read_string(|buf, cap, needed| unsafe {
+        cb_session_annotation_text(session, 0, buf, cap, needed)
+    })
+    .expect("a highlight quotes its text");
+    assert!(quote.contains(word.trim()), "{quote:?} carries {word:?}");
+
+    // Jump to it from somewhere else, then remove it.
+    let mut moved = false;
+    unsafe { cb_session_next_page(session, &mut moved) };
+    assert_eq!(
+        unsafe { cb_session_goto_annotation(session, id, &mut moved) },
+        cb_status::CB_OK
+    );
+    assert_eq!(
+        unsafe { cb_session_remove_annotation(session, id) },
+        cb_status::CB_OK
+    );
+    assert_eq!(
+        unsafe { cb_session_annotation_count(session, &mut count) },
+        cb_status::CB_OK
+    );
+    assert_eq!(count, 0);
+
+    // An external link is the shell's to open, and says so quietly.
+    let external = cstr("https://example.com/elsewhere");
+    assert_eq!(
+        unsafe { cb_session_follow_link(session, external.as_ptr(), &mut moved) },
+        cb_status::CB_OK
+    );
+    assert!(!moved, "the engine does not browse");
+
+    unsafe { cb_session_close(session) };
+}
+
+/// The pinch, across the boundary: refused on prose, honored on a comic,
+/// pan falling through at fit.
+#[test]
+fn zoom_is_for_image_books_and_says_so() {
+    if cb_capabilities() & cb_capability::CB_CAP_CBZ as u32 == 0 {
+        eprintln!("skipped: this build opens no comics");
+        return;
+    }
+    // Prose refuses: the gesture belongs to font size there.
+    let session = open("zoom-epub", "epub/minimal.epub");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut changed = true;
+    assert_eq!(
+        unsafe { cb_session_set_page_zoom(session, 2.0, 100.0, 100.0, &mut changed) },
+        cb_status::CB_OK
+    );
+    assert!(!changed, "prose maps pinch to FontUp/FontDown instead");
+    unsafe { cb_session_close(session) };
+
+    // A comic zooms once its page has landed.
+    let session = open("zoom-cbz", "cbz/minimal.cbz");
+    assert_eq!(
+        unsafe { cb_session_set_metrics(session, metrics()) },
+        cb_status::CB_OK
+    );
+    let mut pending = true;
+    for _ in 0..400 {
+        let mut visible = false;
+        unsafe {
+            cb_session_poll_loaded(session, &mut visible);
+            cb_session_has_pending_loads(session, &mut pending);
+        }
+        if !pending {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!pending, "the first page decodes");
+
+    // Pan at fit falls through, so a drag can mean a swipe turn.
+    assert_eq!(
+        unsafe { cb_session_pan_page(session, -30.0, 0.0, &mut changed) },
+        cb_status::CB_OK
+    );
+    assert!(!changed);
+
+    assert_eq!(
+        unsafe { cb_session_set_page_zoom(session, 2.0, 300.0, 400.0, &mut changed) },
+        cb_status::CB_OK
+    );
+    assert!(changed, "{}", last_error());
+    let mut zoom = 0.0f32;
+    assert_eq!(
+        unsafe { cb_session_page_zoom(session, &mut zoom) },
+        cb_status::CB_OK
+    );
+    assert_eq!(zoom, 2.0);
+    assert_eq!(
+        unsafe { cb_session_pan_page(session, -30.0, -10.0, &mut changed) },
+        cb_status::CB_OK
+    );
+    assert!(changed, "a zoomed page pans");
+    let (mut px, mut py) = (0.0f32, 0.0f32);
+    assert_eq!(
+        unsafe { cb_session_page_pan(session, &mut px, &mut py) },
+        cb_status::CB_OK
+    );
+    assert!(px < 0.0 || py < 0.0, "the pan moved off origin");
     unsafe { cb_session_close(session) };
 }

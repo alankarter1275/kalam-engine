@@ -59,6 +59,30 @@ internal object Native {
     external fun fontFamily(handle: Long): String?
     external fun setFontFamily(handle: Long, family: String?, thisBook: Boolean)
     external fun fontFamilies(handle: Long): Array<String>
+    external fun selectionBegin(handle: Long, x: Float, y: Float): Boolean
+    external fun selectionDrag(handle: Long, x: Float, y: Float)
+    external fun selectWordAt(handle: Long, x: Float, y: Float): Boolean
+    external fun selectRange(handle: Long, start: Int, end: Int)
+    external fun selectionClear(handle: Long)
+    external fun selectedRange(handle: Long): Long
+    external fun selectedText(handle: Long): String?
+    external fun linkAt(handle: Long, x: Float, y: Float): String?
+    external fun followLink(handle: Long, href: String): Boolean
+    external fun addHighlight(handle: Long): Long
+    external fun addNote(handle: Long, body: String): Long
+    external fun addBookmark(handle: Long): Long
+    external fun highlightAt(handle: Long, x: Float, y: Float): Long
+    external fun setHighlightColor(handle: Long, id: Long, color: String?)
+    external fun removeAnnotation(handle: Long, id: Long)
+    external fun gotoAnnotation(handle: Long, id: Long): Boolean
+    external fun annotationCount(handle: Long): Int
+    external fun annotation(handle: Long, index: Int): LongArray
+    external fun annotationText(handle: Long, index: Int): String?
+    external fun annotationColor(handle: Long, index: Int): String?
+    external fun setPageZoom(handle: Long, zoom: Float, focusX: Float, focusY: Float): Boolean
+    external fun panPage(handle: Long, dx: Float, dy: Float): Boolean
+    external fun pageZoom(handle: Long): Float
+    external fun pagePan(handle: Long): FloatArray
     external fun syncOpen(
         libraryDir: String,
         deviceId: String,

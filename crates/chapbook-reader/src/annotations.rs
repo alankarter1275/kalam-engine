@@ -209,7 +209,7 @@ impl Session {
     /// tap needs to select, recolor, or delete one by touching it. Only
     /// inside the marked text, like a link.
     pub fn highlight_at(&mut self, x: f32, y: f32) -> Option<i64> {
-        let (px, py) = self.metrics.map_or((x, y), |m| m.panel_to_page(x, y));
+        let (px, py) = self.content_point(x, y);
         let (spine, page) = (self.spine, self.page);
         let offset = self
             .layout_unit(spine)?

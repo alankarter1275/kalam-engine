@@ -1510,3 +1510,273 @@ pub unsafe extern "C" fn cb_session_next_event(
         cb_status::CB_OK
     })
 }
+
+// ---- Selection ----
+//
+// The reading model's most gesture-shaped surface, and the last part of
+// the desktop reader that could not be built from C. Coordinates are
+// panel coordinates, the same numbers a pointer event carries, exactly
+// as `cb_session_word_at` takes them; offsets are locator offsets in the
+// current unit, the same space the text surface, positions and
+// annotations already share across this boundary.
+
+/// Anchor a selection at a point. `*started` reports whether text was
+/// there to anchor on — a press on bare page starts nothing, and a shell
+/// that treats that as a tap wants to know. The anchor is empty until a
+/// drag extends it; a press that never moves should be cleared rather
+/// than left to outlive the page.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_selection_begin(
+    session: *mut cb_session,
+    x: f32,
+    y: f32,
+    started: *mut bool,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        let did = session.inner.selection_begin(x, y);
+        out!(started, did, "started");
+        cb_status::CB_OK
+    })
+}
+
+/// Extend the selection to a point — the move half of press-drag, and
+/// equally the move half of dragging a selection handle.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_selection_drag(
+    session: *mut cb_session,
+    x: f32,
+    y: f32,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        session.inner.selection_drag(x, y);
+        cb_status::CB_OK
+    })
+}
+
+/// Select the word under a point — what a long press means on glass.
+/// `*selected` reports whether a word was there. The selected range then
+/// answers through [`cb_session_selected_range`], and its geometry
+/// through [`cb_session_range_rects`] — which is how a shell draws its
+/// grab handles.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_select_word_at(
+    session: *mut cb_session,
+    x: f32,
+    y: f32,
+    selected: *mut bool,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        let did = session.inner.select_word_at(x, y);
+        out!(selected, did, "selected");
+        cb_status::CB_OK
+    })
+}
+
+/// Select an exact locator range — how a search hit or an adjusted
+/// handle position becomes the selection. Offsets beyond the unit's text
+/// clamp rather than fail, matching the engine.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_select_range(
+    session: *mut cb_session,
+    start: u32,
+    end: u32,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        session.inner.select_range(start, end);
+        cb_status::CB_OK
+    })
+}
+
+/// Drop the selection. A no-op when there is none.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_selection_clear(session: *mut cb_session) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        session.inner.selection_clear();
+        cb_status::CB_OK
+    })
+}
+
+/// The selection as a locator range, `CB_ERR_UNAVAILABLE` when there is
+/// none — including the empty anchor a press leaves before any drag,
+/// which is deliberately not a selection yet.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_selected_range(
+    session: *const cb_session,
+    start: *mut u32,
+    end: *mut u32,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        // SAFETY: a handle from an open call, not yet closed.
+        let Some(session) = (unsafe { session.as_ref() }) else {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "session is null");
+        };
+        let Some((from, to)) = session.inner.selected_range() else {
+            return fail(cb_status::CB_ERR_UNAVAILABLE, "nothing selected");
+        };
+        out!(start, from, "start");
+        out!(end, to, "end");
+        cb_status::CB_OK
+    })
+}
+
+/// The selected text, whitespace collapsed the way a clipboard wants it.
+/// `CB_ERR_UNAVAILABLE` when nothing is selected.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_selected_text(
+    session: *const cb_session,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        // SAFETY: a handle from an open call, not yet closed.
+        let Some(session) = (unsafe { session.as_ref() }) else {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "session is null");
+        };
+        let Some(text) = session.inner.selected_text() else {
+            return fail(cb_status::CB_ERR_UNAVAILABLE, "nothing selected");
+        };
+        // SAFETY: the header's contract for the buffer triple.
+        unsafe { str_out(&text, buf, cap, needed) }
+    })
+}
+
+// ---- Links ----
+
+/// The link under a point, as the href the book wrote.
+/// `CB_ERR_UNAVAILABLE` when the point is not on a link. A shell checks
+/// this before starting a selection, so a press on a link follows it —
+/// the ordering `docs/SHELLS.md` specifies.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_link_at(
+    session: *mut cb_session,
+    x: f32,
+    y: f32,
+    buf: *mut c_char,
+    cap: usize,
+    needed: *mut usize,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        let Some(href) = session.inner.link_at(x, y) else {
+            return fail(cb_status::CB_ERR_UNAVAILABLE, "no link under the point");
+        };
+        // SAFETY: the header's contract for the buffer triple.
+        unsafe { str_out(&href, buf, cap, needed) }
+    })
+}
+
+/// Follow an href — one [`cb_session_link_at`] answered, or a TOC
+/// entry's. `*moved` reports whether the reader went anywhere; an
+/// external `http(s)` href answers false and is the shell's to open in a
+/// browser. A followed link pushes the return position for the `Back`
+/// action.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_follow_link(
+    session: *mut cb_session,
+    href: *const c_char,
+    moved: *mut bool,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        // SAFETY: the header's contract.
+        let Some(href) = (unsafe { crate::abi::str_in(href, "href") }) else {
+            return cb_status::CB_ERR_NULL_ARGUMENT;
+        };
+        let did = session.inner.follow_link(href);
+        out!(moved, did, "moved");
+        cb_status::CB_OK
+    })
+}
+
+// ---- Page zoom (image books) ----
+
+/// Zoom the page around a focal point in panel coordinates — the pinch.
+/// Image books only, clamped to `[1.0, 8.0]`, 1.0 returning to fit;
+/// `*changed` reports whether the view moved. **Always false on
+/// reflowable text**, where the same gesture means "make the text
+/// bigger" — a settings change the shell maps to the `FontUp`/`FontDown`
+/// actions itself. Zoom is view state: nothing persists it, and it
+/// survives a page turn on purpose (a shell wanting turn-resets sets
+/// 1.0 on turn).
+///
+/// Input crossing this boundary is mapped through the zoom
+/// automatically. Output geometry — `cb_session_range_rects`, the text
+/// surface — stays in fit-page space; a shell drawing overlays on a
+/// zoomed page maps forward with [`cb_session_page_zoom`] and
+/// [`cb_session_page_pan`]: `view = fit * zoom + pan`.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_set_page_zoom(
+    session: *mut cb_session,
+    zoom: f32,
+    focus_x: f32,
+    focus_y: f32,
+    changed: *mut bool,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        let did = session.inner.set_page_zoom(zoom, focus_x, focus_y);
+        out!(changed, did, "changed");
+        cb_status::CB_OK
+    })
+}
+
+/// Pan the zoomed page by a pointer delta in panel coordinates, clamped
+/// at the page's edges. `*changed` is false at fit — how a shell knows
+/// the same drag should fall through to whatever an unzoomed drag means
+/// (a selection, a swipe turn).
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_pan_page(
+    session: *mut cb_session,
+    dx: f32,
+    dy: f32,
+    changed: *mut bool,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        let session = session_mut!(session);
+        let did = session.inner.pan_page(dx, dy);
+        out!(changed, did, "changed");
+        cb_status::CB_OK
+    })
+}
+
+/// The current zoom, 1.0 at fit.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_zoom(
+    session: *const cb_session,
+    zoom: *mut f32,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        // SAFETY: a handle from an open call, not yet closed.
+        let Some(session) = (unsafe { session.as_ref() }) else {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "session is null");
+        };
+        out!(zoom, session.inner.page_zoom(), "zoom");
+        cb_status::CB_OK
+    })
+}
+
+/// The current pan in page units — with the zoom, the forward map for a
+/// shell's own overlays.
+#[no_mangle]
+pub unsafe extern "C" fn cb_session_page_pan(
+    session: *const cb_session,
+    x: *mut f32,
+    y: *mut f32,
+) -> cb_status {
+    guard(cb_status::CB_ERR_PANIC, || {
+        // SAFETY: a handle from an open call, not yet closed.
+        let Some(session) = (unsafe { session.as_ref() }) else {
+            return fail(cb_status::CB_ERR_NULL_ARGUMENT, "session is null");
+        };
+        let (px, py) = session.inner.page_pan();
+        out!(x, px, "x");
+        out!(y, py, "y");
+        cb_status::CB_OK
+    })
+}

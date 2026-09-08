@@ -584,6 +584,7 @@ impl Session {
             renderer: chapbook_render_tinyskia::Renderer::new(),
             settings,
             metrics: None,
+            view: None,
             units: HashMap::new(),
             cache_budget: cache_budget.unwrap_or(DEFAULT_CACHE_BUDGET),
             use_clock: 0,

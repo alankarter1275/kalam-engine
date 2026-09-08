@@ -108,6 +108,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 mod abi;
+mod annotations;
 mod config;
 mod error;
 mod http;
@@ -117,6 +118,12 @@ mod logging;
 mod session;
 mod sync;
 
+pub use annotations::{
+    cb_annotation, cb_annotation_kind, cb_session_add_bookmark, cb_session_add_highlight,
+    cb_session_add_note, cb_session_annotation, cb_session_annotation_color,
+    cb_session_annotation_count, cb_session_annotation_text, cb_session_goto_annotation,
+    cb_session_highlight_at, cb_session_remove_annotation, cb_session_set_highlight_color,
+};
 pub use config::{
     cb_config, cb_config_free, cb_config_new, cb_config_set_cache_budget,
     cb_config_set_library_dir, cb_font_source, cb_font_source_add_dir,

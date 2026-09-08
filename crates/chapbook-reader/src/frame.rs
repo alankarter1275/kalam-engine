@@ -77,9 +77,25 @@ impl Session {
     #[cfg(feature = "library")]
     fn range_damage(&self, start: u32, end: u32) -> Option<Rect> {
         let page = self.layout(self.spine)?.pages.get(self.page)?;
-        page.rects_for_range(start, end)
+        let region = page
+            .rects_for_range(start, end)
             .into_iter()
-            .reduce(|damage, rect| damage.union(&rect))
+            .reduce(|damage, rect| damage.union(&rect))?;
+        // Into the space the display list is actually in. `rects_for_range`
+        // answers in fit-page coordinates — the space every consumer of the
+        // text surface agrees on — but `apply_view` has scaled the ops a
+        // backend will paint, so on a zoomed page the two disagree by
+        // exactly the view transform.
+        //
+        // It matters for one combination and it is a real one: a PDF is an
+        // image book, so it zooms, and it has a text layer, so it selects.
+        // A selection is also the one intent that does *not* fall back to
+        // "the whole page", by design — which means an unmapped rect here
+        // is not merely imprecise, it names a region the change did not
+        // touch. A windowed shell repainting everything never notices; a
+        // panel doing partial updates leaves stale pixels, which is the one
+        // failure mode damage must not have.
+        Some(self.view_rect(region))
     }
 
     /// The current page as paint-neutral display ops, plus what changed
@@ -210,10 +226,10 @@ impl Session {
         let page_idx = page_idx.min(page_count - 1);
         let layout = self.layout(spine)?;
         let page = layout.pages.get(page_idx)?;
-        Some(chapbook_paint::build_display_list(
-            page,
-            background,
-            &selections,
-        ))
+        let mut list = chapbook_paint::build_display_list(page, background, &selections);
+        // The image-book zoom view, applied here so every backend and
+        // both of frame()'s doors see the same pixels-to-be.
+        self.apply_view(&mut list);
+        Some(list)
     }
 }

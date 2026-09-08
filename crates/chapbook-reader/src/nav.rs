@@ -310,7 +310,7 @@ impl Session {
     /// document. Only inside the link's own text: pressing the margin
     /// beside a link is not pressing the link.
     pub fn link_at(&mut self, x: f32, y: f32) -> Option<String> {
-        let (px, py) = self.metrics.map_or((x, y), |m| m.panel_to_page(x, y));
+        let (px, py) = self.content_point(x, y);
         let (spine, page) = (self.spine, self.page);
         let offset = self
             .layout_unit(spine)?
