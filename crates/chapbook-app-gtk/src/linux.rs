@@ -371,6 +371,20 @@ fn build_ui(app: &gtk::Application, model: Rc<RefCell<App>>) {
         }
     }
 
+    // Whatever the menus were, the page is what a reader is looking at:
+    // hand the focus back when one closes, which is also what puts a
+    // screen reader's locus back on the text.
+    for menu in [&nav_menu, &settings_menu, &marks_menu] {
+        if let Some(popover) = menu.popover() {
+            let shell = shell.clone();
+            popover.connect_closed(move |_| {
+                if shell.stack.visible_child_name().as_deref() == Some("reader") {
+                    shell.area.grab_focus();
+                }
+            });
+        }
+    }
+
     // ---- Shelf interactions ----
     {
         let shell = shell.clone();
@@ -508,9 +522,20 @@ fn build_ui(app: &gtk::Application, model: Rc<RefCell<App>>) {
 
     // ---- Reader keyboard ----
     //
-    // Attached to the page, not the window, so the shelf's search entry
-    // keeps its keys: events reach this controller only while the reader
-    // has focus.
+    // On the window in the capture phase, not on the page, and the
+    // reason is what a focusable header bar does to arrow keys: a menu
+    // button keeps the focus after its popover closes, and GTK then
+    // spends Left and Right moving focus *between the buttons* instead
+    // of turning pages. A reader whose page-turn keys stop working
+    // because a menu was opened once is broken, and no amount of
+    // refocusing the page fixes the case where somebody tabbed to a
+    // button on purpose.
+    //
+    // Capturing at the window means these keys reach the engine
+    // wherever the focus sits, so two guards keep it honest: the shelf
+    // page is left alone entirely (its search entry owns every key it
+    // gets), and an open popover is left alone too, because arrows in
+    // the contents list are that list's to navigate.
     {
         let shell = shell.clone();
         let mut keys = KeyMap::default();
@@ -518,7 +543,13 @@ fn build_ui(app: &gtk::Application, model: Rc<RefCell<App>>) {
         // nothing for `ToggleMenu` to do.
         keys.unbind(Key::Char('m'));
         let key = gtk::EventControllerKey::new();
+        key.set_propagation_phase(gtk::PropagationPhase::Capture);
         key.connect_key_pressed(move |_, keyval, _, _| {
+            if shell.stack.visible_child_name().as_deref() != Some("reader")
+                || shell.a_popover_is_open()
+            {
+                return glib::Propagation::Proceed;
+            }
             let name = keyval.name();
             let mut slot = shell.session.borrow_mut();
             let Some(s) = slot.as_mut() else {
@@ -565,7 +596,7 @@ fn build_ui(app: &gtk::Application, model: Rc<RefCell<App>>) {
                 glib::Propagation::Proceed
             }
         });
-        area.add_controller(key);
+        window.add_controller(key);
     }
 
     // ---- Links, selection and tap zones (press-drag) ----
@@ -873,6 +904,15 @@ impl Shell {
                 Err(e) => shell.set_status(&format!("import: {e}")),
             }
         });
+    }
+
+    /// Whether any chrome popover is on screen — the keys are its own
+    /// while it is, so a contents list can be arrowed through.
+    fn a_popover_is_open(&self) -> bool {
+        [&self.nav_menu, &self.settings_menu, &self.marks_menu]
+            .into_iter()
+            .filter_map(|menu| menu.popover())
+            .any(|popover| popover.is_visible())
     }
 
     /// One engine action from a chrome button — the same door the keys
