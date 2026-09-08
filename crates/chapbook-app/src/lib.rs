@@ -233,6 +233,64 @@ impl App {
 /// A shelf row's state, in the words every front end shows: "unread",
 /// "reading 42%", "finished". Matches the CLI's `describe_state`, which is
 /// the point — the two doors agree.
+/// A mark as a marks list shows it: where it sits, then what it says.
+/// The quote is elided rather than wrapped — a list row is a reminder,
+/// and the jump is how you read the rest.
+pub fn describe_annotation(mark: &chapbook_reader::AnnotationSummary) -> String {
+    use chapbook_library::AnnotationKind;
+    let kind = match mark.kind {
+        AnnotationKind::Bookmark => "bookmark",
+        AnnotationKind::Highlight => "highlight",
+        AnnotationKind::Note => "note",
+    };
+    let at = format!("{kind} \u{b7} {:.0}%", mark.progression * 100.0);
+    match mark
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        Some(text) => {
+            let mut quote: String = text.chars().take(60).collect();
+            if text.chars().count() > 60 {
+                quote.push('\u{2026}');
+            }
+            format!("{at} \u{b7} \u{201c}{quote}\u{201d}")
+        }
+        None => at,
+    }
+}
+
+/// The engine's themes in cycle order, with the names a menu shows.
+pub fn theme_names() -> [(&'static str, chapbook_core::Theme); 3] {
+    use chapbook_core::Theme;
+    [
+        ("Light", Theme::Light),
+        ("Sepia", Theme::Sepia),
+        ("Dark", Theme::Dark),
+    ]
+}
+
+/// The table of contents flattened for a menu: each entry with its
+/// nesting depth, in reading order. Entries that link nowhere still
+/// appear — they are section headings, and hiding them would orphan
+/// their children's indentation.
+pub fn flatten_toc(entries: &[chapbook_core::TocEntry]) -> Vec<(usize, chapbook_core::TocEntry)> {
+    fn walk(
+        entries: &[chapbook_core::TocEntry],
+        depth: usize,
+        out: &mut Vec<(usize, chapbook_core::TocEntry)>,
+    ) {
+        for entry in entries {
+            out.push((depth, entry.clone()));
+            walk(&entry.children, depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(entries, 0, &mut out);
+    out
+}
+
 pub fn describe_state(book: &BookRecord) -> String {
     let percent = book
         .progress

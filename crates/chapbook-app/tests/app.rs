@@ -242,3 +242,56 @@ fn the_state_line_matches_the_shelf() {
     let record = app.book(record.id).expect("lookup").expect("still there");
     assert_eq!(chapbook_app::describe_state(&record), "finished");
 }
+
+#[test]
+fn a_flattened_toc_keeps_reading_order_and_depth() {
+    let dir = TempDir::new("toc");
+    let mut app = App::open(Some(dir.path())).expect("open app");
+    let record = app.import(&fixture("long.epub")).expect("import");
+    let mut session = app.open_book(record.id).expect("open");
+    settle(&mut session);
+
+    let flat = chapbook_app::flatten_toc(session.toc());
+    assert!(!flat.is_empty(), "long.epub has contents");
+    assert_eq!(flat[0].0, 0, "the first entry is top level");
+    // Every entry the tree holds appears exactly once.
+    fn count(entries: &[chapbook_app::chapbook_reader::chapbook_core::TocEntry]) -> usize {
+        entries.iter().map(|e| 1 + count(&e.children)).sum()
+    }
+    assert_eq!(flat.len(), count(session.toc()));
+}
+
+#[test]
+fn a_mark_describes_itself_for_a_list() {
+    let dir = TempDir::new("describe-mark");
+    let mut app = App::open(Some(dir.path())).expect("open app");
+    let record = app.import(&fixture("minimal.epub")).expect("import");
+    let mut session = app.open_book(record.id).expect("open");
+    settle(&mut session);
+
+    // A bookmark carries no text, so its line is where it sits.
+    session.add_bookmark().expect("bookmarked");
+    let marks = session.annotations();
+    assert_eq!(marks.len(), 1);
+    let line = chapbook_app::describe_annotation(&marks[0]);
+    assert!(line.starts_with("bookmark"), "{line:?}");
+    assert!(line.contains('%'), "a mark says where it sits: {line:?}");
+
+    // A highlight quotes what it covers.
+    session.select_range(0, 12);
+    assert!(session.selected_range().is_some(), "an exact range selects");
+    session.add_highlight().expect("highlighted");
+    let marks = session.annotations();
+    let highlight = marks
+        .iter()
+        .find(|m| {
+            matches!(
+                m.kind,
+                chapbook_app::chapbook_library::AnnotationKind::Highlight
+            )
+        })
+        .expect("the highlight is listed");
+    let line = chapbook_app::describe_annotation(highlight);
+    assert!(line.starts_with("highlight"), "{line:?}");
+    assert!(line.contains('\u{201c}'), "a highlight quotes: {line:?}");
+}
