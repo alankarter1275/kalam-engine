@@ -40,7 +40,7 @@ pub fn run() -> glib::ExitCode {
     // See chapbook-viewer: the engine reports through `log`.
     chapbook_core::log_to_stderr();
     let Some(source) = std::env::args().nth(1) else {
-        eprintln!("usage: chapbook-viewer-gtk <book.epub|comic.cbz|doc.pdf|opds-url>");
+        eprintln!("usage: chapbook-viewer-gtk <book.epub>");
         return glib::ExitCode::from(2);
     };
     let config = chapbook_reader::SessionConfig::new(chapbook_core::FontSource::host())

@@ -3,10 +3,15 @@
 
 mod common;
 
+#[cfg(feature = "cbz")]
 use chapbook_reader::chapbook_paint::DisplayOp;
+#[cfg(feature = "cbz")]
 use chapbook_reader::Session;
-use common::{fixture, open_isolated, render_loaded};
+#[cfg(feature = "cbz")]
+use common::render_loaded;
+use common::{fixture, open_isolated};
 
+#[cfg(feature = "cbz")]
 fn comic() -> Session {
     let mut s = open_isolated("zoom-comic", &fixture("cbz/minimal.cbz"));
     s.set_metrics(common::metrics());
@@ -15,6 +20,7 @@ fn comic() -> Session {
 }
 
 /// The page image's destination rect in the current frame.
+#[cfg(feature = "cbz")]
 fn image_dest(s: &mut Session) -> chapbook_reader::chapbook_core::Rect {
     let frame = s.frame().expect("a loaded page frames");
     frame
@@ -42,6 +48,7 @@ fn reflowable_text_refuses_the_gesture() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn zoom_scales_the_page_and_anchors_the_focus() {
     let mut s = comic();
     let fit = image_dest(&mut s);
@@ -71,6 +78,7 @@ fn zoom_scales_the_page_and_anchors_the_focus() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn pan_moves_and_the_edges_hold() {
     let mut s = comic();
     assert!(s.set_page_zoom(2.0, 200.0, 300.0));
@@ -91,6 +99,7 @@ fn pan_moves_and_the_edges_hold() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn fit_is_a_zoom_of_one_and_turns_keep_the_view() {
     let mut s = comic();
     assert!(s.set_page_zoom(3.0, 100.0, 100.0));
@@ -118,6 +127,7 @@ fn fit_is_a_zoom_of_one_and_turns_keep_the_view() {
 /// shrinking the window while zoomed left a gap between the page's edge
 /// and the panel's, which is the one thing the clamp exists to prevent.
 #[test]
+#[cfg(feature = "cbz")]
 fn a_resize_brings_the_pan_back_inside_the_page() {
     let mut s = comic();
     assert!(s.set_page_zoom(2.0, 0.0, 0.0));

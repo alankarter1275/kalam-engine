@@ -14,7 +14,7 @@ authors.workspace = true
 # target the crate is a stub `main` and no dependencies at all.
 [target.'cfg(target_os = "linux")'.dependencies]
 chapbook-core = { workspace = true }
-chapbook-reader = { workspace = true, features = ["cbz", "pdf", "opds", "svg", "mathml"] }
+chapbook-reader = { workspace = true, features = ["svg", "mathml"] }
 chapbook-render-tinyskia = { workspace = true }
 # v4_16 raises this viewer's — not the engine's — runtime floor to GTK
 # 4.16, for the AccessibleText interface (4.14) and its extents/offset

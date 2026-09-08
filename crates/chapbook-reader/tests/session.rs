@@ -64,6 +64,7 @@ fn epub_session_renders_navigates_and_selects() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn cbz_session_pages_through_images() {
     let mut s = open_isolated("cbz-pages", &fixture("cbz/minimal.cbz"));
     assert_eq!(s.kind(), BookKind::Comic);
@@ -103,6 +104,7 @@ fn cbz_session_pages_through_images() {
 }
 
 #[test]
+#[cfg(feature = "pdf")]
 fn pdf_session_reads_like_an_image_book() {
     let mut s = open_isolated("pdf-read", &fixture("pdf/minimal.pdf"));
     assert_eq!(s.kind(), BookKind::Pdf);
@@ -120,6 +122,7 @@ fn pdf_session_reads_like_an_image_book() {
 }
 
 #[test]
+#[cfg(feature = "pdf")]
 fn pdf_text_selection_highlights() {
     let mut s = open_isolated("pdf-select", &fixture("pdf/minimal.pdf"));
     s.set_metrics(metrics());

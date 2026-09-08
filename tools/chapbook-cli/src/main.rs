@@ -66,26 +66,11 @@ enum Command {
         #[arg(long)]
         cfi: Option<String>,
     },
-    /// Browse, search, and download from OPDS catalogs
-    Opds {
-        #[command(subcommand)]
-        command: OpdsCommand,
-    },
     /// Manage the local library
     Lib {
         #[command(subcommand)]
         command: LibCommand,
     },
-}
-
-#[derive(Subcommand)]
-enum OpdsCommand {
-    /// List entries of a catalog feed
-    Ls { url: String },
-    /// Search a catalog
-    Search { url: String, query: String },
-    /// Download an open-access acquisition
-    Get { url: String, out: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -122,19 +107,6 @@ enum LibCommand {
     Rm {
         /// Library id, as shown by `lib ls`
         id: i64,
-    },
-    /// Add books from a catalog, with the services they sync to
-    Add {
-        /// A catalog feed URL, as `opds ls` takes
-        url: String,
-        /// Add every entry whose title contains this
-        matching: String,
-    },
-    /// Reconcile positions and marks with the services books came from
-    Sync {
-        /// One book, by the id `lib ls` shows. Omit for every book that
-        /// has a service.
-        id: Option<i64>,
     },
     /// Mark a book as finished
     Finish {
@@ -233,11 +205,6 @@ fn main() -> ExitCode {
             offset,
             cfi,
         } => print(commands::cfi(&epub, spine, offset, cfi.as_deref())),
-        Command::Opds { command } => match command {
-            OpdsCommand::Ls { url } => print(commands::opds_ls(&url)),
-            OpdsCommand::Search { url, query } => print(commands::opds_search(&url, &query)),
-            OpdsCommand::Get { url, out } => print(commands::opds_get(&url, &out)),
-        },
         Command::Lib { command } => match command {
             LibCommand::Import { book } => print(commands::lib_import(&book)),
             LibCommand::Ls {
@@ -257,8 +224,6 @@ fn main() -> ExitCode {
             )),
             LibCommand::Show { id } => print(commands::lib_show(id)),
             LibCommand::Rm { id } => print(commands::lib_rm(id)),
-            LibCommand::Add { url, matching } => print(commands::lib_add(&url, &matching)),
-            LibCommand::Sync { id } => print(commands::lib_sync(id)),
             LibCommand::Finish { id, undo } => print(commands::lib_finish(id, !undo)),
             LibCommand::Series => print(commands::lib_series()),
             LibCommand::Collection { command } => match command {

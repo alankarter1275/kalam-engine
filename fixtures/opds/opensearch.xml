@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
-  <ShortName>Example Catalog</ShortName>
-  <Description>Search the example catalog</Description>
-  <Url type="application/atom+xml;profile=opds-catalog;kind=acquisition" template="https://example.com/opds/search?q={searchTerms}"></Url>
-</OpenSearchDescription>

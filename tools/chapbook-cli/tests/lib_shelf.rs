@@ -36,13 +36,12 @@ fn the_shelf_commands_drive_a_library() {
         "epub/minimal.epub",
         "epub/series.epub",
         "epub/series-legacy.epub",
-        "cbz/minimal.cbz",
     ] {
         commands::lib_import(&fixture(name)).unwrap();
     }
 
     let all = ls(None, None, None);
-    assert_eq!(all.lines().count(), 4, "{all}");
+    assert_eq!(all.lines().count(), 3, "{all}");
     assert!(all.contains("The Fixture Cycle #2.5"), "{all}");
     assert!(
         all.contains("The Fixture Cycle #1"),
@@ -63,7 +62,6 @@ fn the_shelf_commands_drive_a_library() {
 
     let series = commands::lib_series().unwrap();
     assert!(series.contains("The Fixture Cycle"), "{series}");
-    assert!(series.contains("Cogs & Levers"), "{series}");
 
     // Collections, addressed by the name a person typed.
     assert!(commands::lib_collections()
@@ -91,14 +89,14 @@ fn the_shelf_commands_drive_a_library() {
         .contains("no collections"));
     assert_eq!(
         ls(None, None, None).lines().count(),
-        4,
+        3,
         "deleting a collection took a book with it"
     );
 
     // Reading state.
     assert_eq!(
         ls(None, None, Some(ReadingState::Unread)).lines().count(),
-        4
+        3
     );
     commands::lib_finish(1, true).unwrap();
     let finished = ls(None, None, Some(ReadingState::Finished));
@@ -126,13 +124,13 @@ fn the_shelf_commands_drive_a_library() {
 
     // Removing is soft, and putting the same file back is the same book.
     commands::lib_rm(1).unwrap();
-    assert_eq!(ls(None, None, None).lines().count(), 3);
+    assert_eq!(ls(None, None, None).lines().count(), 2);
     let again = commands::lib_import(&fixture("epub/minimal.epub")).unwrap();
     assert!(
         again.contains("#1"),
         "a second row would orphan its marks: {again}"
     );
-    assert_eq!(ls(None, None, None).lines().count(), 4);
+    assert_eq!(ls(None, None, None).lines().count(), 3);
 
     std::fs::remove_dir_all(&dir).ok();
 }

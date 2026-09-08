@@ -15,8 +15,10 @@ mod cache_budget {
     use super::*;
 
     /// One page of the comic fixture, decoded.
+    #[cfg(feature = "cbz")]
     const PAGE: usize = 120 * 180 * 4;
 
+    #[cfg(feature = "cbz")]
     fn comic(name: &str, budget: usize) -> Session {
         let dir = std::env::temp_dir().join(format!(
             "chapbook-budget-test-{}-{name}",
@@ -49,6 +51,7 @@ mod cache_budget {
     }
 
     #[test]
+    #[cfg(feature = "cbz")]
     fn paging_a_comic_forward_stays_under_the_budget() {
         // Room for two pages, not three.
         let budget = PAGE * 2 + PAGE / 2;
@@ -65,6 +68,7 @@ mod cache_budget {
     }
 
     #[test]
+    #[cfg(feature = "cbz")]
     fn the_unit_being_read_is_never_evicted() {
         // A budget nothing can fit. One page over is better than a reader
         // with nothing on screen.
@@ -75,6 +79,7 @@ mod cache_budget {
     }
 
     #[test]
+    #[cfg(feature = "cbz")]
     fn an_evicted_page_comes_back_the_same() {
         // Eviction is only safe because nothing cached is authoritative: a
         // comic page is re-read from the archive and decoded again. This is
@@ -96,6 +101,7 @@ mod cache_budget {
     }
 
     #[test]
+    #[cfg(feature = "cbz")]
     fn lowering_the_budget_evicts_immediately() {
         // What a host does on a memory warning: it does not get to wait
         // for the next page turn.

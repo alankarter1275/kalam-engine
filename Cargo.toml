@@ -6,24 +6,16 @@ members = [
     "crates/chapbook-layout",
     "crates/chapbook-paint",
     "crates/chapbook-render-tinyskia",
-    "crates/chapbook-opds",
-    "crates/opds-client",
-    "crates/chapbook-cbz",
-    "crates/chapbook-pdf",
     "crates/chapbook-library",
-    "crates/chapbook-annotations",
-    "crates/chapbook-sync",
     "crates/chapbook-reader",
     "crates/chapbook-viewer-gtk",
-    "crates/chapbook-app",
-    "crates/chapbook-app-gtk",
     "tools/chapbook-cli",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.92" # floor: hayro (stylo needs 1.89)
+rust-version = "1.92" # floor: kept where upstream set it (stylo needs 1.89)
 license = "MIT OR Apache-2.0"
 authors = ["Jeffrey T. Peckham <abic@ophymx.com>"]
 repository = "https://github.com/ophymx/chapbook"
@@ -33,35 +25,18 @@ readme = "README.md"
 # Internal crates
 chapbook-core = { path = "crates/chapbook-core" }
 chapbook-epub = { path = "crates/chapbook-epub" }
-# `default-features = false` for the same reason as chapbook-opds below:
-# without it here, chapbook-reader's own `default-features = false` (which
-# makes its `svg`/`mathml` passthroughs real choices) is silently ignored.
+# `default-features = false` so that chapbook-reader's own
+# `default-features = false` (which makes its `svg`/`mathml` passthroughs
+# real choices) is not silently ignored.
 # Members that want the defaults name them (chapbook-cli does).
 chapbook-layout = { path = "crates/chapbook-layout", default-features = false }
 chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
-# `default-features = false` here so a member can drop the bundled ureq
-# transport: without it on the workspace entry, a member's own
-# `default-features = false` is silently ignored. Members that want the
-# desktop transport enable `chapbook-opds/ureq` through a feature of
-# their own.
-chapbook-opds = { path = "crates/chapbook-opds", default-features = false }
-# Not chapbook-prefixed on purpose: no chapbook dependency, and headed for
-# its own repo. chapbook-opds is the thin binding that keeps it here.
-# Defaults off for the same reason chapbook-reader's are: the bundled ureq
-# transport is a choice a build should have to make, and a device build that
-# routes HTTP through the host must be able to not make it.
-opds-client = { path = "crates/opds-client", default-features = false }
-chapbook-cbz = { path = "crates/chapbook-cbz" }
-chapbook-pdf = { path = "crates/chapbook-pdf" }
 chapbook-library = { path = "crates/chapbook-library" }
-chapbook-annotations = { path = "crates/chapbook-annotations", default-features = false }
-chapbook-sync = { path = "crates/chapbook-sync", default-features = false }
 # No defaults here: each shell names the formats it means to open, so a
 # device build's surface is visible in its own manifest rather than
 # inherited. External consumers get the full default set as usual.
 chapbook-reader = { path = "crates/chapbook-reader", default-features = false }
-chapbook-app = { path = "crates/chapbook-app" }
 
 # The panel seam: update classes, the driver that holds the refresh rules,
 # and the backends underneath. It was chapbook's own module until it turned
@@ -156,23 +131,11 @@ rbook = { version = "0.7", default-features = false, features = [
     "threadsafe",
     "prelude",
 ] }
-# CBZ (deflate + stored cover the comic archives in the wild). Note
-# `deflate-flate2-zlib-rs` and not the `deflate` umbrella: that one also
-# turns on zopfli, a compressor, which a reader has no use for.
-zip = { version = "8", default-features = false, features = [
-    "deflate-flate2-zlib-rs",
-] }
-# PDF rasterization (pure Rust, CPU-only)
-hayro = "0.7"
 sha1 = "0.10" # IDPF font de-obfuscation key derivation
 
-# OPDS. NOTE: not atom_syndication/feed-rs — both silently drop the
-# foreign-namespace <link> attributes (opds:*, thr:count, pse:*) that facets
-# and page streaming live in. See crates/opds-client/INTEROP.md §0.
-ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+# EPUB package/OPF parsing where rbook leaves gaps; URL resolution for
+# relative hrefs.
 quick-xml = "0.42"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 url = "2"
 
 # Library persistence

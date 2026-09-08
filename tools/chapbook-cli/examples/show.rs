@@ -27,7 +27,7 @@ use mezzotint::{Panel, PanelDriver, Source, Update};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let Some(book) = args.next() else {
-        eprintln!("usage: show <book.epub|comic.cbz|doc.pdf> [/dev/fb0]");
+        eprintln!("usage: show <book.epub> [/dev/fb0]");
         std::process::exit(2);
     };
     let device = args.next().unwrap_or_else(|| "/dev/fb0".to_string());

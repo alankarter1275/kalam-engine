@@ -39,6 +39,7 @@ fn open_isolated(name: &str, source: &str) -> Session {
 
 /// Drive the async load path to completion: render (queues the load),
 /// then poll until the unit lands. Panics after ~5s.
+#[cfg(feature = "cbz")]
 fn render_loaded(s: &mut Session) {
     for _ in 0..200 {
         s.render().expect("render");
@@ -165,6 +166,7 @@ fn range_rects_agrees_with_selection_geometry() {
 }
 
 #[test]
+#[cfg(feature = "pdf")]
 fn pdf_hidden_text_becomes_runs() {
     let mut s = open_isolated("pdf-runs", &fixture("pdf/minimal.pdf"));
     assert_eq!(s.kind(), BookKind::Pdf);
@@ -196,6 +198,7 @@ fn pdf_hidden_text_becomes_runs() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn comic_page_has_no_runs() {
     let mut s = open_isolated("cbz-runs", &fixture("cbz/minimal.cbz"));
     assert_eq!(s.kind(), BookKind::Comic);
@@ -321,6 +324,7 @@ fn select_word_at_sets_a_selection() {
 }
 
 #[test]
+#[cfg(feature = "pdf")]
 fn pdf_speakable_page_has_words() {
     let mut s = open_isolated("pdf-speak", &fixture("pdf/minimal.pdf"));
     s.set_metrics(metrics());
@@ -339,6 +343,7 @@ fn pdf_speakable_page_has_words() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn comic_speakable_page_is_empty() {
     let mut s = open_isolated("cbz-speak", &fixture("cbz/minimal.cbz"));
     s.set_metrics(metrics());

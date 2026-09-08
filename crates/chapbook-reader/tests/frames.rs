@@ -41,6 +41,7 @@ fn display_list_is_the_backend_contract() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn image_units_key_their_ops_into_the_store() {
     use chapbook_reader::chapbook_paint::DisplayOp;
 
@@ -199,6 +200,7 @@ fn a_change_that_cannot_name_its_region_repaints_everything() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn a_landed_page_load_is_its_own_intent_and_states_its_region() {
     use chapbook_reader::chapbook_paint::FrameIntent;
 
@@ -237,6 +239,7 @@ fn a_landed_page_load_is_its_own_intent_and_states_its_region() {
 /// as a change cost a full-page panel update — on e-ink, a visible flash
 /// of a page that had not moved.
 #[test]
+#[cfg(feature = "cbz")]
 fn a_prefetch_that_lands_off_screen_asks_for_nothing() {
     use chapbook_reader::chapbook_paint::FrameIntent;
 

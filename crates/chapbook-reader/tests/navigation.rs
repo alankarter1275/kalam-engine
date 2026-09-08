@@ -143,6 +143,7 @@ fn search_is_case_insensitive_and_spans_the_spine() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn comics_have_nothing_to_search() {
     let mut s = open_isolated("cbz-search", &fixture("cbz/minimal.cbz"));
     s.set_metrics(metrics());
@@ -151,6 +152,7 @@ fn comics_have_nothing_to_search() {
 }
 
 #[test]
+#[cfg(feature = "pdf")]
 fn a_pdf_page_becomes_searchable_once_it_loads() {
     let mut s = open_isolated("pdf-search", &fixture("pdf/minimal.pdf"));
     s.set_metrics(metrics());

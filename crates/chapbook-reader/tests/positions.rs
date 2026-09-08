@@ -5,6 +5,7 @@ mod common;
 use common::*;
 
 #[test]
+#[cfg(feature = "cbz")]
 fn cbz_position_persists_across_sessions() {
     let source = fixture("cbz/minimal.cbz");
     {

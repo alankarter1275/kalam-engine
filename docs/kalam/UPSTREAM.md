@@ -106,6 +106,12 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-reader/src/layout.rs` | Honour `ReadingSettings::publisher_styles` (pass no author sheets when off) | Upstream flag was persisted but never read — a bug. **Candidate to send upstream.** |
 | `crates/chapbook-viewer-gtk/src/linux.rs` | `f` (force reader font) and `s` (publisher styles off) toggles | Testing aid; Kalam's adapter sets both permanently |
 | `crates/chapbook-core/src/diagnostics.rs` | Filter html5ever's stale "foster parenting not implemented" warning from the stderr logger | It fires per malformed table row in real books and means nothing |
+| `Cargo.toml`, `crates/*/Cargo.toml`, `tools/chapbook-cli/Cargo.toml` | Removed members, dependencies and features that belonged to deleted crates | Strip, PLAN §4. Expect conflicts in these on every cherry-pick that touches a manifest; resolve by hand |
+| `crates/chapbook-reader/Cargo.toml` | `cbz`/`pdf`/`opds`/`ureq` features removed; a `[lints.rust] unexpected_cfgs` check-cfg line names them so the untouched `cfg` sites in `src/` and `tests/` stay warning-free | Strip round 2. `src/` itself is unchanged |
+| `crates/chapbook-reader/tests/*.rs` | Tests that open a CBZ/PDF fixture gated with `#[cfg(feature = "cbz")]`/`"pdf"` (same style as the two upstream already gated); `sources.rs` splits the `Format` import the same way | Fixtures are gone; the tests compile out instead of failing to find files |
+| `crates/chapbook-core/tests/sniff.rs` | CBZ/PDF fixture tests removed; the "bytes beat the extension" test keeps its EPUB half | Fixtures are gone; `Format::sniff` itself is untouched |
+| `tools/chapbook-cli/src/{main,commands}.rs`, `tests/`, `examples/show.rs` | `opds`, `lib add`, `lib sync` subcommands and image-book paths removed; `open_publication` is EPUB-only | The crates behind them are gone |
+| `crates/chapbook-viewer-gtk/src/linux.rs` | Usage string says `<book.epub>` | Only format left |
 
 ## If upstream goes quiet or goes a direction we dislike
 

@@ -9,7 +9,9 @@
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use chapbook_core::{BookKind, EdgeSizes, Format, PageMetrics, Rotation, Size, Source};
+#[cfg(feature = "cbz")]
+use chapbook_core::Format;
+use chapbook_core::{BookKind, EdgeSizes, PageMetrics, Rotation, Size, Source};
 use chapbook_reader::{Session, SessionConfig};
 
 fn fixture(rel: &str) -> PathBuf {
@@ -68,6 +70,7 @@ fn one_epub_three_ways() {
 }
 
 #[test]
+#[cfg(all(feature = "cbz", feature = "pdf"))]
 fn a_comic_and_a_pdf_open_from_bytes_too() {
     let cbz = std::fs::read(fixture("cbz/minimal.cbz")).unwrap();
     let session = open(Source::bytes(cbz), "cbz-bytes").unwrap();
@@ -80,6 +83,7 @@ fn a_comic_and_a_pdf_open_from_bytes_too() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn a_misnamed_book_opens_by_its_bytes() {
     // The concrete win over the extension test. A comic archive named
     // `.epub` was a parse failure; an EPUB named `.cbz` was worse, since
@@ -99,6 +103,7 @@ fn a_misnamed_book_opens_by_its_bytes() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn a_host_that_knows_the_format_is_believed() {
     // A `content://` resolver reports a MIME type, and it may know things
     // the first 64 bytes cannot. Stating the format skips the sniff.
@@ -170,6 +175,7 @@ fn open_in(source: impl Into<Source>, dir: &Path) -> Session {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn a_descriptor_book_keeps_its_place() {
     // The custody gap, closed from the engine's side: a book with no path
     // still has bytes, the library keys identity by a hash of them, so a
@@ -193,6 +199,7 @@ fn a_descriptor_book_keeps_its_place() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn every_door_opens_onto_the_same_shelf() {
     // One book, three doors, one record. Identity is the edition
     // fingerprint, which a path, bytes and a handle all produce — so a

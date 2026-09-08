@@ -50,6 +50,7 @@ fn epub_highlight_persists_across_sessions() {
 }
 
 #[test]
+#[cfg(feature = "pdf")]
 fn pdf_highlight_resolves_against_the_page_text_layer() {
     let source = fixture("pdf/minimal.pdf");
     let (start, end) = {
@@ -84,6 +85,7 @@ fn pdf_highlight_resolves_against_the_page_text_layer() {
 }
 
 #[test]
+#[cfg(feature = "cbz")]
 fn comic_pages_take_no_highlights() {
     let mut s = open_isolated("cbz-highlight", &fixture("cbz/minimal.cbz"));
     s.set_metrics(metrics());

@@ -130,14 +130,3 @@ fn render_golden_bidi() {
         "fixtures/render/bidi-s0p0.png",
     );
 }
-
-#[test]
-fn render_golden_comic_page() {
-    // Comic pages carry no text, so this golden is font-independent.
-    check_golden_of(
-        "fixtures/cbz/minimal.cbz",
-        0,
-        0,
-        "fixtures/render/comic-s0.png",
-    );
-}

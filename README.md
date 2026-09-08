@@ -22,11 +22,13 @@ terms.
 |---|---|
 | Imported from Chapbook | done — `ab14cb7` |
 | Verified on Kalam's target hardware (4 GB, HDD, Arch) | done, 2026-09-08 — builds in 15 min, opens real books, `f`/`s` overrides confirmed working |
-| Stripped to the Kalam subset | in progress — steps 1, 2, 6 done (platform shells, GPU renderer, winit viewer); see `docs/kalam/PLAN.md` §4 |
+| Stripped to the Kalam subset | done — other platforms, GPU renderer, networking/catalogs/sync, PDF and comics, and Chapbook's own app are gone; MathML kept; `chapbook-library` stays until Kalam's database is wired in. See `docs/kalam/PLAN.md` §4 |
 | Kalam adapter (GTK widget, theme, dictionary/position hooks) | not started |
 
-Until the strip happens, this repo builds and behaves exactly like Chapbook
-did on 2026-09-07. Chapbook's own docs below are still accurate for it.
+What is left is Chapbook's EPUB core, its GTK4 demo window and its
+command-line tool. Chapbook's own docs below still describe that code
+accurately; where they mention PDF, comics, catalogs, sync or other
+platforms, that part no longer exists here.
 
 ## Getting started
 

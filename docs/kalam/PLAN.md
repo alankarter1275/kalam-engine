@@ -81,11 +81,11 @@ folders*, not surgery.
 |---|---|---|
 | ~~1~~ | ~~`android/`, `ios/`, `windows/` folders; `crates/chapbook-jni`, `chapbook-ffi`, `chapbook-viewer-win32`~~ | Other platforms. Nothing in the engine depends on them. **Done.** |
 | ~~2~~ | ~~`crates/chapbook-render-vello`~~ | GPU renderer. Desktop CPU rendering is instant already. **Done.** |
-| 3 | `crates/chapbook-opds`, `crates/opds-client`, `crates/chapbook-sync`, `crates/chapbook-annotations` | Online catalogs and cloud sync. Takes all networking (TLS, HTTP) out of the build. Kalam does not fetch books. |
-| 4 | `crates/chapbook-pdf`, `crates/chapbook-cbz` | PDF and comics. Kalam handles those with native GTK components. |
-| 5 | `crates/chapbook-app`, `crates/chapbook-app-gtk` | Chapbook's own full app (bookshelf + reader). Kalam *is* the app. `chapbook-viewer-gtk` is the one to keep, not this. |
+| ~~3~~ | ~~`crates/chapbook-opds`, `crates/opds-client`, `crates/chapbook-sync`, `crates/chapbook-annotations`~~ | Online catalogs and cloud sync. Takes all networking (TLS, HTTP) out of the build. Kalam does not fetch books. **Done.** |
+| ~~4~~ | ~~`crates/chapbook-pdf`, `crates/chapbook-cbz`~~ | PDF and comics. Kalam handles those with native GTK components. **Done.** |
+| ~~5~~ | ~~`crates/chapbook-app`, `crates/chapbook-app-gtk`~~ | Chapbook's own full app (bookshelf + reader). Kalam *is* the app. `chapbook-viewer-gtk` is the one to keep, not this. **Done** (same commit as 3 and 4 — it was their last user). |
 | ~~6~~ | ~~`crates/chapbook-viewer` (the `winit` one)~~ | Second demo window. GTK one is the one we build on. **Done** (early — it was vello's only consumer). |
-| 7 | `mathml` feature (and the 820 KB STIX font in `chapbook-layout/assets/`) | Math formulas. Books with math fall back to their built-in alt text. Optional; decide when you get there. |
+| 7 | `mathml` feature (and the 820 KB STIX font in `chapbook-layout/assets/`) | Math formulas. **Kept, by decision** (2026-09-08): it may be needed later, and it costs nothing at runtime for books without math. |
 | 8 | `crates/chapbook-library` | **Last, and carefully.** This is Chapbook's own SQLite bookshelf: books, positions, highlights. Kalam has its own database. But the *reading session* uses it to save and restore your place, so removing it means wiring Kalam's database in through the adapter first. See §6. |
 
 Each step: delete the folder, remove its line from the workspace
@@ -93,11 +93,26 @@ Each step: delete the folder, remove its line from the workspace
 matching feature from `chapbook-reader/Cargo.toml` if it has one, run the
 gate (§8), fix whatever complains, commit. One step per commit.
 
+How it actually went: two commits (steps 1+2+6, then 3+4+5), because the
+machine that compiles is the target box and one long build per round was
+kinder to it than six. The reader's source files were not edited: its
+`#[cfg(feature = "cbz")]`-style switches are simply never turned on any
+more (a `check-cfg` line in its `Cargo.toml` tells the compiler those
+names are known, so it does not warn about them). Tests that needed a
+comic or PDF fixture were put behind the same switches, so they compile
+out instead of failing to find their files; the few that could not be
+switched off were removed.
+
 Expected result, measured at import: Chapbook's own code is ~62 K lines of
 Rust across 22 crates. The crates that stay total ~29 K lines (of which
 `chapbook-layout` is 10.5 K and `chapbook-reader` 9.5 K), so the strip
 removes a little over half. The third-party dependency count drops from
 ~240 to well under 200, and the whole networking stack leaves the build.
+
+Actual result after round 2: 32 K lines across 9 crates (the extra 3 K
+over the estimate is `chapbook-library` and the CLI, which stay for now),
+and `Cargo.lock` went from 618 packages to 351. No HTTP, TLS, PDF or
+GPU code is left in the build.
 
 ## 5. Things that must not be removed (and why)
 
@@ -158,7 +173,7 @@ writing the adapter.
    permanently. One upstream bug found and fixed along the way
    (`publisher_styles` was never read). Verdict: the engine holds up;
    proceed.
-2. **Strip**, steps 1–7 of the table in §4, one commit each.
+2. **Strip**, steps 1–6 of the table in §4 (7 was kept). **Done** in two rounds, both built and run on the target machine.
 3. **Build the adapter** (§6) against the stripped engine.
 4. **Remove `chapbook-library`** (step 8), now that Kalam's database does
    its job.

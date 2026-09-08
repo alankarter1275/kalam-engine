@@ -9,9 +9,11 @@ use common::*;
 mod lifecycle {
     use super::*;
 
+    #[cfg(feature = "cbz")]
     const PAGE: usize = 120 * 180 * 4;
     /// A retained unit is its decoded image *and* its laid-out page, so
     /// "one unit" is a little over one page's worth of pixels.
+    #[cfg(feature = "cbz")]
     const ONE_UNIT: usize = PAGE + 8 * 1024;
 
     fn dir_for(name: &str) -> std::path::PathBuf {
@@ -23,6 +25,7 @@ mod lifecycle {
         dir
     }
 
+    #[cfg(feature = "cbz")]
     fn comic(name: &str) -> Session {
         let mut session = Session::open_with(
             fixture("cbz/minimal.cbz"),
@@ -39,6 +42,7 @@ mod lifecycle {
     }
 
     #[test]
+    #[cfg(feature = "cbz")]
     fn release_caches_keeps_the_page_on_screen_and_drops_the_rest() {
         let mut session = comic("release");
         for _ in 0..session.spine_len() {
@@ -61,6 +65,7 @@ mod lifecycle {
     }
 
     #[test]
+    #[cfg(feature = "cbz")]
     fn what_release_drops_comes_back_identical() {
         let mut session = comic("release-refill");
         let first = render_loaded(&mut session).data().to_vec();
@@ -102,6 +107,7 @@ mod lifecycle {
     }
 
     #[test]
+    #[cfg(feature = "cbz")]
     fn a_suspended_session_keeps_working() {
         // `onStop` is often followed by `onStart` with the process still
         // alive. A session that stopped saving after the first suspend
@@ -118,6 +124,7 @@ mod lifecycle {
     }
 
     #[test]
+    #[cfg(feature = "cbz")]
     fn suspending_gives_the_caches_back_too() {
         let mut session = comic("suspend-caches");
         for _ in 0..session.spine_len() {

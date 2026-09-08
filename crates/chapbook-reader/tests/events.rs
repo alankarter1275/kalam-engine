@@ -38,6 +38,7 @@ fn open(name: &str, source: &str) -> Session {
 }
 
 /// Drive an image book's async load to completion.
+#[cfg(feature = "cbz")]
 fn settle(session: &mut Session) {
     for _ in 0..200 {
         session.render();
@@ -162,6 +163,7 @@ fn finishing_the_book_fires_on_the_transition() {
 /// A comic page decoding on the loader thread is a discrete fact, so it
 /// is queued when it happens rather than derived.
 #[test]
+#[cfg(feature = "cbz")]
 fn a_loaded_unit_is_reported_with_its_spine() {
     let mut session = open("loaded", &fixture("cbz/minimal.cbz"));
     settle(&mut session);
@@ -254,6 +256,7 @@ fn a_failed_unit_reaches_the_shell_instead_of_only_the_log() {
 /// A shell that installs no wakeup and never drains must not grow the
 /// queue without limit while a comic prefetches its way through a book.
 #[test]
+#[cfg(feature = "cbz")]
 fn the_queue_keeps_one_event_per_subject() {
     let mut session = open("bounded", &fixture("cbz/minimal.cbz"));
     settle(&mut session);
