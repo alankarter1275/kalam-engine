@@ -292,11 +292,7 @@ fn settle_lands_a_jump_without_a_frame() {
     // first.
     assert_eq!(s.position().spine, 4);
     let landed = s.settle();
-    assert_eq!(
-        (landed.spine, landed.page),
-        (4, 1),
-        "settle lands the jump"
-    );
+    assert_eq!((landed.spine, landed.page), (4, 1), "settle lands the jump");
     assert_eq!(s.position(), landed);
     assert_eq!(s.settle(), landed, "nothing pending is a no-op");
 
@@ -338,11 +334,7 @@ fn the_layout_generation_moves_when_layouts_are_dropped() {
     let g2 = s.layout_generation();
 
     s.set_metrics(m);
-    assert_eq!(
-        s.layout_generation(),
-        g2,
-        "the same metrics again: nothing"
-    );
+    assert_eq!(s.layout_generation(), g2, "the same metrics again: nothing");
     s.release_caches();
     assert!(s.layout_generation() > g2, "and a memory-pressure release");
 }
