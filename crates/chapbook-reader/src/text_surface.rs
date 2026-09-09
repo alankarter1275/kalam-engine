@@ -257,17 +257,28 @@ impl Session {
     /// `None` until the page is laid out; empty for a page with nothing to
     /// speak.
     pub fn speakable_page(&self) -> Option<SpeakablePage> {
-        let layout = self.layout(self.spine)?;
-        let current = layout.pages.get(self.page)?;
+        self.speakable_unit_page(self.spine, self.page)
+    }
+
+    /// [`Session::speakable_page`] for any laid-out page, not only the
+    /// current one. kalam: what a scrolling shell's tap-to-look-up needs,
+    /// since the page under the finger need not be the session's.
+    pub(crate) fn speakable_unit_page(
+        &self,
+        spine: usize,
+        page_idx: usize,
+    ) -> Option<SpeakablePage> {
+        let layout = self.layout(spine)?;
+        let current = layout.pages.get(page_idx)?;
         let mut page = SpeakablePage::default();
         let (mut out_len, mut pending_space) = (0u32, false);
         match self.book.publication().kind() {
             BookKind::Epub => {
-                let unit = self.cached_unit_text(self.spine)?;
-                let start = *layout.char_map.get(self.page)? as usize;
+                let unit = self.cached_unit_text(spine)?;
+                let start = *layout.char_map.get(page_idx)? as usize;
                 let end = layout
                     .char_map
-                    .get(self.page + 1)
+                    .get(page_idx + 1)
                     .map(|&e| e as usize)
                     .unwrap_or_else(|| unit.chars().count());
                 let slice: String = unit

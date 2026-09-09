@@ -1469,3 +1469,129 @@ fn multi_line_selection_covers_each_line() {
     let rects = page.rects_for_range(all[0] + 2, all[2] + 2);
     assert_eq!(rects.len(), 3, "one rect per touched line: {rects:?}");
 }
+
+// ---- kalam: the strip view's numbers (gaps, used_height) ----
+
+/// Bottom of the lowest line on a page, content-relative.
+fn lowest_line_bottom(layout: &ChapterLayout, page: usize) -> f32 {
+    let p = &layout.pages[page];
+    p.fragments
+        .iter()
+        .map(|f| f.rect.max_y() - p.content.origin.y)
+        .fold(0.0f32, f32::max)
+}
+
+#[test]
+fn used_height_is_the_lowest_fragment_not_the_page() {
+    // Four lines fit; two are placed, so the page is half used.
+    let html = format!("<html><body>{}</body></html>", para_of_lines(2, "short"));
+    let (layout, _) = layout_html(&html, "p { margin: 0; }", &page_for_lines(4));
+    assert_eq!(layout.pages.len(), 1);
+    assert_eq!(layout.gaps, vec![0.0], "page 0 has no gap before it");
+    let used = layout.used_height(0);
+    assert!(
+        (used - lowest_line_bottom(&layout, 0)).abs() < 0.01,
+        "used_height {used} must be the bottom of the last line"
+    );
+    assert!(
+        used < layout.pages[0].content.size.h / 2.0 + 27.0,
+        "two lines of four is about half a page, got {used}"
+    );
+    assert_eq!(layout.used_height(7), 0.0, "a page that does not exist");
+}
+
+#[test]
+fn a_natural_break_between_paragraphs_keeps_the_collapsed_margin() {
+    // 4-line page, paragraphs with 30px margins: the first paragraph fills
+    // the page, the second starts page 2 with its top margin discarded
+    // (`margins_discarded_at_page_top`). In flow the two would have been
+    // 30px apart (collapsed 30/30), and that is what the gap says.
+    let html = format!(
+        "<html><body>{}{}</body></html>",
+        para_of_lines(4, "first"),
+        para_of_lines(2, "second")
+    );
+    let (layout, _) = layout_html(&html, "p { margin: 30px 0; }", &page_for_lines(4));
+    assert_eq!(layout.pages.len(), 2);
+    assert_eq!(layout.gaps.len(), 2);
+    assert_eq!(layout.gap_before(0), 0.0);
+    assert!(
+        (layout.gap_before(1) - 30.0).abs() < 0.5,
+        "collapsed 30px margin at the seam, got {}",
+        layout.gap_before(1)
+    );
+    assert_eq!(layout.gap_before(2), 0.0, "past the end is no gap");
+}
+
+#[test]
+fn a_forced_break_keeps_the_margin_the_break_discarded() {
+    // `break-after: page` on the heading: the paragraph starts page 2 and
+    // the heading's bottom margin (20px) plus the paragraph's top (10px)
+    // collapse to 20px of flow space — the gap.
+    let html = "<html><body><h1>Title</h1><p>body text</p></body></html>";
+    let (layout, _) = layout_html(
+        html,
+        "h1 { break-after: page; margin: 0 0 20px 0; } p { margin: 10px 0; }",
+        &page_for_lines(10),
+    );
+    assert_eq!(layout.pages.len(), 2);
+    assert!(
+        (layout.gap_before(1) - 20.0).abs() < 0.5,
+        "expected the 20px the forced break dropped, got {}",
+        layout.gap_before(1)
+    );
+}
+
+#[test]
+fn a_split_paragraph_has_no_gap_at_the_seam() {
+    // Lines of one paragraph run straight across the break: nothing was
+    // discarded between them, so the strip must not open a space there.
+    let html = format!("<html><body>{}</body></html>", para_of_lines(10, "w"));
+    let (layout, _) = layout_html(&html, "p { margin: 0; }", &page_for_lines(4));
+    assert!(layout.pages.len() >= 2);
+    for page in 1..layout.pages.len() {
+        assert!(
+            layout.gap_before(page).abs() < 0.01,
+            "page {page}: a paragraph split mid-flow leaves no gap, got {}",
+            layout.gap_before(page)
+        );
+    }
+    // And every page but the last is filled to within a line.
+    for page in 0..layout.pages.len() - 1 {
+        let used = layout.used_height(page);
+        let full = layout.pages[page].content.size.h;
+        assert!(
+            full - used < 27.0 + 0.01,
+            "page {page} is filled: used {used} of {full}"
+        );
+    }
+}
+
+#[test]
+fn a_migrated_heading_reports_the_seam_it_left_behind() {
+    // `keep_with_next_migrates_heading_to_new_page`, measured: the
+    // heading moves to page 2, so the seam is between the filler's last
+    // line and the heading — with zero margins, no space at all.
+    let html = format!(
+        "<html><body>{}<h3>Kept Heading</h3>{}</body></html>",
+        para_of_lines(3, "filler"),
+        para_of_lines(3, "body")
+    );
+    let (layout, _) = layout_html(
+        &html,
+        "p { margin: 0; } h3 { margin: 0; font-size: 18px; break-after: avoid; }",
+        &page_for_lines(4),
+    );
+    assert_eq!(layout.pages.len(), 2);
+    assert!(
+        layout.gap_before(1).abs() < 0.01,
+        "no margins, no seam space, got {}",
+        layout.gap_before(1)
+    );
+    // The page the heading left is three lines used, not four.
+    let used = layout.used_height(0);
+    assert!(
+        (used - 3.0 * 27.0).abs() < 1.0,
+        "three filler lines remain on page 1, used {used}"
+    );
+}

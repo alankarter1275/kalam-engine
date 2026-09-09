@@ -60,6 +60,18 @@ pub struct ChapterLayout {
     pub char_map: Vec<u32>,
     /// Element `id` attribute → page index (TOC fragment jumps).
     pub anchors: HashMap<String, usize>,
+    /// kalam: per page, the flow space (CSS px) the page break before it
+    /// discarded — the block margin that would have separated the last
+    /// content of the previous page from the first content of this one,
+    /// had there been no break. `gaps[0]` is always `0.0`.
+    ///
+    /// Pagination throws that space away, as CSS says it must
+    /// (margins truncate at fragmentainer boundaries). A shell that
+    /// shows the pages glued end to end as one scroll needs it back:
+    /// without it, a paragraph that starts a page sits flush against
+    /// the paragraph that ended the page before, and every page seam
+    /// reads as a missing blank line. See [`ChapterLayout::used_height`].
+    pub gaps: Vec<f32>,
 }
 
 impl ChapterLayout {
@@ -71,6 +83,7 @@ impl ChapterLayout {
         self.pages.capacity() * size_of::<chapbook_paint::Page>()
             + self.pages.iter().map(|p| p.approx_bytes()).sum::<usize>()
             + self.char_map.capacity() * size_of::<u32>()
+            + self.gaps.capacity() * size_of::<f32>()
             + self
                 .anchors
                 .keys()
@@ -81,6 +94,38 @@ impl ChapterLayout {
     /// Page containing the given locator offset.
     pub fn page_of(&self, char_offset: u32) -> usize {
         page_of(&self.char_map, char_offset)
+    }
+
+    /// kalam: how much of a page's content box is actually used — the
+    /// content-relative bottom of its lowest fragment, in CSS px. A page
+    /// that a forced break or a kept heading left half empty says so
+    /// here, where `Page::size` says only what the page *could* hold.
+    ///
+    /// Box slices that continue on to the next page are not counted:
+    /// they reach the page bottom because the box goes on, not because
+    /// anything is there. `0.0` for an empty page. Can exceed the content
+    /// height by a line where pagination allowed one to overflow rather
+    /// than leave a page empty; a strip should show it, not clip it.
+    pub fn used_height(&self, page: usize) -> f32 {
+        let Some(page) = self.pages.get(page) else {
+            return 0.0;
+        };
+        let top = page.content.origin.y;
+        page.fragments
+            .iter()
+            .filter(|f| match &f.kind {
+                chapbook_paint::FragmentKind::Box(slice) => slice.last_slice,
+                _ => true,
+            })
+            .map(|f| f.rect.max_y() - top)
+            .fold(0.0f32, f32::max)
+    }
+
+    /// kalam: the flow space discarded before `page` — see
+    /// [`ChapterLayout::gaps`]. `0.0` for page 0 and for any page index
+    /// the layout does not have.
+    pub fn gap_before(&self, page: usize) -> f32 {
+        self.gaps.get(page).copied().unwrap_or(0.0)
     }
 }
 
@@ -124,7 +169,7 @@ pub fn paginate(
     if let Some(root) = boxtree::build_box_tree(&input) {
         paginator.place_block(&root, 0.0, page.content_width());
     }
-    let (pages, char_map) = paginator.finish();
+    let (pages, char_map, gaps) = paginator.finish();
 
     // Anchors: element id → page, via each element's locator offset.
     let mut anchors = HashMap::new();
@@ -140,6 +185,7 @@ pub fn paginate(
         pages,
         char_map,
         anchors,
+        gaps,
     }
 }
 

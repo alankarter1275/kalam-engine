@@ -40,6 +40,7 @@ mod loader;
 mod nav;
 mod open;
 mod render;
+mod scroll;
 mod text_surface;
 mod zoom;
 
@@ -56,6 +57,7 @@ use loader::Loader;
 use open::OpenBook;
 
 pub use host_highlights::HostHighlight;
+pub use scroll::PageExtent;
 
 /// A host's highlight ([`HostHighlight`]) resolved into the open book's
 /// locator space — what a shell paints and lists.

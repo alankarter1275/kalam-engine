@@ -442,6 +442,45 @@ one. `locator()` gives the full locator. `LOCATORS.md` explains what
 survives a relayout and what does not, which matters the moment you sync
 positions between two devices with different screens.
 
+## 5a. A scrolling shell (kalam)
+
+Everything above assumes the shell shows one page: `frame()` paints the
+current one, `offset_at` hit-tests it, `next_page()` leaves it. A shell
+that scrolls shows several at once and none of them is "current" in that
+sense, so `chapbook-reader/src/scroll.rs` offers the same things *by
+page*, without moving the session:
+
+- `page_extents(spine)` — per page, the height actually used
+  (`used_height`) and the flow space the page break discarded
+  (`gap_before`). Stack `gap_before + used_height` for every page of
+  every chapter and you have the strip; the pages glue into one flow
+  instead of a pile of sheets with blank bands between.
+- `page_frame(spine, page)` / `render_page(spine, page)` — the display
+  list or pixels for any page, highlights and selection included. Draw
+  the pages that intersect the viewport and no others; the ground fill
+  is page-sized, so clip to the extent you show.
+- `offset_at_page`, `word_at_page`, `link_at_page`,
+  `host_highlight_at_page`, `range_rects_on_page`,
+  `selection_begin_on_page`, `selection_drag_on_page` — the input calls,
+  for the page under the pointer.
+- `set_position(spine, page)` — tell the session where the reader has
+  scrolled to. That is what keeps `layered_locator()`, `unit_fraction()`
+  and `PositionChanged` true; call it whenever the page at the top of
+  the viewport changes.
+- `page_of(locator)` / `page_of_anchor(spine, fragment)` — where a jump
+  lands, as a page, so the shell scrolls there instead of letting `goto`
+  re-page the session behind its back.
+
+Chapters not yet laid out have no extents. Estimate their height from
+`chapter_char_count(spine)` against the ratio the laid-out chapters show,
+lay a chapter out when it comes within a screen of the viewport
+(`page_count_of` does), and correct the strip then — anchoring on the
+page at the top of the viewport, not on a pixel offset, so the reader's
+line does not move when a chapter above them turns out longer than
+guessed. The cache budget still applies: a chapter far from the viewport
+may be evicted and its extents must then be re-asked, which is why the
+shell keeps its own copy of the strip's slots.
+
 ## 6. Background loads, and the one rule that is not negotiable
 
 Comic pages and PDF rasterizations decode on the session's loader thread.

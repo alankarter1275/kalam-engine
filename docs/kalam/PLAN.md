@@ -171,7 +171,9 @@ view; continuous scrolling is the next step. Its `README.md` is the
 current description; where it and this section disagree, the README is
 right. Two small engine additions were needed and are logged in
 `UPSTREAM.md`: a `Palette` on `ReadingSettings` (Kalam's exact colours) and
-`host_position.rs` (positions as values for Kalam's database).
+`host_position.rs` (positions as values for Kalam's database). The
+engine half of continuous scrolling (`scroll.rs`) followed on 2026-09-09;
+the widget half is round H in §7.
 
 ## 7. The order of work
 
@@ -210,9 +212,24 @@ right. Two small engine additions were needed and are logged in
    session now remembers nothing between runs: Kalam hands back the
    position (`goto_locator`) and the highlights (`set_highlights`) on
    open.
-5. **Integrate into Kalam**: path dependency, swap the WebKit view for the
+5. **Continuous scrolling** (owner's request, 2026-09-09: the whole book
+   as one strip, done *before* the Kalam wiring so the widget arrives
+   with both modes). Three rounds:
+   - **G — engine** (`chapbook-reader/src/scroll.rs`, done): the by-page
+     surface — trimmed page extents (`used_height`, and the `gap` a
+     break discarded, recorded by the paginator), a frame and hit-tests
+     for any page, `set_position` for the shell to report where the
+     reader scrolled to. Paged mode untouched; tests in
+     `tests/scroll.rs` and `chapbook-layout/tests/pagination.rs`.
+   - **H — widget**: the strip in `kalam-reader` (GTK scrolling,
+     estimated heights for chapters not yet laid out from
+     `chapter_char_count`, corrected on layout; only the visible band
+     drawn); a demo key to switch modes. The owner tests here.
+   - **I — polish** after that run: a tile cache if drawing stutters,
+     chapter separators, whatever the run shows.
+6. **Integrate into Kalam**: path dependency, swap the WebKit view for the
    widget.
-6. **Monthly**: review upstream and bring over fixes ([`UPSTREAM.md`](UPSTREAM.md)).
+7. **Monthly**: review upstream and bring over fixes ([`UPSTREAM.md`](UPSTREAM.md)).
 
 ## 8. The gate
 

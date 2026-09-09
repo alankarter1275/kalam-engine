@@ -84,6 +84,14 @@ pub(crate) struct Paginator<'f> {
     active_keep: Option<KeepAnchor>,
     /// Per page: smallest locator offset placed on it (u32::MAX = none yet).
     page_locators: Vec<u32>,
+    /// kalam: per page, the flow space the break before it discarded —
+    /// see [`crate::ChapterLayout::gaps`].
+    gaps: Vec<f32>,
+    /// kalam: the committed-but-empty part of the latest gap (padding,
+    /// a margin already added to the cursor), kept apart from the margin
+    /// part so the next block's top margin can collapse against the
+    /// latter without swallowing the former.
+    gap_lost: f32,
     /// Active float exclusion per side, page-local (cleared at page breaks).
     float_left: Option<FloatBand>,
     float_right: Option<FloatBand>,
@@ -160,6 +168,8 @@ impl<'f> Paginator<'f> {
             last_avoid_after: false,
             active_keep: None,
             page_locators: Vec::new(),
+            gaps: Vec::new(),
+            gap_lost: 0.0,
             float_left: None,
             float_right: None,
             hyphen_cache: std::collections::HashMap::new(),
@@ -169,7 +179,7 @@ impl<'f> Paginator<'f> {
         p
     }
 
-    pub fn finish(mut self) -> (Vec<Page>, Vec<u32>) {
+    pub fn finish(mut self) -> (Vec<Page>, Vec<u32>, Vec<f32>) {
         // Backfill locator starts for pages that carried no text.
         let mut last = 0u32;
         for loc in &mut self.page_locators {
@@ -179,10 +189,42 @@ impl<'f> Paginator<'f> {
                 last = *loc;
             }
         }
-        (self.pages, self.page_locators)
+        (self.pages, self.page_locators, self.gaps)
+    }
+
+    /// kalam: content-relative bottom of the lowest fragment on `page`
+    /// that ends there. Box slices that run on to the next page are left
+    /// out: they reach the page bottom only because the box continues, not
+    /// because anything is there.
+    fn content_bottom_of(&self, page: usize) -> f32 {
+        let Some(page) = self.pages.get(page) else {
+            return 0.0;
+        };
+        page.fragments
+            .iter()
+            .filter(|f| match &f.kind {
+                FragmentKind::Box(slice) => slice.last_slice,
+                _ => true,
+            })
+            .map(|f| f.rect.max_y() - self.content.origin.y)
+            .fold(0.0f32, f32::max)
     }
 
     fn new_page(&mut self) {
+        // kalam: what the break throws away, so far. A margin already
+        // committed sits between the last fragment and the cursor; one
+        // still pending (a forced break) has not been added to anything
+        // yet. The other half of a collapsed margin — the next block's
+        // top — is not known until that block commits it at the top of
+        // the new page; `commit_margin` folds it in then.
+        let lost = if self.pages.is_empty() {
+            0.0
+        } else {
+            (self.y - self.content_bottom_of(self.pages.len() - 1)).max(0.0)
+        };
+        self.gap_lost = lost;
+        self.gaps
+            .push((lost + self.pending_margin).min(self.content.size.h));
         self.pages.push(Page {
             size: self.page.size,
             content: self.content,
@@ -469,6 +511,15 @@ impl<'f> Paginator<'f> {
         // Cursor resumes where the block would have started, relative to
         // the migrated anchor (its height plus any committed margins).
         self.y = old_y - anchor.y_start;
+        // kalam: the seam is now between what stayed on the old page and
+        // the migrated heading, so the gap is the space that separated
+        // those — not the margin the heading had committed after itself.
+        let old_bottom = self.content_bottom_of(old_page);
+        let seam = (anchor.y_start - old_bottom).clamp(0.0, self.content.size.h);
+        self.gap_lost = seam;
+        if let Some(gap) = self.gaps.last_mut() {
+            *gap = seam;
+        }
     }
 
     /// Insert one background/border slice per page the box touched, under
@@ -801,7 +852,7 @@ impl<'f> Paginator<'f> {
         let mut sub = Paginator::new(&mut *self.fonts, sub_metrics);
         sub.in_float = true;
         sub.place_block(block, 0.0, margin_box_w);
-        let (mut sub_pages, _) = sub.finish();
+        let (mut sub_pages, _, _) = sub.finish();
         let fragments = std::mem::take(&mut sub_pages[0].fragments);
         let height = fragments
             .iter()
@@ -1065,6 +1116,16 @@ impl<'f> Paginator<'f> {
     fn commit_margin(&mut self) {
         if !self.at_page_top() {
             self.y += self.pending_margin;
+        } else if self.pages.len() > 1 {
+            // kalam: the margin a page top discards is the other half of
+            // the flow space the break before it threw away — see `gaps`.
+            // It collapses against the margin part of that gap, not the
+            // committed part. Page 0 keeps none: a chapter starts flush
+            // in either view.
+            let with_top = (self.gap_lost + self.pending_margin).min(self.content.size.h);
+            if let Some(gap) = self.gaps.last_mut() {
+                *gap = gap.max(with_top);
+            }
         }
         self.pending_margin = 0.0;
     }

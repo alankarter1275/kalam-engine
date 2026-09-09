@@ -213,6 +213,7 @@ impl Session {
                 }],
                 char_map: vec![0],
                 anchors: HashMap::new(),
+                gaps: vec![0.0],
             };
         };
         let resource = spine as u64 + 1;
@@ -226,6 +227,7 @@ impl Session {
             pages: vec![page],
             char_map: vec![0],
             anchors: HashMap::new(),
+            gaps: vec![0.0],
         }
     }
 
