@@ -63,6 +63,22 @@ jobs:
       # which is readable through the API — the raw log is not, from
       # everywhere, and the sandbox that pushes most commits here can only
       # reach github.com.
+      # kalam: the lock file is committed by hand from a sandbox with no
+      # cargo, so it can drift from what cargo wants (a member missing, a
+      # package left behind). Then cargo rewrites it on the owner's
+      # machine and the next `git pull` refuses to merge. `--locked` turns
+      # that drift into a CI failure here instead.
+      - name: lockfile
+        id: lock
+        continue-on-error: true
+        run: |
+          if ! cargo metadata --locked --format-version 1 > /dev/null 2> lock.txt; then
+            cat lock.txt
+            # Show what cargo wanted, so the fix can be typed from the report.
+            cargo metadata --format-version 1 > /dev/null 2>&1 || true
+            git --no-pager diff -- Cargo.lock | tee -a lock.txt
+            exit 1
+          fi
       - name: rustfmt
         id: fmt
         continue-on-error: true
@@ -91,6 +107,7 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          LOCK: ${{ steps.lock.outcome }}
           FMT: ${{ steps.fmt.outcome }}
           CLIPPY: ${{ steps.clippy.outcome }}
           TEST: ${{ steps.test.outcome }}
@@ -99,10 +116,14 @@ jobs:
           {
             echo "| step | result |"
             echo "|---|---|"
+            echo "| lockfile | $LOCK |"
             echo "| rustfmt | $FMT |"
             echo "| clippy | $CLIPPY |"
             echo "| tests | $TEST |"
             echo
+            if [ "$LOCK" != success ]; then
+              echo "## lockfile"; echo '```'; tail -c 10000 lock.txt; echo '```'
+            fi
             if [ "$FMT" != success ]; then
               echo "## rustfmt"; echo '```diff'; tail -c 20000 fmt.txt; echo '```'
             fi
@@ -114,10 +135,10 @@ jobs:
             fi
           } > details.md
           cat details.md >> "$GITHUB_STEP_SUMMARY"
-          if [ "$FMT" = success ] && [ "$CLIPPY" = success ] && [ "$TEST" = success ]; then
-            conclusion=success; title="fmt, clippy and tests all passed"
+          if [ "$LOCK" = success ] && [ "$FMT" = success ] && [ "$CLIPPY" = success ] && [ "$TEST" = success ]; then
+            conclusion=success; title="lockfile, fmt, clippy and tests all passed"
           else
-            conclusion=failure; title="rustfmt $FMT · clippy $CLIPPY · tests $TEST"
+            conclusion=failure; title="lockfile $LOCK · rustfmt $FMT · clippy $CLIPPY · tests $TEST"
           fi
           python3 - "$conclusion" "$title" <<'PY'
           import json, sys
@@ -138,6 +159,7 @@ jobs:
       - name: gate
         if: always()
         run: |
-          test "${{ steps.fmt.outcome }}" = success \
+          test "${{ steps.lock.outcome }}" = success \
+            && test "${{ steps.fmt.outcome }}" = success \
             && test "${{ steps.clippy.outcome }}" = success \
             && test "${{ steps.test.outcome }}" = success

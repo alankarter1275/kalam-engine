@@ -101,7 +101,7 @@ conflict. Prefix such commits with `kalam:`.
 
 | File | What | Why |
 |---|---|---|
-| `.github/workflows/ci.yml` | Replaced Chapbook's 9-job matrix with a single Linux job | We ship to one platform |
+| `.github/workflows/ci.yml` | Replaced Chapbook's 9-job matrix with a single Linux job; a `lockfile` step (`cargo metadata --locked`) fails the run when `Cargo.lock` is not what cargo would write | We ship to one platform; the lock file is edited by hand from a sandbox without cargo, and drift there blocks the owner's `git pull` |
 | `README.md` | Replaced | Describes this fork, not Chapbook |
 | `crates/chapbook-reader/src/layout.rs` | Honour `ReadingSettings::publisher_styles` (pass no author sheets when off) | Upstream flag was persisted but never read — a bug. **Candidate to send upstream.** |
 | `crates/chapbook-viewer-gtk/src/linux.rs` | `f` (force reader font) and `s` (publisher styles off) toggles | Testing aid; Kalam's adapter sets both permanently |
