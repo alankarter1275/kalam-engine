@@ -22,7 +22,10 @@ fn extents_describe_every_page_without_moving_the_reader() {
     assert!(!s.is_laid_out(3), "nothing is laid out until asked");
 
     let count = s.page_count_of(3).expect("chapter 4 lays out");
-    assert!(count >= 2, "the long fixture's chapters run to pages: {count}");
+    assert!(
+        count >= 2,
+        "the long fixture's chapters run to pages: {count}"
+    );
     assert!(s.is_laid_out(3));
     let extents = s.page_extents(3);
     assert_eq!(extents.len(), count);
@@ -38,12 +41,17 @@ fn extents_describe_every_page_without_moving_the_reader() {
         assert!(e.gap_before >= 0.0);
         assert!(e.gap_before <= content_h);
         assert_eq!(e.content.origin.y, 40.0, "the content box is the metrics'");
-        assert_eq!(Some(*e), s.page_extent(3, i), "one page or all, same answer");
+        assert_eq!(
+            Some(*e),
+            s.page_extent(3, i),
+            "one page or all, same answer"
+        );
     }
     assert_eq!(extents[0].gap_before, 0.0, "a chapter starts flush");
-    assert_eq!(extents[0].start_offset, 0);
     assert!(
-        extents.windows(2).all(|w| w[0].start_offset <= w[1].start_offset),
+        extents
+            .windows(2)
+            .all(|w| w[0].start_offset <= w[1].start_offset),
         "start offsets are the char map"
     );
     // Every page but the last is filled to within a couple of lines.
@@ -61,6 +69,13 @@ fn extents_describe_every_page_without_moving_the_reader() {
     );
     assert!(s.page_extent(3, count).is_none(), "past the end");
     assert!(s.page_extent(99, 0).is_none(), "no such chapter");
+
+    // A page's start offset is what the session reports standing on it
+    // (not 0 for page 0: the markup's leading whitespace comes first).
+    assert!(s.set_position(3, 0));
+    assert_eq!(s.current_offset(), extents[0].start_offset);
+    assert!(s.set_position(3, count - 1));
+    assert_eq!(s.current_offset(), extents[count - 1].start_offset);
 }
 
 #[test]
@@ -68,6 +83,7 @@ fn any_page_renders_and_matches_the_paged_view() {
     let mut s = open_long();
     // What the paged reader paints for chapter 3 page 1 …
     assert!(s.goto(Locator::chapter_start(2)));
+    let _ = s.frame(); // a jump lands on the next frame
     assert!(s.next_page());
     let paged = s.render().expect("renders");
     let at = s.position();
@@ -81,7 +97,11 @@ fn any_page_renders_and_matches_the_paged_view() {
     assert_eq!(scrolled.width(), paged.width());
     assert_eq!(scrolled.height(), paged.height());
     assert_eq!(scrolled.data(), paged.data(), "same pixels either way");
-    assert_eq!(s.position().spine, 0, "rendering another page moved nothing");
+    assert_eq!(
+        s.position().spine,
+        0,
+        "rendering another page moved nothing"
+    );
 
     let list = s.page_frame(2, 1).expect("display list");
     assert!(list.ops.len() > 1, "a ground fill and some text");
@@ -183,11 +203,12 @@ fn set_position_is_the_scroll_shells_page_turn() {
 fn a_selection_lives_on_the_page_it_was_made_on() {
     let mut s = open_long();
     let _ = s.frame();
-    // Find text on chapter 4 page 0 without making it current first.
+    // Find a point *on* text on chapter 4 page 0 without making it
+    // current first — the tap rule, so the tap at the end lands too.
     let mut hit = None;
     'outer: for y in (60..760).step_by(8) {
         for x in (60..560).step_by(8) {
-            if s.offset_at_page(3, 0, x as f32, y as f32).is_some() {
+            if s.word_at_page(3, 0, x as f32, y as f32).is_some() {
                 hit = Some((x as f32, y as f32));
                 break 'outer;
             }
@@ -252,6 +273,6 @@ fn a_selection_lives_on_the_page_it_was_made_on() {
     };
     s.show_host_highlight(row);
     s.set_position(0, 0);
-    assert_eq!(s.host_highlight_at_page(3, 0, x + 1.0, y), Some(7));
-    assert_eq!(s.host_highlight_at_page(4, 0, x + 1.0, y), None);
+    assert_eq!(s.host_highlight_at_page(3, 0, x, y), Some(7));
+    assert_eq!(s.host_highlight_at_page(4, 0, x, y), None);
 }

@@ -82,11 +82,7 @@ impl Session {
 
     /// The trimmed extent of one page: what it adds to a continuous strip.
     /// Lays the unit out if need be. `None` for a page that does not exist.
-    pub fn page_extent(
-        &mut self,
-        spine: usize,
-        page: usize,
-    ) -> Option<PageExtent> {
+    pub fn page_extent(&mut self, spine: usize, page: usize) -> Option<PageExtent> {
         let layout = self.layout_unit(spine)?;
         let content = layout.pages.get(page)?.content;
         Some(PageExtent {
@@ -122,11 +118,7 @@ impl Session {
     /// The first op is the page ground at full page size; a scroll shell
     /// clips to the extent it shows. `None` for a page that does not exist
     /// or a unit that cannot lay out.
-    pub fn page_frame(
-        &mut self,
-        spine: usize,
-        page: usize,
-    ) -> Option<DisplayList> {
+    pub fn page_frame(&mut self, spine: usize, page: usize) -> Option<DisplayList> {
         self.layout_unit(spine)?;
         let palette = self.settings.palette();
         let highlight_color = palette.highlight;
@@ -163,11 +155,7 @@ impl Session {
     /// shell's convenience over [`Session::page_frame`] +
     /// [`Session::paint_resources`], for one that does not rasterize
     /// itself. No rotation, no panel quantization: a desktop scroll view.
-    pub fn render_page(
-        &mut self,
-        spine: usize,
-        page: usize,
-    ) -> Option<tiny_skia::Pixmap> {
+    pub fn render_page(&mut self, spine: usize, page: usize) -> Option<tiny_skia::Pixmap> {
         let scale = self.metrics?.dpi_scale;
         let dl = self.page_frame(spine, page)?;
         let (w, h) = ((dl.size.w * scale) as u32, (dl.size.h * scale) as u32);
@@ -188,13 +176,7 @@ impl Session {
     /// [`Session::offset_at`]'s hit rule (a point in the margin snaps to
     /// the nearest line), for a page that need not be current. Lays the
     /// unit out if need be. `None` off text.
-    pub fn offset_at_page(
-        &mut self,
-        spine: usize,
-        page: usize,
-        x: f32,
-        y: f32,
-    ) -> Option<u32> {
+    pub fn offset_at_page(&mut self, spine: usize, page: usize, x: f32, y: f32) -> Option<u32> {
         self.layout_unit(spine)?
             .pages
             .get(page)?
@@ -226,13 +208,7 @@ impl Session {
 
     /// The link under a point on any page — [`Session::link_at`] for a
     /// page that need not be current.
-    pub fn link_at_page(
-        &mut self,
-        spine: usize,
-        page: usize,
-        x: f32,
-        y: f32,
-    ) -> Option<String> {
+    pub fn link_at_page(&mut self, spine: usize, page: usize, x: f32, y: f32) -> Option<String> {
         let offset = self
             .layout_unit(spine)?
             .pages
@@ -286,13 +262,7 @@ impl Session {
     /// that page's unit, so the reader's position moves there first (a
     /// selection is where the reader is looking). Returns whether the
     /// point hit text.
-    pub fn selection_begin_on_page(
-        &mut self,
-        spine: usize,
-        page: usize,
-        x: f32,
-        y: f32,
-    ) -> bool {
+    pub fn selection_begin_on_page(&mut self, spine: usize, page: usize, x: f32, y: f32) -> bool {
         self.set_position(spine, page);
         self.selection = None;
         self.mark(FrameIntent::Selection);
@@ -307,13 +277,7 @@ impl Session {
     /// unit*. A drag that crosses into another chapter is ignored: a
     /// selection is one unit's locator range, and the strip shows the two
     /// chapters end to end only visually.
-    pub fn selection_drag_on_page(
-        &mut self,
-        spine: usize,
-        page: usize,
-        x: f32,
-        y: f32,
-    ) {
+    pub fn selection_drag_on_page(&mut self, spine: usize, page: usize, x: f32, y: f32) {
         if spine != self.spine {
             return;
         }
@@ -373,11 +337,7 @@ impl Session {
     /// Where a TOC fragment lands in its unit, as a page. `None` when the
     /// unit cannot lay out; a fragment the unit does not have lands on
     /// page 0, as [`Session::goto_anchor`] does.
-    pub fn page_of_anchor(
-        &mut self,
-        spine: usize,
-        fragment: &str,
-    ) -> Option<usize> {
+    pub fn page_of_anchor(&mut self, spine: usize, fragment: &str) -> Option<usize> {
         let layout = self.layout_unit(spine)?;
         Some(layout.anchors.get(fragment).copied().unwrap_or(0))
     }
