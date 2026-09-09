@@ -47,10 +47,23 @@
 //! not this round's problem — so these calls are for text books.
 
 use chapbook_core::{Locator, Point, Rect, Rgba};
-use chapbook_paint::{DisplayList, FrameIntent, Selection};
+use chapbook_paint::{DisplayList, FragmentKind, FrameIntent, Page, Selection};
 use chapbook_render_tinyskia::tiny_skia;
 
 use crate::{Highlight, Session};
+
+/// Every line on a page as (top, bottom, locator start), in fragment
+/// order.
+fn page_lines(page: &Page) -> impl Iterator<Item = (f32, f32, u32)> + '_ {
+    page.fragments.iter().filter_map(|fragment| match &fragment.kind {
+        FragmentKind::Line(line) | FragmentKind::HiddenText(line) => Some((
+            fragment.rect.origin.y,
+            fragment.rect.max_y(),
+            line.locator_start,
+        )),
+        _ => None,
+    })
+}
 
 /// One page's contribution to a continuous strip — see
 /// [`Session::page_extent`].
@@ -218,6 +231,13 @@ impl Session {
             .map(|word| (word.locator_start, word.locator_end))
     }
 
+    /// Any page's text as one string with its word table —
+    /// [`Session::speakable_page`] for a page that need not be current,
+    /// so a tap on any band can name the word and its sentence.
+    pub fn speakable_page_of(&self, spine: usize, page: usize) -> Option<crate::SpeakablePage> {
+        self.speakable_unit_page(spine, page)
+    }
+
     /// The link under a point on any page — [`Session::link_at`] for a
     /// page that need not be current.
     pub fn link_at_page(&mut self, spine: usize, page: usize, x: f32, y: f32) -> Option<String> {
@@ -252,6 +272,46 @@ impl Session {
             .iter()
             .find(|h| offset >= h.start && offset < h.end)
             .map(|h| h.id)
+    }
+
+    /// The locator offset of the first line at or below a page-space `y`
+    /// on any page: the text a scroll shell's reading line is on, whether
+    /// that line falls on a line box or in the space between two.
+    /// [`Session::offset_at_page`] answers only inside a line box; this
+    /// always answers on a page with text (past the last line, the last
+    /// line). `None` for a page with no lines.
+    pub fn line_at_page(&mut self, spine: usize, page: usize, y: f32) -> Option<u32> {
+        let page = self.layout_unit(spine)?.pages.get(page)?;
+        let (mut below, mut last): (Option<(f32, u32)>, Option<(f32, u32)>) = (None, None);
+        for (top, bottom, start) in page_lines(page) {
+            if bottom > y && below.is_none_or(|(t, _)| top < t) {
+                below = Some((top, start));
+            }
+            if last.is_none_or(|(t, _)| top >= t) {
+                last = Some((top, start));
+            }
+        }
+        below.or(last).map(|(_, start)| start)
+    }
+
+    /// The page-space box of the line holding `offset` on any page — the
+    /// line with the greatest start at or before it. The inverse of
+    /// [`Session::line_at_page`], for putting the same line back under a
+    /// scroll shell's reading line after a relayout moved everything.
+    /// `None` when no line on the page starts at or before `offset`.
+    pub fn line_rect_at_page(&mut self, spine: usize, page: usize, offset: u32) -> Option<Rect> {
+        let page = self.layout_unit(spine)?.pages.get(page)?;
+        let mut best: Option<(u32, Rect)> = None;
+        for fragment in &page.fragments {
+            let (FragmentKind::Line(line) | FragmentKind::HiddenText(line)) = &fragment.kind else {
+                continue;
+            };
+            let start = line.locator_start;
+            if start <= offset && best.is_none_or(|(b, _)| start >= b) {
+                best = Some((start, fragment.rect));
+            }
+        }
+        best.map(|(_, rect)| rect)
     }
 
     /// Page-space rects covering a locator range on any page —

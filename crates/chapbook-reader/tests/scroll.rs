@@ -388,3 +388,67 @@ fn pinned_units_survive_a_budget_that_would_evict_them() {
     s.page_extents(6);
     assert!(!s.is_laid_out(4), "unpinned, it goes like any other");
 }
+
+#[test]
+fn the_reading_line_names_a_line_and_finds_it_again() {
+    let mut s = open_long();
+    let extent = s.page_extent(2, 1).expect("chapter 3 has a page 1");
+    let top = extent.content.origin.y;
+
+    // On a line box, line_at_page is the line; between two, it is the
+    // next one down; past the last, the last. Walking the page top to
+    // bottom the answers never go backwards and start at the page's
+    // first line.
+    let first = s.line_at_page(2, 1, top).expect("a line at the top");
+    assert_eq!(
+        first, extent.start_offset,
+        "the first line is where the page starts"
+    );
+    let mut last = first;
+    let mut y = top;
+    while y < top + extent.used_height + 50.0 {
+        let here = s.line_at_page(2, 1, y).expect("always a line");
+        assert!(here >= last, "monotonic at y={y}: {here} < {last}");
+        last = here;
+        y += 7.0;
+    }
+    assert!(last > first, "the page has more than one line");
+
+    // The inverse: the rect of the line holding an offset contains the
+    // y that named it, and is the box offset_at_page agrees with.
+    let mid_y = top + extent.used_height / 2.0;
+    let offset = s.line_at_page(2, 1, mid_y).unwrap();
+    let rect = s.line_rect_at_page(2, 1, offset).expect("that line's box");
+    assert!(
+        rect.origin.y <= mid_y + rect.size.h && rect.max_y() >= mid_y - rect.size.h,
+        "the line's box {rect:?} is about y={mid_y}"
+    );
+    let on_line = s
+        .offset_at_page(2, 1, rect.origin.x + 1.0, rect.origin.y + rect.size.h / 2.0)
+        .expect("text on the line");
+    assert!(
+        on_line >= offset,
+        "a point on the line is at or after the line's start"
+    );
+    // An offset before the page's first line has no line here.
+    assert_eq!(
+        s.line_rect_at_page(2, 1, first.saturating_sub(1)),
+        None
+    );
+    assert_eq!(s.position().spine, 0, "nothing here moved the reader");
+}
+
+#[test]
+fn every_chapters_length_is_counted_once() {
+    let s = open_long();
+    let counts = s.chapter_char_counts().to_vec();
+    assert_eq!(counts.len(), s.spine_len());
+    assert!(counts.iter().all(|&n| n > 0), "every chapter has text");
+    for (spine, &count) in counts.iter().enumerate() {
+        assert_eq!(s.chapter_char_count(spine), Some(count));
+    }
+    let total: u64 = counts.iter().sum();
+    // The same pass feeds the layered locator's whole-book progression.
+    let l = s.layered_locator().expect("a locator at the start");
+    assert!(l.book_progression < 0.01, "at the start of {total} chars");
+}

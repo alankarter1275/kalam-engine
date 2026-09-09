@@ -149,7 +149,9 @@ New files inside inherited crates (no conflict risk, listed for completeness):
 | `crates/chapbook-reader/src/host_position.rs` | `Session::layered_locator()`, `layered_locator_at()`, `goto_layered()`, `unit_fraction()`, `chapter_char_count()`, `word_at_exact()` — positions as *values* for a host with its own database, and the tap hit-test |
 | `crates/chapbook-reader/src/host_highlights.rs` | `HostHighlight` + `Session::set_host_highlights()`, `show_host_highlight()`, `recolor_host_highlight()`, `hide_host_highlight()`, `host_highlights()`, `host_highlight_at()`, `goto_host_highlight()` — highlights the host stores itself, held in memory and resolved like stored annotations; not gated on `library` |
 | `crates/chapbook-reader/src/scroll.rs` | `PageExtent` + `Session::page_count_of()`, `is_laid_out()`, `page_extent()`/`page_extents()`, `page_frame()`, `render_page()`, `offset_at_page()`, `word_at_page()`, `link_at_page()`, `host_highlight_at_page()`, `range_rects_on_page()`, `selection_begin_on_page()`/`selection_drag_on_page()`, `set_position()`, `page_of()`, `page_of_anchor()`, `settle()`, `layout_generation()`, `pin_units()` — the by-page surface a scrolling shell composes a continuous view from; the paged API is untouched |
-| `crates/chapbook-reader/tests/scroll.rs` | Eight tests over that surface on `long.epub` |
+| `crates/chapbook-reader/tests/scroll.rs` | Ten tests over that surface on `long.epub` |
+| `crates/chapbook-reader/src/host_position.rs` | The whole-book char count moved out of `unit_char_context` into `pub fn chapter_char_counts()`, which it now calls; the count is timed at `info` | The scrolling widget (round H) guesses unmeasured chapters' heights from their lengths; same pass, shared |
+| `crates/chapbook-reader/src/scroll.rs` | `line_at_page()`, `line_rect_at_page()`, `speakable_page_of()` | Round H: keeping the reading line on the same text across a relayout, and tap-to-look-up on any band |
 
 ## If upstream goes quiet or goes a direction we dislike
 

@@ -12,10 +12,11 @@ cargo build --release -j 2 -p kalam-reader-demo
 ```
 
 Keys in the demo: arrows / PageUp / PageDown / space turn pages, `n`/`p`
-skip chapters, `t` cycles the four themes, `+`/`-` font size, `[`/`]` line
-height, `{`/`}` column width, drag to select, `h` highlights the selection,
-tap a word to "look it up" (printed to the terminal), `q` quits. Everything
-the widget would tell Kalam is printed with a `demo:` prefix.
+skip chapters, `s` switches between paged and scrolled reading, `t` cycles
+the four themes, `+`/`-` font size, `[`/`]` line height, `{`/`}` column
+width, drag to select, `h` highlights the selection, tap a word to "look
+it up" (printed to the terminal), `q` quits. Everything the widget would
+tell Kalam is printed with a `demo:` prefix.
 
 `--host-fonts` also loads the system's fonts (for CJK, Devanagari, Arabic,
 emoji). Off by default because scanning them is the slow part on a cold
@@ -30,6 +31,8 @@ ReaderView::open(path, prefs, opts) ──▶ opens the book, lays out on first 
 overlay.set_child(view.widget())
 
 ReaderMsg::NextChapter          ──▶ view.next_chapter()
+"scroll" / "pages" toggle       ──▶ view.set_mode(ReadingMode::Scrolled / Paged)
+gtk::Scrollbar beside it        ──▶ ::new(Vertical, Some(view.vadjustment()))
 ReaderMsg::Theme(t)             ──▶ view.set_theme(t)
 ReaderMsg::FontDelta(d)         ──▶ view.set_font_px(prefs.font_px + d)
 ReaderMsg::JumpToLocation(c, f) ──▶ view.goto_chapter(c, f)
@@ -44,6 +47,22 @@ dictionary popover               ◀── connect_word(|word| …)   (word, sen
 selection chip                   ◀── connect_selection(|sel| …)
 open in browser                  ◀── connect_external_link(|href| …)
 ```
+
+Two ways of reading, one widget. `ReadingMode::Paged` shows one page at
+a time and arrows, PageDown, space and the side thirds turn it.
+`ReadingMode::Scrolled` shows the whole book as one column: the wheel,
+the arrows, PageDown and the scrollbar move through it, chapter after
+chapter with no seams to click through. Chapters the engine has not laid
+out yet take an estimated height (their length in characters at the
+density of the ones it has), so the scrollbar means "how far through the
+book" from the first frame, and the estimate is corrected as the reader
+arrives without moving the text on screen. Switching modes keeps the
+place: the page on screen becomes the page under the reading line (48 px
+below the top edge, where a page's first line sits) and back. Everything
+below — positions, highlights, taps, selections — means the same in both
+modes; in scrolled mode "the page" is the one under the reading line.
+`view.vadjustment()` drives a `gtk::Scrollbar`; it reads all zeros in
+paged mode, so hide the bar then.
 
 Positions come in two forms. Every page turn reports `chapter` +
 `fraction` — exactly what Kalam's `reading_progress` table holds today, and
@@ -104,7 +123,10 @@ Kalam's theme wins, as before.
 
 ## Not yet
 
-* Continuous scrolling (this is paged; scrolling is the natural next step).
+* Scrolled mode paints each visible page whole and copies out the band it
+  shows — two or three pages a frame, a few milliseconds each on a novel.
+  A book of full-page images would want the rasters cached; wait for it
+  to show before building it.
 * A converter for Kalam's existing highlight rows (node-path anchors) to
   layered locators — planned to match by `text_excerpt`.
 * Search in chapter, bookmarks list — the engine has the calls, the widget

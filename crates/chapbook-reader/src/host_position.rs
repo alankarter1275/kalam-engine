@@ -31,20 +31,41 @@ impl Session {
     /// property of the file — computed once per session (the one
     /// whole-book pass) and reused by every later capture.
     pub(crate) fn unit_char_context(&self) -> UnitCharContext {
-        let counts = self.char_counts.get_or_init(|| {
-            (0..self.book.publication().spine().len())
-                .map(|i| {
-                    unit_locator_text(self.book.publication(), i)
-                        .map(|text| text.chars().count() as u64)
-                        .unwrap_or(0)
-                })
-                .collect()
-        });
+        let counts = self.chapter_char_counts();
         UnitCharContext {
             text: self.cached_unit_text(self.spine).unwrap_or_default(),
             prior: counts.iter().take(self.spine).sum(),
             total: counts.iter().sum(),
         }
+    }
+
+    /// Locator-text char count of every spine item, in reading order —
+    /// the one whole-book pass [`Session::layered_locator`] also needs,
+    /// made once per session and shared. What a scrolling shell sizes
+    /// its not-yet-laid-out chapters from: a chapter's length in
+    /// characters times the pixels per character its laid-out
+    /// neighbours came to. Zero for a unit with no text layer.
+    ///
+    /// The first call parses every chapter (seconds on a long book on a
+    /// slow disk, logged at `info`); every later call is a slice.
+    pub fn chapter_char_counts(&self) -> &[u64] {
+        self.char_counts.get_or_init(|| {
+            let clock = std::time::Instant::now();
+            let counts: Vec<u64> = (0..self.book.publication().spine().len())
+                .map(|i| {
+                    unit_locator_text(self.book.publication(), i)
+                        .map(|text| text.chars().count() as u64)
+                        .unwrap_or(0)
+                })
+                .collect();
+            log::info!(
+                "counted {} chars in {} units in {} ms",
+                counts.iter().sum::<u64>(),
+                counts.len(),
+                clock.elapsed().as_millis()
+            );
+            counts
+        })
     }
 
     /// The word under a point, only if the point is *on* its line — the

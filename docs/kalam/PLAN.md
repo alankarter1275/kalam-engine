@@ -172,8 +172,9 @@ current description; where it and this section disagree, the README is
 right. Two small engine additions were needed and are logged in
 `UPSTREAM.md`: a `Palette` on `ReadingSettings` (Kalam's exact colours) and
 `host_position.rs` (positions as values for Kalam's database). The
-engine half of continuous scrolling (`scroll.rs`) followed on 2026-09-09;
-the widget half is round H in §7.
+engine half of continuous scrolling (`scroll.rs`) followed on 2026-09-09,
+and the widget half (`ReadingMode::Scrolled`, `kalam-reader/src/scroll.rs`)
+the same day — round H in §7, awaiting the run on the target machine.
 
 ## 7. The order of work
 
@@ -224,10 +225,18 @@ the widget half is round H in §7.
      `pin_units` so the visible chapters are not evicted mid-frame.
      Paged mode untouched; tests in `tests/scroll.rs` and
      `chapbook-layout/tests/pagination.rs`.
-   - **H — widget**: the strip in `kalam-reader` (GTK scrolling,
-     estimated heights for chapters not yet laid out from
-     `chapter_char_count`, corrected on layout; only the visible band
-     drawn); a demo key to switch modes. The owner tests here.
+   - **H — widget** (written 2026-09-09, awaiting the owner's run):
+     `ReadingMode::{Paged, Scrolled}` on `ReaderView`; the strip model
+     in `kalam-reader/src/scroll.rs` (chapters guessed from
+     `chapter_char_counts` at a learned density, measured when the
+     viewport reaches them, the reading line — 48 px below the top —
+     kept on the same text through every correction and relayout);
+     wheel, arrows, PageUp/Down, Home/End, a `vadjustment()` for a
+     scrollbar; taps, links, selections and highlights on any visible
+     band; only the visible bands drawn. Demo: `s` switches modes, a
+     scrollbar appears. Three small engine additions
+     (`chapter_char_counts`, `line_at_page`/`line_rect_at_page`,
+     `speakable_page_of`) are in `UPSTREAM.md`.
    - **I — polish** after that run: a tile cache if drawing stutters,
      chapter separators, whatever the run shows.
 6. **Integrate into Kalam**: path dependency, swap the WebKit view for the

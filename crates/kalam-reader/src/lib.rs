@@ -10,7 +10,9 @@
 //!
 //! * [`ReaderView`] — the widget. Open a book, put `widget()` in a
 //!   container, connect the callbacks, forward Kalam's messages to its
-//!   methods. See `view.rs`.
+//!   methods. Two [`ReadingMode`]s: one page at a time, or the whole book
+//!   as one scrolling strip. See `view.rs`; the strip's arithmetic is in
+//!   `scroll.rs`.
 //! * [`KalamPrefs`] / [`KalamTheme`] / [`HighlightColor`] — Kalam's
 //!   reading preferences and colours, copied from Kalam's own source, and
 //!   the one function that turns them into engine settings. See
@@ -36,6 +38,7 @@
 
 mod fonts;
 mod prefs;
+mod scroll;
 mod view;
 
 pub use chapbook_core::{LayeredLocator, TocEntry};
@@ -43,6 +46,6 @@ pub use chapbook_reader::Highlight;
 pub use fonts::{font_source, SANS_FONT};
 pub use prefs::{HighlightColor, KalamPrefs, KalamTheme, BODY_FONT};
 pub use view::{
-    NewHighlight, ReaderOptions, ReaderView, ReadingPosition, SelectedText, TappedWord,
-    DEFAULT_CACHE_BUDGET,
+    NewHighlight, ReaderOptions, ReaderView, ReadingMode, ReadingPosition, SelectedText,
+    TappedWord, DEFAULT_CACHE_BUDGET,
 };

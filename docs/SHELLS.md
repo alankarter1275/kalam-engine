@@ -481,15 +481,27 @@ page*, without moving the session:
 - `pin_units(range)` — the chapters on screen. Eviction spares them, so
   a chapter is not dropped between the shell measuring it and drawing it.
 
+- `line_at_page(spine, page, y)` / `line_rect_at_page(spine, page,
+  offset)` — the text on a page-space line and where that text is now.
+  A relayout makes every page anew, so a pixel anchor is worthless
+  across one; the line of text on the reading line is not. Note it
+  before (`line_at_page`), find it after (`page_of` + `line_rect_at_page`),
+  scroll so it sits where it sat.
+- `chapter_char_counts()` — every chapter's length in characters, for
+  guessing the heights of chapters not yet laid out (one whole-book pass,
+  shared with the layered locator's book progression).
+- `speakable_page_of(spine, page)` — the words of any page, for a tap.
+
 Chapters not yet laid out have no extents. Estimate their height from
-`chapter_char_count(spine)` against the ratio the laid-out chapters show,
-lay a chapter out when it comes within a screen of the viewport
-(`page_count_of` does), and correct the strip then — anchoring on the
-page at the top of the viewport, not on a pixel offset, so the reader's
-line does not move when a chapter above them turns out longer than
-guessed. The cache budget still applies: a chapter far from the viewport
-may be evicted and its extents must then be re-asked, which is why the
-shell keeps its own copy of the strip's slots.
+`chapter_char_counts()` against the ratio the laid-out chapters show,
+lay a chapter out when the viewport reaches it (`page_extents` does), and
+correct the strip then — anchoring on the page under the reading line,
+not on a pixel offset, so the reader's line does not move when a chapter
+above them turns out longer than guessed. The cache budget still applies:
+a chapter far from the viewport may be evicted and its extents must then
+be re-asked, which is why the shell keeps its own copy of the strip's
+slots. `crates/kalam-reader/src/scroll.rs` is a worked example of all of
+this, with the arithmetic under test.
 
 ## 6. Background loads, and the one rule that is not negotiable
 

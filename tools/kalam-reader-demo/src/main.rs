@@ -9,13 +9,15 @@
 //!
 //! Keys — the widget's own: arrows / PageUp / PageDown / space turn pages,
 //! `n` / `p` skip chapters, `b` goes back after a link, Escape clears a
-//! selection. This window's: `t` cycles Kalam's four themes, `+`/`-`
-//! change the font size, `[`/`]` the line height, `{`/`}` the column
-//! width, `h` highlights the selection, `r` reloads every highlight from
-//! this program's stand-in for Kalam's table, `x` removes the newest,
-//! `q` quits. Mouse: drag to select, tap a word to "look it up"
-//! (printed), tap a highlight to name it, tap the left or right third to
-//! turn.
+//! selection. This window's: `s` switches between paged and scrolled
+//! reading, `t` cycles Kalam's four themes, `+`/`-` change the font size,
+//! `[`/`]` the line height, `{`/`}` the column width, `h` highlights the
+//! selection, `r` reloads every highlight from this program's stand-in
+//! for Kalam's table, `x` removes the newest, `q` quits. Mouse: drag to
+//! select, tap a word to "look it up" (printed), tap a highlight to name
+//! it, tap the left or right third to turn (paged), wheel to scroll
+//! (scrolled). In scrolled mode a scrollbar sits at the right edge; its
+//! length is the book's estimated length.
 //!
 //! Highlights work the way they will in Kalam: the widget captures one,
 //! *this program* stores it (in a `Vec`, where Kalam has a table) and
@@ -34,7 +36,9 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use kalam_reader::{HighlightColor, KalamPrefs, NewHighlight, ReaderOptions, ReaderView};
+use kalam_reader::{
+    HighlightColor, KalamPrefs, NewHighlight, ReaderOptions, ReaderView, ReadingMode,
+};
 
 /// Kalam's `annotations` table, stood in for: rows keyed by an id this
 /// program hands out. The widget never sees this; it sees ids.
@@ -87,7 +91,14 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
         .default_width(960)
         .default_height(800)
         .build();
-    window.set_child(Some(view.widget()));
+    // The widget and, in scrolled mode, a scrollbar driven by the
+    // widget's adjustment — what Kalam would put in its overlay.
+    let scrollbar = gtk::Scrollbar::new(gtk::Orientation::Vertical, Some(view.vadjustment()));
+    scrollbar.set_visible(false);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    row.append(view.widget());
+    row.append(&scrollbar);
+    window.set_child(Some(&row));
 
     // ---- What the widget reports ----
     {
@@ -103,12 +114,13 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
                 );
             }
             eprintln!(
-                "demo: position chapter {}/{} page {}/{} fraction {:.3}",
+                "demo: position chapter {}/{} page {}/{} fraction {:.3} ({})",
                 pos.chapter + 1,
                 pos.chapter_count,
                 pos.page + 1,
                 pos.page_count,
-                pos.fraction
+                pos.fraction,
+                mode_name(view_for_memory.mode())
             );
             if let Some(window) = window.upgrade() {
                 window.set_title(Some(&format!(
@@ -141,11 +153,26 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
         let view = view.clone();
         let shelf = shelf.clone();
         let window_weak = window.downgrade();
+        let scrollbar = scrollbar.clone();
         let key = gtk::EventControllerKey::new();
         key.connect_key_pressed(move |_, keyval, _, _| {
             let prefs = view.prefs();
             let name = keyval.name();
             match name.as_deref() {
+                Some("s") => {
+                    let mode = match view.mode() {
+                        ReadingMode::Paged => ReadingMode::Scrolled,
+                        ReadingMode::Scrolled => ReadingMode::Paged,
+                    };
+                    let started = std::time::Instant::now();
+                    view.set_mode(mode);
+                    scrollbar.set_visible(mode == ReadingMode::Scrolled);
+                    eprintln!(
+                        "demo: {} (switched in {:?})",
+                        mode_name(mode),
+                        started.elapsed()
+                    );
+                }
                 Some("t") => {
                     let theme = prefs.theme.next();
                     eprintln!("demo: theme {}", theme.name());
@@ -243,6 +270,13 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
 
     window.present();
     view.widget().grab_focus();
+}
+
+fn mode_name(mode: ReadingMode) -> &'static str {
+    match mode {
+        ReadingMode::Paged => "paged",
+        ReadingMode::Scrolled => "scrolled",
+    }
 }
 
 /// The process's resident memory and the engine's share of it, in one
