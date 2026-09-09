@@ -1,11 +1,11 @@
 //! The shared reading session: everything a viewer shell needs that isn't
 //! windowing.
 //!
-//! [`Session`] owns the open publication (EPUB, local CBZ, or an OPDS-PSE
-//! stream — dispatched by [`Session::open`]), the font system, per-chapter
-//! layout and image caches, reading settings, the selection, and the
-//! library glue (import/match on open, layered-locator persistence on
-//! save). Shells — winit, GTK, anything with a keyboard and a pixel
+//! [`Session`] owns the open publication (an EPUB, opened by
+//! [`Session::open`]), the font system, per-chapter layout and image
+//! caches, reading settings, the selection, and the host's highlights
+//! (kalam: the library glue upstream kept here is gone — the host
+//! persists). Shells — winit, GTK, anything with a keyboard and a pixel
 //! buffer — translate input events into `Session` calls and blit the
 //! [`Session::render`] result. A shell that rasterizes for itself takes
 //! [`Session::frame`] instead and never touches tiny-skia.
@@ -26,17 +26,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-#[cfg(feature = "library")]
-mod annotations;
 mod cache;
 pub mod conformance;
 mod frame;
 // kalam: layered positions as values, and highlights the host stores
-// itself, for a host with its own database. Position capture rides on
-// the annotation module's char-count context, so shares its gate; the
-// highlights need no library at all.
+// itself, for a host with its own database. These two replace upstream's
+// `annotations.rs` and the library it wrote to.
 mod host_highlights;
-#[cfg(feature = "library")]
 mod host_position;
 mod layout;
 #[cfg(feature = "_image-book")]
@@ -47,8 +43,6 @@ mod render;
 mod text_surface;
 mod zoom;
 
-#[cfg(feature = "library")]
-use chapbook_core::LayeredLocator;
 use chapbook_core::{
     BookKind, CredentialStore, FontReport, FontSource, Locator, NoCredentials, PageMetrics,
     PixelFormat, ReadingSettings, Rect,
@@ -56,24 +50,19 @@ use chapbook_core::{
 use chapbook_layout::{dom, ChapterLayout};
 use chapbook_paint::{FrameIntent, ImageStore};
 
-#[cfg(feature = "library")]
-use annotations::StoredAnnotation;
 use frame::PendingDamage;
 #[cfg(feature = "_image-book")]
 use loader::Loader;
 use open::OpenBook;
 
-#[cfg(feature = "library")]
-pub use annotations::AnnotationSummary;
 pub use host_highlights::HostHighlight;
 
-/// A highlight resolved into the open book's locator space — one the
-/// library stores or one the host does ([`HostHighlight`]); a shell paints
-/// and lists both the same way.
+/// A host's highlight ([`HostHighlight`]) resolved into the open book's
+/// locator space — what a shell paints and lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Highlight {
-    /// The library's annotation id, or the host's own id for a host
-    /// highlight — the handle for recolouring, removing and jumping.
+    /// The host's own id — the handle for recolouring, removing and
+    /// jumping.
     pub id: i64,
     pub spine: usize,
     /// Locator offsets within the unit, `[start, end)`.
@@ -90,9 +79,6 @@ pub struct Highlight {
 // display-list vocabulary, the font database its glyph runs name faces
 // in, and the bundled CPU backend.
 pub use chapbook_core;
-// Annotation kinds and library records surface in this crate's own API.
-#[cfg(feature = "library")]
-pub use chapbook_library;
 pub use chapbook_paint;
 pub use chapbook_render_tinyskia;
 pub use chapbook_render_tinyskia::tiny_skia;
@@ -116,6 +102,11 @@ struct LoadedUnit {
 }
 
 /// Where a settings change should stick.
+///
+/// kalam: with the engine's own library gone nothing is persisted, so the
+/// two are the same to the session; the parameter stays so the call sites
+/// (and upstream's) keep their shape, and a host that persists settings
+/// itself can honour it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsScope {
     /// The reader's default, for every book without an override.
@@ -186,8 +177,6 @@ pub struct SpeakablePage {
     /// Words in reading order; ranges never overlap.
     pub words: Vec<WordSpan>,
 }
-
-// Annotations are the library's: without a place to store them there
 
 /// Where the reader is: which spine unit, and which page inside it.
 ///
@@ -297,25 +286,6 @@ pub struct Session {
     reported_finished: bool,
     /// Selection anchor and cursor as locator offsets (unordered).
     selection: Option<(u32, u32)>,
-    #[cfg(feature = "library")]
-    library: Option<chapbook_library::Library>,
-    /// Where the library lives, so [`Session::suspend`] can close it and a
-    /// later access can open it again.
-    #[cfg(feature = "library")]
-    library_dir: Option<std::path::PathBuf>,
-    /// Set by [`Session::suspend`]: the database is deliberately closed and
-    /// the next access should reopen rather than treat `None` as "this
-    /// platform has no library".
-    #[cfg(feature = "library")]
-    suspended: bool,
-    #[cfg(feature = "library")]
-    book_id: OpenedBookId,
-    /// Annotations as stored, awaiting resolution against unit text.
-    #[cfg(feature = "library")]
-    stored: Vec<StoredAnnotation>,
-    /// The open file is the edition the positions were captured against.
-    #[cfg(feature = "library")]
-    same_edition: bool,
     /// Handed out for units with no images of their own, so
     /// [`Session::image_store`] can return a reference either way.
     empty_images: ImageStore,
@@ -335,7 +305,6 @@ pub struct Session {
     /// Position capture needs the whole spine's counts, and without this
     /// every save re-inflated and re-parsed every chapter — on a callback
     /// (`suspend`) with a documented time budget.
-    #[cfg(feature = "library")]
     char_counts: std::cell::OnceCell<Vec<u64>>,
     /// The most recently extracted unit locator text. One entry, replaced
     /// on a different unit: selection, capture, search, and highlight
@@ -384,24 +353,10 @@ struct UnitState {
     /// space doesn't move under relayout, so this survives font-size and
     /// theme changes. `Some(empty)` means resolution ran and found
     /// nothing — distinct from never having run.
-    #[cfg(feature = "library")]
-    resolved_highlights: Option<Vec<Highlight>>,
-    /// kalam: the host's own highlights, resolved the same way and cached
-    /// for the same reason.
     resolved_host_highlights: Option<Vec<Highlight>>,
     /// Last use, in [`Session::use_clock`] ticks, for eviction order.
     used_at: u64,
 }
-
-/// The library's handle on the open book.
-///
-/// `Option<Infallible>` without the `library` feature: always `None`, zero
-/// sized, and impossible to construct — so the open path keeps one shape
-/// instead of growing a `cfg` at every step that merely passes it along.
-#[cfg(feature = "library")]
-type OpenedBookId = Option<chapbook_library::BookId>;
-#[cfg(not(feature = "library"))]
-type OpenedBookId = Option<std::convert::Infallible>;
 
 /// What a session keeps cached when the host does not say.
 ///
@@ -456,17 +411,6 @@ pub struct SessionConfig {
     /// to fetch, and the whole TLS stack is out of the build.
     #[cfg(feature = "opds")]
     pub transport: Option<Arc<dyn HttpClient>>,
-    /// Where the library, the managed book copies, the covers and the PSE
-    /// page cache live. `None` asks
-    /// [`Library::default_dir`](chapbook_library::Library::default_dir),
-    /// which knows the convention for each desktop platform and refuses to
-    /// guess anywhere else.
-    ///
-    /// A sandboxed host knows its own answer and nothing else can: Android
-    /// hands an app `context.getFilesDir()`, iOS wants
-    /// `Library/Application Support`, and a browser has no filesystem at
-    /// all. None of those are reachable through an environment variable.
-    pub library_dir: Option<std::path::PathBuf>,
     /// How many bytes of laid-out chapters and decoded page images a
     /// session may keep. `None` takes [`DEFAULT_CACHE_BUDGET`].
     ///
@@ -484,7 +428,6 @@ impl SessionConfig {
             credentials: Arc::new(NoCredentials),
             #[cfg(feature = "opds")]
             transport: None,
-            library_dir: None,
             cache_budget: None,
         }
     }
@@ -501,12 +444,6 @@ impl SessionConfig {
         self
     }
 
-    /// Keep the library somewhere this host chose.
-    pub fn with_library_dir(mut self, dir: impl Into<std::path::PathBuf>) -> SessionConfig {
-        self.library_dir = Some(dir.into());
-        self
-    }
-
     /// Cap what the session's caches may hold, in bytes.
     pub fn with_cache_budget(mut self, bytes: usize) -> SessionConfig {
         self.cache_budget = Some(bytes);
@@ -519,7 +456,6 @@ impl std::fmt::Debug for SessionConfig {
         let mut out = f.debug_struct("SessionConfig");
         out.field("fonts", &self.fonts)
             .field("credentials", &"<dyn CredentialStore>")
-            .field("library_dir", &self.library_dir)
             .field("cache_budget", &self.cache_budget);
         #[cfg(feature = "opds")]
         out.field(
@@ -759,84 +695,12 @@ impl Session {
         (&mut self.fonts, images)
     }
 
-    // ---- Persistence ----
+    // ---- Position ----
 
     /// Locator offset of the current page (0 for comics).
     pub fn current_offset(&self) -> u32 {
         self.layout(self.spine)
             .and_then(|l| l.char_map.get(self.page).copied())
             .unwrap_or(0)
-    }
-
-    /// The library record this session is reading, once it has one.
-    ///
-    /// The join between opening a book and everything the library knows
-    /// about it — most immediately
-    /// [`set_sync_targets`](chapbook_library::Library::set_sync_targets),
-    /// which a shell that downloaded from a catalog has to call with the
-    /// entry's links: the session imported the book, so only it knows
-    /// which row that became.
-    ///
-    /// `None` for a book that never reached the library — an OPDS page
-    /// stream, or a session built without one.
-    #[cfg(feature = "library")]
-    pub fn book_id(&self) -> Option<chapbook_library::BookId> {
-        self.book_id
-    }
-
-    /// Capture the position as a full layered locator and persist it.
-    /// Comics persist page-unit progression (see `chapbook_core::locator`).
-    pub fn save_position(&mut self) {
-        #[cfg(feature = "library")]
-        {
-            let Some(id) = self.book_id else {
-                return;
-            };
-            let offset = self.current_offset();
-            let Ok(item) = self.book.publication().spine_item(self.spine) else {
-                return;
-            };
-            let href = item.href.clone();
-            let locator = match self.book.publication().kind() {
-                BookKind::Epub => {
-                    let ctx = self.unit_char_context();
-                    LayeredLocator::capture(
-                        &href, self.spine, &ctx.text, offset, ctx.prior, ctx.total,
-                    )
-                }
-                // Image books: the progression unit is pages.
-                BookKind::Comic | BookKind::Pdf => LayeredLocator::capture(
-                    &href,
-                    self.spine,
-                    "",
-                    0,
-                    self.spine as u64,
-                    self.book.publication().spine().len() as u64,
-                ),
-            };
-            // Computed before the library is borrowed, and only ever
-            // set: reaching the end is a thing that happened, so leaving
-            // the last page does not un-happen it. Clearing is the
-            // reader's own call, through
-            // [`Library::set_finished`](chapbook_library::Library::set_finished).
-            //
-            // Here rather than beside `SessionEvent::BookFinished`,
-            // because that event is only observed by a shell that drains
-            // — and whether a book was finished is not a fact a shell
-            // should have to opt into recording. `save_position` is the
-            // call every shell already makes.
-            let finished = self.at_end_of_book();
-            let Some(library) = self.library_mut() else {
-                return;
-            };
-            if let Err(e) = library.set_position(id, &locator) {
-                log::error!("failed to save position: {e}");
-            }
-            if finished {
-                if let Err(e) = library.set_finished(id, true) {
-                    log::error!("failed to mark the book finished: {e}");
-                }
-            }
-        }
     }
 }

@@ -1,6 +1,6 @@
 //! What the session keeps and lets go of: the cache budget and LRU
 //! eviction, wholesale release under memory pressure, and the suspend
-//! lifecycle that closes the library.
+//! lifecycle.
 
 use chapbook_layout::ChapterLayout;
 use chapbook_paint::ImageStore;
@@ -53,57 +53,19 @@ impl Session {
         self.renderer = chapbook_render_tinyskia::Renderer::new();
     }
 
-    /// You are about to be stopped: persist, and let go of the database.
+    /// The host is about to be stopped. Caches go: a stopped app should
+    /// not be holding decoded pages.
     ///
-    /// Android's `onStop` is the only guaranteed callback there is and it
-    /// has a time budget, so this saves the one piece of state that is
-    /// written lazily — the reading position. Settings and annotations are
-    /// already written when they change.
-    ///
-    /// iOS wants the same call for a second reason Android never raises.
-    /// Bundled SQLite takes POSIX advisory locks, and an app still holding
-    /// one on a file in a *shared* container when it suspends is killed by
-    /// the watchdog with `0xdead10cc`. So this closes the connection rather
-    /// than merely flushing it. A share extension or a widget means an app
-    /// group, and an app group means a shared container, which is when that
-    /// stops being hypothetical.
-    ///
-    /// Caches go too: a stopped app should not be holding decoded pages.
+    /// kalam: upstream also wrote the position to its library and closed
+    /// the database here. Neither exists now; a host saves the position
+    /// it got from [`Session::layered_locator`] itself.
     ///
     /// The session stays usable. `onStop` is often followed by `onStart`
-    /// with the process still alive, so the next thing that needs the
-    /// library reopens it. What this does *not* do is stop the loader
-    /// thread; a suspended session with a page still arriving will finish
-    /// decoding it.
+    /// with the process still alive. What this does *not* do is stop the
+    /// loader thread; a suspended session with a page still arriving will
+    /// finish decoding it.
     pub fn suspend(&mut self) {
-        self.save_position();
         self.release_caches();
-        // Without a library there is no connection to let go of, and
-        // nothing was lazily written that needs flushing first.
-        #[cfg(feature = "library")]
-        {
-            self.library = None;
-            self.suspended = true;
-        }
-    }
-
-    /// The library, reopened if [`suspend`](Self::suspend) closed it.
-    ///
-    /// Every access goes through here, so "the database is shut because we
-    /// were told to let go of it" and "this platform has no library" stay
-    /// distinguishable — both are `None` in the field and only one should
-    /// be retried.
-    #[cfg(feature = "library")]
-    pub(crate) fn library_mut(&mut self) -> Option<&mut chapbook_library::Library> {
-        if self.suspended {
-            self.suspended = false;
-            if let Some(dir) = &self.library_dir {
-                self.library = chapbook_library::Library::open(dir)
-                    .map_err(|e| log::warn!("library unavailable after resume: {e}"))
-                    .ok();
-            }
-        }
-        self.library.as_mut()
     }
 
     /// Bytes the layout and image caches currently hold.

@@ -202,7 +202,6 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
                     None => eprintln!("demo: no highlight to remove"),
                 },
                 Some("q") => {
-                    view.flush();
                     if let Some(window) = window_weak.upgrade() {
                         window.close();
                     }
@@ -238,7 +237,6 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
                 started.elapsed(),
                 memory_line(&view)
             );
-            view.flush();
             glib::Propagation::Proceed
         });
     }

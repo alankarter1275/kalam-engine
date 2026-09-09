@@ -1,26 +1,9 @@
-//! Positions: persistence across sessions, and restore staying in the
-//! unit it was captured in.
+//! Positions: a restore staying in the unit it was captured in. (kalam:
+//! the host hands the position back with `goto_layered`; the pending
+//! offset it leaves behaves exactly as upstream's library restore did.)
 
 mod common;
 use common::*;
-
-#[test]
-#[cfg(feature = "cbz")]
-fn cbz_position_persists_across_sessions() {
-    let source = fixture("cbz/minimal.cbz");
-    {
-        let mut s = open_isolated("cbz-persist", &source);
-        s.set_metrics(metrics());
-        s.next_page();
-        s.next_page();
-        assert_eq!(s.spine(), 2);
-        s.save_position();
-    }
-    let mut s = reopen_isolated("cbz-persist", &source);
-    s.set_metrics(metrics());
-    render_loaded(&mut s);
-    assert_eq!(s.spine(), 2, "comic position restores by page progression");
-}
 
 /// A restored position lands in `frame()`, because an offset cannot become
 /// a page until the unit has laid out. Nothing obliges a shell to paint
@@ -50,7 +33,7 @@ fn cbz_position_persists_across_sessions() {
 #[test]
 fn a_restore_does_not_follow_the_reader_into_another_unit() {
     let source = fixture("epub/long.epub");
-    let saved = {
+    let (saved, stored) = {
         let mut s = open_isolated("restore-follows", &source);
         s.set_metrics(metrics());
         for _ in 0..6 {
@@ -59,8 +42,7 @@ fn a_restore_does_not_follow_the_reader_into_another_unit() {
         }
         let at = s.position();
         assert!(at.spine > 0 || at.page > 0, "moved off the first page");
-        s.save_position();
-        at
+        (at, s.layered_locator().expect("a text unit captures"))
     };
 
     // One session per stopping point: the pending restore is consumed by
@@ -68,6 +50,10 @@ fn a_restore_does_not_follow_the_reader_into_another_unit() {
     for turns in 1..40 {
         let mut s = reopen_isolated("restore-follows", &source);
         s.set_metrics(metrics());
+        assert!(
+            s.goto_layered(&stored, true),
+            "the host hands the place back"
+        );
         assert_eq!(s.spine(), saved.spine, "reopened in the restored unit");
 
         // Walk without ever painting, so the restore is still pending.

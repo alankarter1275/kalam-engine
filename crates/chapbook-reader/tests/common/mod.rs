@@ -16,17 +16,17 @@ pub fn fixture(rel: &str) -> String {
         .into_owned()
 }
 
-/// Open a session against a per-test library dir.
+/// Open a session on the vendored fixture fonts.
 ///
-/// This used to set `CHAPBOOK_LIBRARY_DIR` behind a mutex, because the only
-/// way to place a library was a process-global variable and these tests run
-/// in parallel. `SessionConfig::with_library_dir` is an argument, so the
-/// lock is gone and so is the serialization.
-pub fn open_isolated(name: &str, source: &str) -> Session {
-    open_library(name, source, true)
+/// kalam: upstream opened each test against a per-test library directory
+/// (`open_isolated`/`reopen_isolated`). The library is gone, so a session
+/// has nothing on disk to isolate; the names stay because every test
+/// calls them, and `reopen_isolated` still means "a second session on the
+/// same file" — which is now simply another open.
+pub fn open_isolated(_name: &str, source: &str) -> Session {
+    Session::open_with(source, SessionConfig::new(fixture_fonts())).unwrap()
 }
 
-/// Reopen against the same per-test library (position-persistence tests).
 /// The vendored fixture faces, all three axes pinned, so this suite means
 /// the same thing on Linux, on a Mac and on a device. Taking the host's
 /// fonts is what pinned two of these assertions to one machine's
@@ -39,27 +39,7 @@ pub fn fixture_fonts() -> chapbook_core::FontSource {
 }
 
 pub fn reopen_isolated(name: &str, source: &str) -> Session {
-    open_library(name, source, false)
-}
-
-pub fn open_library(name: &str, source: &str, fresh: bool) -> Session {
-    let dir = library_dir(name);
-    if fresh {
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-    Session::open_with(
-        source,
-        SessionConfig::new(fixture_fonts()).with_library_dir(dir),
-    )
-    .unwrap()
-}
-
-/// A library dir of this test's own, stable across a reopen.
-pub fn library_dir(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "chapbook-session-test-{}-{name}",
-        std::process::id()
-    ))
+    open_isolated(name, source)
 }
 
 /// Drive the async load path to completion: render (queues the load),

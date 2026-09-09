@@ -16,20 +16,11 @@ mod lifecycle {
     #[cfg(feature = "cbz")]
     const ONE_UNIT: usize = PAGE + 8 * 1024;
 
-    fn dir_for(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "chapbook-lifecycle-test-{}-{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     #[cfg(feature = "cbz")]
-    fn comic(name: &str) -> Session {
+    fn comic(_name: &str) -> Session {
         let mut session = Session::open_with(
             fixture("cbz/minimal.cbz"),
-            SessionConfig::new(fixture_fonts()).with_library_dir(dir_for(name)),
+            SessionConfig::new(fixture_fonts()),
         )
         .unwrap();
         session.set_metrics(chapbook_core::PageMetrics {
@@ -81,12 +72,15 @@ mod lifecycle {
     }
 
     #[test]
-    fn suspend_persists_the_position_and_lets_go_of_the_database() {
-        let dir = dir_for("suspend");
+    fn suspend_keeps_the_place_and_the_session_stays_usable() {
+        // kalam: upstream's suspend wrote the position to its library and
+        // closed the database; a second session proved both. There is no
+        // database now, so what suspend owes is narrower: the caches go,
+        // the place does not, and the host can still ask for the durable
+        // locator it stores itself.
         let source = fixture("epub/minimal.epub");
-        let config = || SessionConfig::new(fixture_fonts()).with_library_dir(&dir);
-
-        let mut session = Session::open_with(source.as_str(), config()).unwrap();
+        let mut session =
+            Session::open_with(source.as_str(), SessionConfig::new(fixture_fonts())).unwrap();
         session.set_metrics(chapbook_core::PageMetrics {
             size: chapbook_core::Size::new(400.0, 600.0),
             margins: chapbook_core::EdgeSizes::uniform(20.0),
@@ -98,12 +92,14 @@ mod lifecycle {
         let where_we_were = session.locator();
         session.suspend();
 
-        // Another session opening the same library sees the position,
-        // which is only possible if suspend wrote it *and* released the
-        // lock on the way out.
-        let reopened = Session::open_with(source.as_str(), config()).unwrap();
-        assert_eq!(reopened.locator().spine_index, where_we_were.spine_index);
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            session.locator(),
+            where_we_were,
+            "suspend does not move the reader"
+        );
+        let durable = session.layered_locator().expect("a text unit captures");
+        assert_eq!(durable.spine_index, where_we_were.spine_index);
+        assert!(session.render().is_some(), "and it still renders");
     }
 
     #[test]
@@ -118,7 +114,6 @@ mod lifecycle {
 
         session.next_unit();
         assert!(render_loaded(&mut session).width() > 0, "still renders");
-        session.save_position();
         session.suspend();
         assert!(session.render().is_some(), "and survives a second one");
     }

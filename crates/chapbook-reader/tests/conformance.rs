@@ -20,9 +20,6 @@ fn fixture(rel: &str) -> String {
         .into_owned()
 }
 
-/// A factory the harness can call repeatedly. Each call reopens the *same*
-/// library dir, which is what `PositionSurvivesARestart` needs in order to
-/// have anything to restore from; the dir is wiped once, here, rather than
 /// The vendored fixture faces, all three axes pinned, so this suite means
 /// the same thing on Linux, on a Mac and on a device. Taking the host's
 /// fonts is what pinned two of these assertions to one machine's
@@ -34,20 +31,11 @@ fn fixture_fonts() -> chapbook_core::FontSource {
     )
 }
 
-/// per call.
-fn factory(name: &'static str, source: String) -> impl FnMut() -> Session {
-    let dir = std::env::temp_dir().join(format!(
-        "chapbook-conformance-{}-{name}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    move || {
-        Session::open_with(
-            source.as_str(),
-            SessionConfig::new(fixture_fonts()).with_library_dir(&dir),
-        )
-        .unwrap()
-    }
+/// A factory the harness can call repeatedly. (kalam: upstream reopened
+/// the same library dir here so a position had somewhere to persist; the
+/// harness now carries the locator across the reopen itself.)
+fn factory(_name: &'static str, source: String) -> impl FnMut() -> Session {
+    move || Session::open_with(source.as_str(), SessionConfig::new(fixture_fonts())).unwrap()
 }
 
 fn run(name: &'static str, rel: &str) -> conformance::Report {

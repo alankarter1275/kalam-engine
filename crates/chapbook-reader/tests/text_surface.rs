@@ -23,18 +23,9 @@ fn fixture_fonts() -> chapbook_core::FontSource {
     )
 }
 
-/// Open a session against a per-test library dir (see tests/session.rs).
-fn open_isolated(name: &str, source: &str) -> Session {
-    let dir = std::env::temp_dir().join(format!(
-        "chapbook-text-surface-test-{}-{name}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    Session::open_with(
-        source,
-        SessionConfig::new(fixture_fonts()).with_library_dir(dir),
-    )
-    .unwrap()
+/// Open a session on the fixture fonts (see tests/session.rs).
+fn open_isolated(_name: &str, source: &str) -> Session {
+    Session::open_with(source, SessionConfig::new(fixture_fonts())).unwrap()
 }
 
 /// Drive the async load path to completion: render (queues the load),

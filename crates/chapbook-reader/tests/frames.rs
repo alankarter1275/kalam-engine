@@ -160,8 +160,17 @@ fn a_highlight_damages_only_its_own_lines() {
     // Adding a highlight outranks the selection on the intent ordering.
     // Damage must not be lost to that: the marked lines are the only ones
     // that changed, and on a panel the difference is a partial refresh
-    // versus a full-page flash.
-    s.add_highlight().expect("highlight the selection");
+    // versus a full-page flash. (kalam: the host stores the mark and
+    // shows it; the frame contract is the same as upstream's.)
+    let (start, end) = s.selected_range().expect("a selection to mark");
+    let row = chapbook_reader::HostHighlight {
+        id: 1,
+        start: s.layered_locator_at(start).expect("start captures"),
+        end: s.layered_locator_at(end).expect("end captures"),
+        color: None,
+        text: s.selected_text(),
+    };
+    s.show_host_highlight(row);
     let frame = s.frame().expect("frame");
     assert_eq!(frame.intent, FrameIntent::Annotation);
     let damage = frame

@@ -45,7 +45,6 @@ impl Session {
     /// highlight landing while a selection is live must not lose its
     /// region just because `Annotation` outranks `Selection` — both name
     /// where they changed, so the frame reports the union of the two.
-    #[cfg(feature = "library")]
     pub(crate) fn mark_range(&mut self, intent: FrameIntent, start: u32, end: u32) {
         match self.range_damage(start, end) {
             Some(region) => self.mark_rect(intent, region),
@@ -58,7 +57,6 @@ impl Session {
     /// Record a change confined to a region the engine already knows in
     /// page coordinates, rather than one it has to derive from locators.
     // Highlights state a region, and so does a page image arriving.
-    #[cfg(any(feature = "library", feature = "_image-book"))]
     pub(crate) fn mark_rect(&mut self, intent: FrameIntent, region: Rect) {
         self.pending = self.pending.max(intent);
         if self.pending_damage.unstated {
@@ -72,7 +70,6 @@ impl Session {
 
     /// The area a locator range covers on the current page, or `None` when
     /// it lies on another page and so disturbs nothing here.
-    #[cfg(feature = "library")]
     fn range_damage(&self, start: u32, end: u32) -> Option<Rect> {
         let page = self.layout(self.spine)?.pages.get(self.page)?;
         let region = page
@@ -186,9 +183,8 @@ impl Session {
         let (spine, page_idx) = (self.spine, self.page);
         // Stored highlights first, the live selection on top of them.
         // kalam: colours come from the effective palette (a shell's exact
-        // colours if it set them, else the theme's presets). Two sources
-        // of highlight: the library's own (when built with one) and the
-        // host's (`host_highlights.rs`), painted alike.
+        // colours if it set them, else the theme's presets). The
+        // highlights are the host's (`host_highlights.rs`).
         let highlight_color = self.settings.palette().highlight;
         // A stored color keeps the theme's transparency unless it states
         // its own; an unparseable one falls back rather than vanishing.
@@ -201,10 +197,8 @@ impl Session {
                 .and_then(|hex| Rgba::from_hex(hex, highlight_color.a))
                 .unwrap_or(highlight_color),
         };
-        let mut selections: Vec<Selection> = Vec::new();
-        #[cfg(feature = "library")]
-        selections.extend(self.highlights(spine).iter().map(paint));
-        selections.extend(self.host_highlights(spine).iter().map(paint));
+        let mut selections: Vec<Selection> =
+            self.host_highlights(spine).iter().map(paint).collect();
         if let Some((start, end)) = self.selected_range() {
             selections.push(Selection {
                 start,

@@ -22,13 +22,14 @@ terms.
 |---|---|
 | Imported from Chapbook | done — `ab14cb7` |
 | Verified on Kalam's target hardware (4 GB, HDD, Arch) | done, 2026-09-08 — builds in 15 min, opens real books, `f`/`s` overrides confirmed working |
-| Stripped to the Kalam subset | done — other platforms, GPU renderer, networking/catalogs/sync, PDF and comics, and Chapbook's own app are gone; MathML kept; `chapbook-library` stays until Kalam's database is wired in. See `docs/kalam/PLAN.md` §4 |
-| Kalam adapter (GTK widget, theme, dictionary/position hooks) | works on the target machine (2026-09-09) — `crates/kalam-reader` + `tools/kalam-reader-demo`; paged. **Too slow and too big still**: 3.9 s to the first page, 150 MB; being measured stage by stage before it is tuned (PLAN §7 step 3) |
+| Stripped to the Kalam subset | done — other platforms, GPU renderer, networking/catalogs/sync, PDF and comics, Chapbook's own app and its SQLite bookshelf (`chapbook-library`) are gone; MathML kept. The engine writes nothing to disk. See `docs/kalam/PLAN.md` §4 and §7 step 4 |
+| Kalam adapter (GTK widget, theme, dictionary/position hooks, highlights) | works on the target machine (2026-09-09) — `crates/kalam-reader` + `tools/kalam-reader-demo`; paged. Measured: the engine opens a novel in ~60 ms and lays out a chapter in ~40 ms; the 3–4 s the demo takes to its first page and most of its 150 MB are GTK starting up from a cold disk, which Kalam has already paid by the time a book is opened (PLAN §7 step 3). Next: wire it into Kalam (step 5) |
 
 What is left is Chapbook's EPUB core, its GTK4 demo window and its
 command-line tool, plus the two Kalam crates. Chapbook's own docs below
 still describe the inherited code accurately; where they mention PDF,
-comics, catalogs, sync or other platforms, that part no longer exists
+comics, catalogs, sync, other platforms or Chapbook's own library
+(`chapbook-library`, its SQLite bookshelf), that part no longer exists
 here. The adapter has its own [`README`](crates/kalam-reader/README.md).
 
 ```sh

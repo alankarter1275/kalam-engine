@@ -1,20 +1,52 @@
 //! kalam: layered positions for a host that keeps its own records.
 //!
-//! [`Session::save_position`] and the annotation calls persist through
-//! chapbook's own library. A host with its own database (Kalam) needs the
-//! same durable position — quote context, spine fraction, whole-book
-//! progression — as a *value* it can store wherever it likes and hand back
-//! later, and a way to land on one that tolerates the book having been
-//! re-imported or re-parsed in between. These calls are that, and nothing
-//! else: the resolve chain is `chapbook_core::locator`'s, exactly as the
-//! library path uses it. (Plus one hit-test, `word_at_exact`, that the
-//! host's tap-to-look-up needs and the reference viewers never did.)
+//! Upstream persisted positions and marks through chapbook's own library
+//! (removed here — Kalam has its database). A host needs the same durable
+//! position — quote context, spine fraction, whole-book progression — as a
+//! *value* it can store wherever it likes and hand back later, and a way
+//! to land on one that tolerates the book having been re-imported or
+//! re-parsed in between. These calls are that, and nothing else: the
+//! resolve chain is `chapbook_core::locator`'s, exactly as the library
+//! path used it. (Plus one hit-test, `word_at_exact`, that the host's
+//! tap-to-look-up needs and the reference viewers never did.)
 
 use chapbook_core::{resolve_in_text, LayeredLocator, Locator, Point};
 
+use crate::text_surface::unit_locator_text;
 use crate::Session;
 
+/// Book-wide char counts around the current unit — what
+/// `LayeredLocator::capture` needs beyond the offset itself.
+pub(crate) struct UnitCharContext {
+    /// The current unit's locator text.
+    pub(crate) text: String,
+    /// Chars in the spine items before it.
+    pub(crate) prior: u64,
+    /// Chars across the whole book.
+    pub(crate) total: u64,
+}
+
 impl Session {
+    /// Char counts around the current unit. The per-unit counts are a
+    /// property of the file — computed once per session (the one
+    /// whole-book pass) and reused by every later capture.
+    pub(crate) fn unit_char_context(&self) -> UnitCharContext {
+        let counts = self.char_counts.get_or_init(|| {
+            (0..self.book.publication().spine().len())
+                .map(|i| {
+                    unit_locator_text(self.book.publication(), i)
+                        .map(|text| text.chars().count() as u64)
+                        .unwrap_or(0)
+                })
+                .collect()
+        });
+        UnitCharContext {
+            text: self.cached_unit_text(self.spine).unwrap_or_default(),
+            prior: counts.iter().take(self.spine).sum(),
+            total: counts.iter().sum(),
+        }
+    }
+
     /// The word under a point, only if the point is *on* its line — the
     /// tap-to-look-up test. [`Session::word_at`] snaps to the nearest line
     /// (right for a caret, wrong for a tap: a press in the margin beside a

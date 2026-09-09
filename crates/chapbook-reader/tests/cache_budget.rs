@@ -19,17 +19,10 @@ mod cache_budget {
     const PAGE: usize = 120 * 180 * 4;
 
     #[cfg(feature = "cbz")]
-    fn comic(name: &str, budget: usize) -> Session {
-        let dir = std::env::temp_dir().join(format!(
-            "chapbook-budget-test-{}-{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+    fn comic(_name: &str, budget: usize) -> Session {
         let mut session = Session::open_with(
             fixture("cbz/minimal.cbz"),
-            SessionConfig::new(fixture_fonts())
-                .with_library_dir(&dir)
-                .with_cache_budget(budget),
+            SessionConfig::new(fixture_fonts()).with_cache_budget(budget),
         )
         .unwrap();
         session.set_metrics(chapbook_core::PageMetrics {
@@ -125,15 +118,10 @@ mod cache_budget {
         // Text is the smaller term — 0.3 MB a chapter against 15 MB a comic
         // page — but it accumulates the same way, so one budget covers
         // both rather than leaving a second unbounded cache behind.
-        let dir =
-            std::env::temp_dir().join(format!("chapbook-budget-test-{}-text", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
         let budget = 64 * 1024;
         let mut session = Session::open_with(
             fixture("epub/minimal.epub"),
-            SessionConfig::new(fixture_fonts())
-                .with_library_dir(&dir)
-                .with_cache_budget(budget),
+            SessionConfig::new(fixture_fonts()).with_cache_budget(budget),
         )
         .unwrap();
         session.set_metrics(chapbook_core::PageMetrics {

@@ -79,9 +79,10 @@ impl Session {
     /// three no shell could reach before: line height, justification, and
     /// whether publisher styles apply.
     ///
-    /// Settings persist to the library, so font size survives a restart.
-    /// `Global` is the reader's default from here on; `ThisBook` is an
-    /// override that outlives later changes to the default.
+    /// kalam: they hold for the life of the session. Upstream persisted
+    /// them per scope through its library; the host keeps its own
+    /// preferences now and applies them on every open, so `scope` changes
+    /// nothing here (see [`SettingsScope`]).
     pub fn set_settings(&mut self, settings: ReadingSettings, scope: SettingsScope) {
         let changed = self.settings != settings;
         self.settings = settings;
@@ -89,22 +90,6 @@ impl Session {
             self.relayout_keeping_position();
         }
         self.persist_settings(scope);
-    }
-
-    /// Drop this book's override so it follows the reader's default again,
-    /// applying that default now.
-    #[cfg(feature = "library")]
-    pub fn clear_book_settings(&mut self) {
-        let book_id = self.book_id;
-        let (Some(library), Some(id)) = (self.library_mut(), book_id) else {
-            return;
-        };
-        if let Err(e) = library.clear_reading_settings(id) {
-            log::error!("failed to clear book settings: {e}");
-            return;
-        }
-        let settings = library.effective_settings(None);
-        self.set_settings(settings, SettingsScope::Global);
     }
 
     /// Step the base font size, keeping the reader's place. A convenience
@@ -143,30 +128,10 @@ impl Session {
         self.set_settings(settings, SettingsScope::Global);
     }
 
-    fn persist_settings(&mut self, scope: SettingsScope) {
-        // Settings still apply; there is simply nowhere to write them
-        // down, so they last as long as the session does.
-        #[cfg(not(feature = "library"))]
-        let _ = scope;
-        #[cfg(feature = "library")]
-        {
-            let book_id = self.book_id;
-            let settings = self.settings.clone();
-            let Some(library) = self.library_mut() else {
-                return;
-            };
-            let target = match scope {
-                SettingsScope::Global => None,
-                // No library record, nothing to hang an override on.
-                SettingsScope::ThisBook => match book_id {
-                    Some(id) => Some(id),
-                    None => return,
-                },
-            };
-            if let Err(e) = library.set_reading_settings(target, &settings) {
-                log::error!("failed to save settings: {e}");
-            }
-        }
+    fn persist_settings(&mut self, _scope: SettingsScope) {
+        // kalam: settings apply for the life of the session; the host
+        // persists its own preferences. The scope is kept for the call
+        // sites' sake (see `SettingsScope`).
     }
 
     // ---- Input ----

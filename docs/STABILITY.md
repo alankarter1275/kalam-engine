@@ -15,7 +15,7 @@ where breakage is *treated as a cost*, and where it is not.
 | Tier | Crates | What it means |
 |---|---|---|
 | **Contract** | `chapbook-core`, `chapbook-paint` | Types that appear in signatures other crates must name (`LayeredLocator`, `ReadingSettings`, `Palette`, `DisplayList`). Changing one ripples through every crate below. Changed most reluctantly, and additively when possible. |
-| **API** | `kalam-reader`, `chapbook-reader`, `chapbook-library` | What a host calls. `kalam-reader` is the crate Kalam actually links; `chapbook-reader` is the engine session underneath it; `chapbook-library` is the engine's own bookshelf, kept only until Kalam's database is wired in its place. Breaking changes are deliberate and named in the commit message. |
+| **API** | `kalam-reader`, `chapbook-reader` | What a host calls. `kalam-reader` is the crate Kalam actually links; `chapbook-reader` is the engine session underneath it. Breaking changes are deliberate and named in the commit message. |
 | **Producer** | `chapbook-epub` | The format reader behind `Publication`. Through `chapbook-reader` it is an implementation detail. |
 | **Backend** | `chapbook-render-tinyskia` | Turns a `DisplayList` into pixels. The *trait* is stable; the crate implementing it is free to change. |
 | **Internal** | `chapbook-layout` | No stability of any kind. Its DOM binding and cascade driver follow stylo's shape, and a stylo upgrade rewrites them. |

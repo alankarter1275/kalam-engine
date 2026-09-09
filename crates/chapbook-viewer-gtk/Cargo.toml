@@ -14,11 +14,9 @@ authors.workspace = true
 # target the crate is a stub `main` and no dependencies at all.
 [target.'cfg(target_os = "linux")'.dependencies]
 chapbook-core = { workspace = true }
-# kalam: `library` is named here because upstream got it for free from
-# `opds`, which is gone. Without it the session compiles without
-# `add_highlight`, positions and settings, and this viewer's `h` key
-# does not build.
-chapbook-reader = { workspace = true, features = ["library", "svg", "mathml"] }
+# kalam: the features are named here because upstream got them for free
+# from the defaults, which this workspace turns off.
+chapbook-reader = { workspace = true, features = ["svg", "mathml"] }
 chapbook-render-tinyskia = { workspace = true }
 # v4_16 raises this viewer's — not the engine's — runtime floor to GTK
 # 4.16, for the AccessibleText interface (4.14) and its extents/offset

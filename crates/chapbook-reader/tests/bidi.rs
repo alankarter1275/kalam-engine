@@ -80,14 +80,10 @@ fn bidi_fonts() -> FontSource {
     source
 }
 
-fn open(name: &str) -> Session {
-    let dir = std::env::temp_dir().join(format!("chapbook-bidi-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let mut session = Session::open_with(
-        fixture("epub/bidi.epub"),
-        SessionConfig::new(bidi_fonts()).with_library_dir(dir),
-    )
-    .expect("open the bidi fixture");
+fn open(_name: &str) -> Session {
+    let config = SessionConfig::new(bidi_fonts());
+    let mut session =
+        Session::open_with(fixture("epub/bidi.epub"), config).expect("open the bidi fixture");
     session.set_metrics(PageMetrics {
         size: PAGE,
         margins: EdgeSizes::uniform(MARGIN),

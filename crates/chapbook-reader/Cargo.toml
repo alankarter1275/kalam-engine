@@ -12,7 +12,9 @@ authors.workspace = true
 # list, and the four names below are no longer in it (see [features]).
 # Telling the check about them keeps the untouched src/ and tests/ sites
 # from raising an `unexpected_cfgs` warning each — which CI's
-# `-D warnings` would turn into a failed build.
+# `-D warnings` would turn into a failed build. (`library` is not in the
+# list: its sites were removed rather than left dark, since the host's
+# highlight and position code took their place.)
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cbz", "pdf", "opds", "ureq"))'] }
 
@@ -24,14 +26,12 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cbz", "pd
 # does not compile, and the files stay byte-identical to upstream for
 # cherry-picking. `_comic` and `_image-book` stay declared (never enabled)
 # for the same reason.
-default = ["library", "svg", "mathml"]
-# The local bookshelf: imported books, reading positions, annotations,
-# saved catalogs. Off, the session reads but remembers nothing — every book
-# opens at the beginning and marks cannot be stored — and rusqlite and
-# bundled SQLite leave the build with it. That is the profile a browser
-# forces, since there is no filesystem for a database to live in, and the
-# one a stripped e-ink build wants.
-library = ["dep:chapbook-library"]
+#
+# The `library` feature (upstream's SQLite bookshelf: imported books,
+# positions, annotations) is gone too (PLAN.md §7 step 4). The session
+# reads and remembers nothing; the host keeps its own records and hands
+# them back through `host_position.rs` and `host_highlights.rs`.
+default = ["svg", "mathml"]
 # SVG images in EPUB chapters (`<img src="*.svg">`, inline `<svg>`),
 # rasterized by resvg. A rendering capability, not a format: off, SVGs
 # degrade silently (missing image, flattened text), which is why it is a
@@ -62,7 +62,6 @@ chapbook-epub = { workspace = true }
 # here, no consumer could ever turn them off.
 chapbook-layout = { workspace = true }
 chapbook-paint = { workspace = true }
-chapbook-library = { workspace = true, optional = true }
 chapbook-render-tinyskia = { workspace = true }
 # The reduction half of panel policy: `render_into` quantizes for the
 # session's pixel format at the same point it rasterizes.

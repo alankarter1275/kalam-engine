@@ -1,11 +1,17 @@
-//! Reading settings: persistence, per-book overrides, and relayout
-//! that keeps the reader's place.
+//! Reading settings: applying them, reading them back, and relayout that
+//! keeps the reader's place. (kalam: persistence is the host's now.)
 
 mod common;
 use common::*;
 
 #[test]
-fn settings_survive_a_restart_and_can_be_overridden_per_book() {
+fn settings_apply_for_the_session_and_a_fresh_session_starts_clean() {
+    // kalam: upstream persisted settings per scope through its library and
+    // proved they came back on reopen. The library is gone: the host
+    // (Kalam) keeps its preferences and applies them on every open, so
+    // what the engine owes is that a change sticks for the life of the
+    // session, that every field a shell can set is honoured, and that a
+    // new session does *not* inherit anything from an old one.
     use chapbook_reader::SettingsScope;
 
     let source = fixture("epub/minimal.epub");
@@ -19,53 +25,31 @@ fn settings_survive_a_restart_and_can_be_overridden_per_book() {
         s.cycle_theme();
         assert_eq!(s.settings().base_font_px, 22.0);
         assert_eq!(s.settings().theme, chapbook_core::Theme::Sepia);
+
+        // The fields no shell could reach before.
+        let mut wide = s.settings().clone();
+        wide.justify = true;
+        wide.line_height = 1.9;
+        wide.publisher_styles = false;
+        s.set_settings(wide, SettingsScope::ThisBook);
+        assert!(s.settings().justify);
+        assert_eq!(s.settings().line_height, 1.9);
+        assert!(!s.settings().publisher_styles);
+        assert_eq!(
+            s.settings().base_font_px,
+            22.0,
+            "the rest survived the call"
+        );
     }
 
-    // Font size used not to survive a restart. It does now.
-    let mut s = reopen_isolated("epub-settings", &source);
-    s.set_metrics(metrics());
-    assert_eq!(s.settings().base_font_px, 22.0);
-    assert_eq!(s.settings().theme, chapbook_core::Theme::Sepia);
-
-    // The fields no shell could reach before.
-    let mut wide = s.settings().clone();
-    wide.justify = true;
-    wide.line_height = 1.9;
-    wide.publisher_styles = false;
-    s.set_settings(wide, SettingsScope::ThisBook);
-    assert!(s.settings().justify);
-    drop(s);
-
-    // A per-book override outlives a later change to the default.
-    let mut s = reopen_isolated("epub-settings", &source);
-    s.set_metrics(metrics());
-    assert!(s.settings().justify, "the override loaded");
-    assert_eq!(s.settings().line_height, 1.9);
-    assert!(!s.settings().publisher_styles);
-
-    let mut plain = s.settings().clone();
-    plain.base_font_px = 12.0;
-    plain.justify = false;
-    s.set_settings(plain, SettingsScope::Global);
-    drop(s);
-
-    let mut s = reopen_isolated("epub-settings", &source);
-    s.set_metrics(metrics());
-    assert!(
-        s.settings().justify,
-        "the book keeps its override when the default moves"
+    let s = reopen_isolated("epub-settings", &source);
+    assert_eq!(
+        s.settings().base_font_px,
+        18.0,
+        "nothing leaks between sessions"
     );
-    assert_eq!(s.settings().base_font_px, 22.0);
-
-    // Clearing the override hands the book back to the default.
-    s.clear_book_settings();
-    assert_eq!(s.settings().base_font_px, 12.0);
+    assert_eq!(s.settings().theme, chapbook_core::Theme::Light);
     assert!(!s.settings().justify);
-    drop(s);
-
-    let mut s = reopen_isolated("epub-settings", &source);
-    s.set_metrics(metrics());
-    assert_eq!(s.settings().base_font_px, 12.0, "and it stays cleared");
 }
 
 #[test]
@@ -119,10 +103,10 @@ fn the_session_enumerates_the_families_it_can_match() {
     );
 }
 
-/// The setting travels the same road as every other one: persisted per
-/// scope, restored on reopen, cleared with the rest of a book's override.
+/// The setting travels the same road as every other one: set through
+/// `set_settings`, read back from `settings()`, and gone with the session.
 #[test]
-fn a_chosen_font_survives_a_restart_and_scopes_per_book() {
+fn a_chosen_font_is_read_back_and_does_not_outlive_the_session() {
     use chapbook_reader::SettingsScope;
 
     let source = fixture("epub/minimal.epub");
@@ -144,19 +128,11 @@ fn a_chosen_font_survives_a_restart_and_scopes_per_book() {
         assert_eq!(s.settings().font_family.as_deref(), Some("Crimson Text"));
     }
 
-    let mut s = reopen_isolated("epub-font-choice", &source);
-    s.set_metrics(metrics());
-    assert_eq!(
-        s.settings().font_family.as_deref(),
-        Some("Crimson Text"),
-        "the choice did not come back from the database"
-    );
-
-    s.clear_book_settings();
+    let s = reopen_isolated("epub-font-choice", &source);
     assert_eq!(
         s.settings().font_family,
         None,
-        "clearing the override returns the book to the publisher's font"
+        "a fresh session starts on the publisher's font again"
     );
 }
 

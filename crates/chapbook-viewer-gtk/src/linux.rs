@@ -163,9 +163,12 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
             // engine can do for itself falls through to the key map.
             let outcome = match name.as_deref() {
                 Some("h") => {
-                    // The stored highlight replaces the selection that
-                    // made it.
-                    s.add_highlight();
+                    // kalam: the engine's own highlight store is gone;
+                    // the reference viewer has nowhere to keep one. The
+                    // key clears the selection so it still does something
+                    // visible. `kalam-reader-demo` shows the host-owned
+                    // way.
+                    eprintln!("chapbook-viewer-gtk: highlights live in the host (kalam-reader)");
                     s.selection_clear();
                     ActionOutcome::Changed
                 }
@@ -219,7 +222,6 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                     ActionOutcome::Changed
                 }
                 Some("q") | Some("Escape") => {
-                    s.save_position();
                     drop(s);
                     if let Some(window) = window_weak.upgrade() {
                         window.close();
@@ -400,15 +402,6 @@ fn build_ui(app: &gtk::Application, session: Rc<RefCell<Session>>) {
                     }
                 }
             }
-        });
-    }
-
-    // ---- Persistence on close ----
-    {
-        let session = session.clone();
-        window.connect_close_request(move |_| {
-            session.borrow_mut().save_position();
-            glib::Propagation::Proceed
         });
     }
 

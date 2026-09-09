@@ -66,23 +66,6 @@ fn fixture(rel: &str) -> String {
         .into_owned()
 }
 
-/// A library directory that cannot be created, on any host.
-///
-/// The trick is a path *under an existing file*: `create_dir_all` refuses
-/// it as `ENOTDIR` on Unix and with the same shape of error on Windows,
-/// because a file is not a directory anywhere. What this replaced was
-/// `/proc/nonexistent/chapbook`, which is unwritable only because Linux
-/// says so: Windows has no `/proc`, made the whole chain at the root of
-/// the current drive without complaint, and the two tests below were then
-/// asserting that a warning nothing had provoked would arrive.
-fn unusable_library_dir() -> String {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("Cargo.toml")
-        .join("chapbook")
-        .to_string_lossy()
-        .into_owned()
-}
-
 fn fixture_fonts() -> FontSource {
     FontSource::embedded(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/fonts"),
@@ -91,37 +74,12 @@ fn fixture_fonts() -> FontSource {
 }
 
 #[test]
-fn a_library_that_will_not_open_is_reported_and_not_fatal() {
-    let _floor = capturing();
-
-    // A directory that cannot be created: the library is unavailable and
-    // the session is expected to read on without one.
-    let session = Session::open_with(
-        Source::from(fixture("epub/minimal.epub").as_str()),
-        SessionConfig::new(fixture_fonts()).with_library_dir(unusable_library_dir()),
-    )
-    .expect("a book still opens without a library");
-    assert!(session.spine_len() > 0);
-
-    let said = drain();
-    let warned = said
-        .iter()
-        .find(|(level, message, _)| *level == log::Level::Warn && message.contains("library"));
-    assert!(
-        warned.is_some(),
-        "the engine should say the library is unavailable, said: {said:?}"
-    );
-}
-
-#[test]
 fn a_book_that_opens_cleanly_says_nothing_alarming() {
     let _floor = capturing();
-    let dir = std::env::temp_dir().join(format!("chapbook-diag-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
 
     let mut session = Session::open_with(
         Source::from(fixture("epub/minimal.epub").as_str()),
-        SessionConfig::new(fixture_fonts()).with_library_dir(&dir),
+        SessionConfig::new(fixture_fonts()),
     )
     .unwrap();
     session.set_metrics(chapbook_core::PageMetrics {
@@ -145,22 +103,22 @@ fn a_book_that_opens_cleanly_says_nothing_alarming() {
         loud.is_empty(),
         "a session at rest should be silent, said: {loud:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn records_carry_the_crate_that_emitted_them() {
-    // A host filtering `chapbook_reader` apart from `chapbook_library`
+    // A host filtering `chapbook_reader` apart from `chapbook_layout`
     // needs the target to be the module path, which is what `log` gives by
     // default — worth pinning, because setting an explicit target anywhere
     // would silently take it away.
     let _floor = capturing();
 
-    // Provoke a real engine warning rather than logging from the test, so
-    // the target under assertion is the engine's and not this file's.
+    // kalam: upstream provoked a library warning here; the library is
+    // gone, and opening a book reports its timing at `info` from the
+    // engine, which is a real engine record all the same.
     let _ = Session::open_with(
         Source::from(fixture("epub/minimal.epub").as_str()),
-        SessionConfig::new(fixture_fonts()).with_library_dir(unusable_library_dir()),
+        SessionConfig::new(fixture_fonts()),
     );
     let said = drain();
     assert!(

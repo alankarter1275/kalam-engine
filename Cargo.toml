@@ -6,7 +6,6 @@ members = [
     "crates/chapbook-layout",
     "crates/chapbook-paint",
     "crates/chapbook-render-tinyskia",
-    "crates/chapbook-library",
     "crates/chapbook-reader",
     "crates/chapbook-viewer-gtk",
     "tools/chapbook-cli",
@@ -35,7 +34,6 @@ chapbook-epub = { path = "crates/chapbook-epub" }
 chapbook-layout = { path = "crates/chapbook-layout", default-features = false }
 chapbook-paint = { path = "crates/chapbook-paint" }
 chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
-chapbook-library = { path = "crates/chapbook-library" }
 # No defaults here: each shell names the formats it means to open, so a
 # device build's surface is visible in its own manifest rather than
 # inherited. External consumers get the full default set as usual.
@@ -140,9 +138,6 @@ sha1 = "0.10" # IDPF font de-obfuscation key derivation
 # relative hrefs.
 quick-xml = "0.42"
 url = "2"
-
-# Library persistence
-rusqlite = { version = "0.40", features = ["bundled"] }
 
 # The GTK shell's cross-thread wakeup. Both arrive in the graph under glib
 # regardless — naming them here adds no crate, it only lets the shell say

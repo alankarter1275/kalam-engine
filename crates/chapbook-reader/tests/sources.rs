@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "cbz")]
 use chapbook_core::Format;
-use chapbook_core::{BookKind, EdgeSizes, PageMetrics, Rotation, Size, Source};
+use chapbook_core::{BookKind, Source};
 use chapbook_reader::{Session, SessionConfig};
 
 fn fixture(rel: &str) -> PathBuf {
@@ -27,6 +27,7 @@ fn fixture_fonts() -> chapbook_core::FontSource {
     )
 }
 
+#[cfg(feature = "cbz")]
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "chapbook-sources-test-{}-{name}",
@@ -37,16 +38,10 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// Open with an isolated library, so a path source cannot pick up a
-/// position another test stored.
-fn open(source: impl Into<Source>, name: &str) -> chapbook_core::Result<Session> {
-    let dir = scratch(name);
-    let opened = Session::open_with(
-        source,
-        SessionConfig::new(fixture_fonts()).with_library_dir(&dir),
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-    opened
+/// Open on the fixture fonts. (kalam: upstream isolated a library per
+/// test here; there is no library to isolate any more.)
+fn open(source: impl Into<Source>, _name: &str) -> chapbook_core::Result<Session> {
+    Session::open_with(source, SessionConfig::new(fixture_fonts()))
 }
 
 #[test]
@@ -143,119 +138,6 @@ fn a_handle_is_rewound_before_the_format_reader_sees_it() {
     cursor.seek(SeekFrom::Start(0)).unwrap();
     let session = open(Source::reader(cursor), "rewind").unwrap();
     assert!(session.spine_len() > 0);
-}
-
-fn metrics() -> PageMetrics {
-    PageMetrics {
-        size: Size::new(600.0, 800.0),
-        margins: EdgeSizes::uniform(40.0),
-        dpi_scale: 1.0,
-        rotation: Rotation::None,
-    }
-}
-
-/// A library dir of this test's own, kept across reopens — persistence is
-/// the thing under test.
-fn kept_library(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "chapbook-sources-test-{}-{name}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn open_in(source: impl Into<Source>, dir: &Path) -> Session {
-    Session::open_with(
-        source,
-        SessionConfig::new(fixture_fonts()).with_library_dir(dir),
-    )
-    .unwrap()
-}
-
-#[test]
-#[cfg(feature = "cbz")]
-fn a_descriptor_book_keeps_its_place() {
-    // The custody gap, closed from the engine's side: a book with no path
-    // still has bytes, the library keys identity by a hash of them, so a
-    // handle is adopted into the shelf and its position round-trips. This
-    // is the flow a phone actually runs — resolve a bookmark or URI grant,
-    // open a descriptor, read, suspend, relaunch, resolve, open again.
-    let dir = kept_library("fd-place");
-    let path = fixture("cbz/minimal.cbz");
-    {
-        let mut s = open_in(Source::reader(std::fs::File::open(&path).unwrap()), &dir);
-        s.set_metrics(metrics());
-        s.next_page();
-        s.next_page();
-        assert_eq!(s.spine(), 2);
-        s.save_position();
-    }
-    let mut s = open_in(Source::reader(std::fs::File::open(&path).unwrap()), &dir);
-    s.set_metrics(metrics());
-    assert_eq!(s.spine(), 2, "the place survived a cold reopen by handle");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-#[cfg(feature = "cbz")]
-fn every_door_opens_onto_the_same_shelf() {
-    // One book, three doors, one record. Identity is the edition
-    // fingerprint, which a path, bytes and a handle all produce — so a
-    // book imported by path on a desktop and reopened from a descriptor
-    // on a phone is the same book, place and all.
-    let dir = kept_library("one-shelf");
-    let path = fixture("cbz/minimal.cbz");
-    {
-        let mut s = open_in(path.clone(), &dir);
-        s.set_metrics(metrics());
-        s.next_page();
-        assert_eq!(s.spine(), 1);
-        s.save_position();
-    }
-    {
-        let mut s = open_in(Source::bytes(std::fs::read(&path).unwrap()), &dir);
-        s.set_metrics(metrics());
-        assert_eq!(s.spine(), 1, "bytes found the path import's place");
-        s.next_page();
-        assert_eq!(s.spine(), 2);
-        s.save_position();
-    }
-    let mut s = open_in(Source::reader(std::fs::File::open(&path).unwrap()), &dir);
-    s.set_metrics(metrics());
-    assert_eq!(s.spine(), 2, "a handle found the place bytes left");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn adoption_records_without_copying() {
-    // The shelf holds a record, not a second copy of the file: `books/`
-    // stays empty, and the record still carries title and identity. The
-    // platform owns the file; the shell owns the way back to it.
-    let dir = kept_library("no-copy");
-    let bytes = std::fs::read(fixture("epub/minimal.epub")).unwrap();
-    {
-        let mut s = open_in(Source::bytes(bytes.clone()), &dir);
-        s.set_metrics(metrics());
-        s.save_position();
-    }
-    let managed: Vec<_> = std::fs::read_dir(dir.join("books")).unwrap().collect();
-    assert!(
-        managed.is_empty(),
-        "an adopted book must not grow a managed copy: {managed:?}"
-    );
-
-    let library = chapbook_library::Library::open(&dir).unwrap();
-    let fingerprint = chapbook_library::Library::fingerprint_of_bytes(&bytes);
-    let id = library
-        .find_by_fingerprint(&fingerprint)
-        .unwrap()
-        .expect("the adopted book is on the shelf under its fingerprint");
-    let record = library.book(id).unwrap().unwrap();
-    assert!(record.file_path.as_os_str().is_empty(), "no copy");
-    assert!(!record.title.is_empty());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

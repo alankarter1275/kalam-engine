@@ -79,11 +79,10 @@ says how much it holds right now.
 * **gtk4-rs 0.11** (Kalam is on 0.9). gtk4-sys can only exist once in a
   binary, so Kalam moves to gtk4 0.11 / libadwaita 0.9 / relm4 0.11 when it
   takes this crate. Mechanical; the API differences are small.
-* A directory for the engine's own small database (`ReaderOptions::engine_dir`);
-  Kalam's data dir plus `/engine` is fine. The engine records per-book
-  reading settings and its page cache there. Kalam's own database is
-  untouched — the widget never opens it.
-* Nothing else. No WebKit, no font files on disk, no network.
+* Nothing else. No WebKit, no font files on disk, no network, and no
+  database of its own: the engine writes nothing to disk. Kalam's
+  database is the only store, fed from the position callback and the
+  highlight calls above.
 
 ## Where the numbers come from
 

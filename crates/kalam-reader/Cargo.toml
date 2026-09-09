@@ -11,10 +11,8 @@ repository = "https://github.com/alankarter1275/kalam-engine"
 
 [dependencies]
 chapbook-core = { workspace = true }
-# `library` is what compiles the annotation calls, `set_settings`
-# persistence and the layered-locator helpers this widget is built on.
 # `svg` and `mathml` because books carry both and Kalam keeps MathML.
-chapbook-reader = { workspace = true, features = ["library", "svg", "mathml"] }
+chapbook-reader = { workspace = true, features = ["svg", "mathml"] }
 # Same gtk4-rs line as chapbook-viewer-gtk, and for the same reason: one
 # copy of gtk4-sys in the workspace (it `links = "gtk-4"`, so there can only
 # be one). v4_16 is inherited from that viewer; Kalam itself runs on GTK

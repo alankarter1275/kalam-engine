@@ -60,7 +60,6 @@ fn epub_session_renders_navigates_and_selects() {
     s.prev_page();
     assert_eq!(s.page(), 0);
 
-    s.save_position();
 }
 
 #[test]
@@ -100,7 +99,6 @@ fn cbz_session_pages_through_images() {
     s.next_page();
     assert_eq!(s.spine(), 2);
 
-    s.save_position();
 }
 
 #[test]
@@ -118,7 +116,6 @@ fn pdf_session_reads_like_an_image_book() {
     assert_eq!(s.spine(), 1);
     let px = render_loaded(&mut s).pixel(300, 400).unwrap();
     assert!(px.blue() > 120 && px.red() < 100, "blue PDF page: {px:?}");
-    s.save_position();
 }
 
 #[test]
@@ -172,10 +169,7 @@ fn a_session_can_move_between_threads() {
 #[test]
 fn a_session_with_no_faces_is_refused_at_construction() {
     let empty = chapbook_core::FontSource::embedded("/nonexistent/fonts", "Nothing");
-    let result = Session::open_with(
-        fixture("epub/minimal.epub"),
-        SessionConfig::new(empty).with_library_dir(library_dir("fontless")),
-    );
+    let result = Session::open_with(fixture("epub/minimal.epub"), SessionConfig::new(empty));
 
     let err = result.err().expect("a fontless session must not open");
     let message = err.to_string();
@@ -207,16 +201,13 @@ fn the_session_can_enumerate_the_families_it_was_given() {
 fn a_session_takes_its_host_capabilities_explicitly() {
     use chapbook_core::{Credential, CredentialKey, CredentialStore, Freshness, MemoryCredentials};
 
-    let dir = library_dir("config");
     let store = std::sync::Arc::new(MemoryCredentials::new());
     let key = CredentialKey::http_origin("https://cat.example.com/opds/abc123secret/").unwrap();
     store
         .store(&key, &Credential::basic("reader", "pw"))
         .unwrap();
 
-    let config = SessionConfig::new(fixture_fonts())
-        .with_credentials(store.clone())
-        .with_library_dir(&dir);
+    let config = SessionConfig::new(fixture_fonts()).with_credentials(store.clone());
     // A store in the config is not a store the local path consults.
     let session = Session::open_with(fixture("epub/minimal.epub"), config).unwrap();
     assert!(session.spine_len() > 0);
@@ -229,5 +220,4 @@ fn a_session_takes_its_host_capabilities_explicitly() {
         store.get(&key, Freshness::Cached),
         chapbook_core::CredentialLookup::Found(_)
     ));
-    let _ = std::fs::remove_dir_all(&dir);
 }

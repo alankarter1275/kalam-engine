@@ -104,17 +104,13 @@ pub struct SelectedText {
 
 /// What to do about the host's fonts, and other knobs a shell sets once.
 /// The default is the right answer for Kalam: bundled fonts only, the
-/// engine's own directory, its default cache.
+/// default cache. The engine writes nothing to disk; Kalam's database is
+/// the only store.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ReaderOptions {
     /// Scan the system's fonts too, for scripts the bundled faces lack.
     /// Off by default: on a cold hard disk the scan alone is seconds.
     pub host_fonts: bool,
-    /// Where the engine keeps its own small database (reading settings per
-    /// book, page cache). `None` uses the platform default
-    /// (`~/.local/share/chapbook`). Kalam should hand over a directory
-    /// under its own data dir so everything lives in one place.
-    pub engine_dir: Option<std::path::PathBuf>,
     /// How much decoded-image and layout cache the engine may keep, in
     /// bytes. `None` is [`DEFAULT_CACHE_BUDGET`] (32 MB), not the engine's
     /// own, comic-sized default.
@@ -173,23 +169,13 @@ impl ReaderView {
         prefs: KalamPrefs,
         options: &ReaderOptions,
     ) -> chapbook_core::Result<ReaderView> {
-        let mut config = SessionConfig::new(crate::fonts::font_source(options.host_fonts));
-        if let Some(dir) = &options.engine_dir {
-            config = config.with_library_dir(dir.clone());
-        }
         let budget = options.cache_budget.unwrap_or(DEFAULT_CACHE_BUDGET);
-        config = config.with_cache_budget(budget);
-        // By handle, not by path. Opened by path, the engine's own library
-        // *imports* the book — copies the file into its folder — the first
-        // time it sees it. By handle it *adopts* it: a record keyed by the
-        // file's hash, no copy. Kalam already keeps the file; one copy on
-        // a small disk is enough.
-        let file = std::fs::File::open(path.as_ref())?;
-        let mut session = Session::open_with(chapbook_core::Source::reader(file), config)?;
+        let config = SessionConfig::new(crate::fonts::font_source(options.host_fonts))
+            .with_cache_budget(budget);
+        let mut session = Session::open_with(path.as_ref(), config)?;
         // Kalam's settings, before the first layout, so nothing is laid
-        // out twice. `ThisBook` rather than `Global`: the engine's own
-        // record of the reader's default is not Kalam's to overwrite, and
-        // Kalam re-applies its preferences on every open anyway.
+        // out twice. The scope is a formality now that the engine keeps
+        // no records of its own.
         session.set_settings(
             prefs.reading_settings(),
             chapbook_reader::SettingsScope::ThisBook,
@@ -543,13 +529,6 @@ impl ReaderView {
             self.area.queue_draw();
         }
         moved
-    }
-
-    /// Ask the engine to save what it holds (its own settings record)
-    /// before the window closes. Kalam's own records are Kalam's to save,
-    /// from the position callback.
-    pub fn flush(&self) {
-        self.inner.session.borrow_mut().save_position();
     }
 
     /// Bytes of laid-out chapters and decoded images the engine holds

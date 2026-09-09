@@ -115,15 +115,23 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-core/src/page.rs`, `src/lib.rs` | New `Palette` type; `ReadingSettings.palette: Option<Palette>` (+ `palette()` accessor, hashed into `cache_key`) | Kalam's four themes have exact paper/ink colours; upstream's `Theme` is three fixed presets. `None` everywhere upstream constructs settings, so upstream behaviour is unchanged. **Candidate to send upstream.** |
 | `crates/chapbook-layout/src/cascade/engine.rs` | `theme_css` takes `&ReadingSettings`, uses the effective palette's colours; `Light`+palette gets the Sepia-style sheet | Same feature |
 | `crates/chapbook-reader/src/frame.rs` | Background / selection / highlight colours from `settings.palette()` | Same feature |
-| `crates/chapbook-library/src/lib.rs` | `palette: None` in the settings row read (one line) | Struct gained a field |
 | `crates/chapbook-layout/tests/pagination.rs` | One new test (`a_palette_supplies_the_colours_and_the_theme_the_rules`) | Covers the feature; appended, nothing existing touched |
-| `crates/chapbook-reader/src/lib.rs` | `mod host_position;` (gated on `library`, like `annotations`); `mod host_highlights;` (ungated); `Highlight` moved here from `annotations.rs` so it exists without the library; `UnitState.resolved_host_highlights`; `Session.host_highlights` | New files, see below |
-| `crates/chapbook-reader/src/frame.rs` | Paints host highlights beside the library's, through one closure | Same feature |
-| `crates/chapbook-reader/src/open.rs` | Initialises `host_highlights` | Same feature |
+| `crates/chapbook-reader/src/lib.rs` | `mod host_position;` and `mod host_highlights;`; `Highlight` lives here (was in `annotations.rs`); `UnitState.resolved_host_highlights`, `Session.host_highlights`; the `library` field set, `OpenedBookId`, `book_id()`, `with_library_dir` and `SessionConfig.library_dir` removed; `save_position()` removed (the host saves what `layered_locator()` returns); `SettingsScope` kept but documented as inert | Host-owned highlights and positions; the library is gone (PLAN §7 step 4) |
+| `crates/chapbook-reader/src/frame.rs` | Paints the host's highlights (the library's are gone); `mark_range`/`mark_rect`/`range_damage` ungated | Same |
+| `crates/chapbook-reader/src/open.rs` | Library handshake removed (`shelve`, `restored_start`, fingerprinting, stored-annotation load, settings load, OPDS URL branch); every book opens at unit 0 with `ReadingSettings::default()`; initialises `host_highlights` | Same. **This is now the file most likely to conflict on a cherry-pick**; resolve by keeping ours and re-applying only the non-library part of the upstream change |
 | `crates/chapbook-reader/tests/cache_budget.rs` | `PAGE` constant no longer gated on the removed `cbz` feature (the EPUB test uses it too) | Strip leftover; the file did not compile until CI ran the tests |
 | `docs/STABILITY.md` | Rewritten for the eleven crates that remain, with `kalam-reader` and the demo placed in tiers | The `stability` test in `tools/chapbook-cli` checks the doc against the workspace; upstream's text named twelve crates the strip removed |
-| `tools/chapbook-cli/tests/stability.rs` | Member-count floor 15 → 11 | Same test, same strip |
+| `tools/chapbook-cli/tests/stability.rs` | Member-count floor 15 → 11 → 10 | Same test, same strip (then the library) |
 | `crates/chapbook-reader/src/layout.rs`, `src/open.rs` | One `info` log line per chapter laid out (parse / fonts / images / style / paginate, in ms, plus pages and KB) and one per session opened (total, and the font system's share) | Finding where a slow first page spends its time; silent at the default `warn` level |
+| `crates/chapbook-reader/src/annotations.rs` | **Deleted** (the library's highlight/note/bookmark storage) | Replaced by `host_highlights.rs`; `UnitCharContext`/`unit_char_context` moved to `host_position.rs` |
+| `crates/chapbook-reader/src/cache.rs` | `suspend()` only releases caches; `library_mut()` removed | No database to close |
+| `crates/chapbook-reader/src/nav.rs` | `persist_settings` is a no-op; `clear_book_settings` removed | Nothing to persist to |
+| `crates/chapbook-reader/src/zoom.rs` | `view_rect`/`map_rect` ungated | They were gated on `library` only because their one caller was |
+| `crates/chapbook-reader/src/conformance.rs` | `PositionSurvivesARestart` carries a `LayeredLocator` across the reopen (`layered_locator` → `goto_layered`) instead of `save_position` | Same check, the host's road |
+| `crates/chapbook-reader/tests/{common/mod.rs,bidi,cache_budget,conformance,diagnostics,events,frames,lifecycle,positions,session,settings,sources,text_surface}.rs` | Library-dir plumbing removed; tests that asserted library behaviour (persistence across sessions, the shelf, per-book settings) deleted or rewritten as session-scoped / host-driven; `annotations.rs` deleted, `host_highlights.rs` added | Same |
+| `crates/chapbook-viewer-gtk/src/linux.rs` | `h` key prints a note and clears the selection (no store to add to); `save_position` calls removed | Same |
+| `tools/chapbook-cli/src/{main,commands}.rs`, `tests/lib_shelf.rs` | `lib` subcommand family removed; `lib_shelf.rs` deleted | Same |
+| `Cargo.toml`, `crates/chapbook-reader/Cargo.toml`, consumers' `Cargo.toml` | `crates/chapbook-library` member, `rusqlite`, the `library` feature and `chapbook-library` dependencies removed | Same |
 
 New files inside inherited crates (no conflict risk, listed for completeness):
 

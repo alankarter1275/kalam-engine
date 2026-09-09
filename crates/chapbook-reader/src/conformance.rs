@@ -40,21 +40,18 @@
 //! # }
 //! ```
 //!
-//! For [`Check::PositionSurvivesARestart`] the closure must reopen the
-//! *same* library — the position is persisted, so a factory that hands
-//! `SessionConfig::with_library_dir` a fresh temporary directory each call
-//! cannot observe it. That check reports [`Outcome::Skipped`] rather than failing
-//! when the book has no library record at all.
+//! kalam: [`Check::PositionSurvivesARestart`] used to go through the
+//! engine's own library. That is gone, so the check now walks the path a
+//! host takes: capture [`Session::layered_locator`], reopen through the
+//! closure, hand the locator back with [`Session::goto_layered`], and
+//! expect to land on the same page.
 //!
 //! The harness only ever calls the public API. It is written to be read as
 //! well as run: a shell author who wants to know the right way to drive a
 //! turn, settle a background load, or resize can copy the body of the
 //! matching check.
 //!
-//! It is not read-only. Checking that a position survives a restart means
-//! saving one, so a run moves the stored reading position for the book it
-//! is pointed at — give the factory a scratch `with_library_dir` if that
-//! is not welcome.
+//! It is read-only: nothing a run does outlives the sessions it opens.
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -62,7 +59,7 @@ use std::time::{Duration, Instant};
 use chapbook_core::{BookKind, EdgeSizes, PageMetrics, Rect, Rotation, Size};
 use chapbook_paint::FrameIntent;
 
-use crate::{Position, Session};
+use crate::Session;
 
 /// One rule a shell relies on. Named rather than free-form so a failing
 /// report can be matched on, and so the list itself documents the seam.
@@ -90,7 +87,8 @@ pub enum Check {
     PendingLoadsConverge,
     /// A selection is visible to the shell and a turn drops it.
     ASelectionLivesAndDiesWithThePage,
-    /// A saved position comes back on reopen.
+    /// A captured position, handed back after a reopen, lands on the
+    /// same page.
     PositionSurvivesARestart,
     /// A laid-out text page reports text runs and speakable words whose
     /// ranges hold together — the surface an accessibility tree or a TTS
@@ -295,7 +293,7 @@ impl<F: FnMut() -> Session> Harness<F> {
     /// The regression that named this harness. Walk to the first turn that
     /// changes unit and check both halves: the turn reports a move, and
     /// the page number alone does *not* show one — which is exactly why a
-    /// shell must compare [`Position`], and why comparing pages looked
+    /// shell must compare [`Position`](crate::Position), and why comparing pages looked
     /// right until it met a one-page cover.
     fn crossed_unit_moves(&mut self, session: &mut Session) -> Outcome {
         if session.spine_len() < 2 {
@@ -736,25 +734,36 @@ impl<F: FnMut() -> Session> Harness<F> {
         if saved.spine == 0 && saved.page == 0 {
             return Outcome::Skipped("book is a single page: no position to restore".into());
         }
-        session.save_position();
+        // kalam: what a host stores — the durable locator, not the page
+        // number, which a different window size would invalidate. The
+        // offset is what must come back; the page follows from it.
+        let saved_offset = session.current_offset();
+        let Some(locator) = session.layered_locator() else {
+            return Outcome::Skipped("the current unit has no text to capture a position in".into());
+        };
 
         let mut reopened = (self.open)();
         reopened.set_metrics(self.metrics);
         if !settle(&mut reopened, self.budget) {
             return Outcome::Failed("the reopened session never settled".into());
         }
-        let restored = reopened.position();
-        if restored == (Position { spine: 0, page: 0 }) && saved.spine != 0 {
-            return Outcome::Skipped(
-                "reopening started from the beginning: this factory does not \
-                 reopen the same library, so there is nothing to restore from"
-                    .into(),
-            );
-        }
-        if restored.spine != saved.spine {
+        if !reopened.goto_layered(&locator, true) {
             return Outcome::Failed(format!(
-                "saved {saved:?} but reopened at {restored:?}: the reader lost \
-                 their place across a restart"
+                "the reopened session refused the locator it captured itself: {locator:?}"
+            ));
+        }
+        if !settle(&mut reopened, self.budget) {
+            return Outcome::Failed("the reopened session never settled after the jump".into());
+        }
+        // The jump lands in the next frame, once the unit has laid out —
+        // the same rule a shell lives by.
+        let _ = reopened.frame();
+        let restored = reopened.position();
+        if restored.spine != saved.spine || reopened.current_offset() != saved_offset {
+            return Outcome::Failed(format!(
+                "saved {saved:?} (offset {saved_offset}) but reopened at {restored:?} \
+                 (offset {}): the reader lost their place across a restart",
+                reopened.current_offset()
             ));
         }
         Outcome::Passed

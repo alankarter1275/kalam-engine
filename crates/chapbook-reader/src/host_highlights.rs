@@ -1,12 +1,13 @@
 //! kalam: highlights a host keeps in its own database.
 //!
-//! The library path (`annotations.rs`) stores marks itself and hands out
-//! its own ids. A host with its own records (Kalam's `annotations` table)
-//! wants the reverse: it stores the mark, it owns the id, and the session
-//! only needs to *paint* the span and re-find it after the text moved.
-//! That is all this module is — a list of host-owned highlights held in
-//! memory for the life of the session, resolved into each unit's locator
-//! space on demand, exactly the way stored annotations are resolved.
+//! Upstream's library path (`annotations.rs`, removed) stored marks itself
+//! and handed out its own ids. A host with its own records (Kalam's
+//! `annotations` table) wants the reverse: it stores the mark, it owns the
+//! id, and the session only needs to *paint* the span and re-find it
+//! after the text moved. That is all this module is — a list of
+//! host-owned highlights held in memory for the life of the session,
+//! resolved into each unit's locator space on demand, exactly the way
+//! upstream resolved stored annotations.
 //!
 //! Nothing here touches a database. A host that opens a book calls
 //! [`Session::set_host_highlights`] with what it has on file; when the
@@ -43,22 +44,41 @@ impl Session {
         self.mark(FrameIntent::Annotation);
     }
 
-    /// Add one highlight the host just stored. Its span is resolved and
-    /// painted at once if it lands in a unit already laid out.
+    /// Add one highlight the host just stored. Where its unit has been
+    /// painted (so its cache exists) it is resolved at once: it shows on
+    /// the next frame and the damage is its own lines, which on a panel
+    /// is a partial refresh instead of a full-page flash. Elsewhere the
+    /// unit picks it up when it is next painted.
     pub fn show_host_highlight(&mut self, highlight: HostHighlight) {
         self.hide_host_highlight(highlight.id);
-        let spine = self.unit_for(&highlight.start);
+        let resolved = self
+            .unit_for(&highlight.start)
+            .filter(|&spine| {
+                self.unit(spine)
+                    .is_some_and(|unit| unit.resolved_host_highlights.is_some())
+            })
+            .and_then(|spine| {
+                let text = self.cached_unit_text(spine)?;
+                self.resolve_one(spine, &text, &highlight)
+            });
         self.host_highlights.push(highlight);
-        if let Some(spine) = spine {
-            if let Some(unit) = self.units.get_mut(&spine) {
-                unit.resolved_host_highlights = None;
+        match resolved {
+            Some(resolved) => {
+                let range =
+                    (resolved.spine == self.spine).then_some((resolved.start, resolved.end));
+                self.unit_mut(resolved.spine)
+                    .resolved_host_highlights
+                    .get_or_insert_with(Vec::new)
+                    .push(resolved);
+                self.mark_highlight(range);
             }
+            None => self.mark(FrameIntent::Annotation),
         }
-        self.mark(FrameIntent::Annotation);
     }
 
     /// Change a shown highlight's colour. `None` returns it to the theme's.
     pub fn recolor_host_highlight(&mut self, id: i64, color: Option<&str>) {
+        let range = self.host_highlight_range(id);
         let color = color.map(str::to_string);
         for highlight in self.host_highlights.iter_mut().filter(|h| h.id == id) {
             highlight.color = color.clone();
@@ -72,11 +92,16 @@ impl Session {
                 highlight.color = color.clone();
             }
         }
-        self.mark(FrameIntent::Annotation);
+        self.mark_highlight(range);
     }
 
     /// Stop painting a highlight. The host has already deleted its row.
     pub fn hide_host_highlight(&mut self, id: i64) {
+        if !self.host_highlights.iter().any(|h| h.id == id) {
+            return;
+        }
+        // Its extent has to be read before it is dropped from the cache.
+        let range = self.host_highlight_range(id);
         self.host_highlights.retain(|h| h.id != id);
         for resolved in self
             .units
@@ -85,7 +110,7 @@ impl Session {
         {
             resolved.retain(|h| h.id != id);
         }
-        self.mark(FrameIntent::Annotation);
+        self.mark_highlight(range);
     }
 
     /// The host's highlights that paint in `spine`, resolved into its
@@ -184,22 +209,44 @@ impl Session {
         self.host_highlights
             .iter()
             .filter(|h| self.unit_for(&h.start) == Some(spine))
-            .filter_map(|h| {
-                let trusted = self.href_matches(spine, &h.start);
-                let start = resolve_in_text(text, &h.start, trusted).offset();
-                let end = resolve_in_text(text, &h.end, trusted).offset();
-                // A range that collapsed under re-anchoring has nothing
-                // left to paint.
-                (end > start).then(|| Highlight {
-                    id: h.id,
-                    spine,
-                    start,
-                    end,
-                    text: h.text.clone(),
-                    color: h.color.clone(),
-                })
-            })
+            .filter_map(|h| self.resolve_one(spine, text, h))
             .collect()
+    }
+
+    /// One host highlight into `spine`'s locator space. `None` when the
+    /// range collapsed under re-anchoring: nothing is left to paint.
+    fn resolve_one(&self, spine: usize, text: &str, h: &HostHighlight) -> Option<Highlight> {
+        let trusted = self.href_matches(spine, &h.start);
+        let start = resolve_in_text(text, &h.start, trusted).offset();
+        let end = resolve_in_text(text, &h.end, trusted).offset();
+        (end > start).then(|| Highlight {
+            id: h.id,
+            spine,
+            start,
+            end,
+            text: h.text.clone(),
+            color: h.color.clone(),
+        })
+    }
+
+    /// The extent of a resolved host highlight in the current unit, if it
+    /// is there — the region a change to it disturbs.
+    fn host_highlight_range(&self, id: i64) -> Option<(u32, u32)> {
+        self.unit(self.spine)?
+            .resolved_host_highlights
+            .as_ref()?
+            .iter()
+            .find(|h| h.id == id)
+            .map(|h| (h.start, h.end))
+    }
+
+    /// Damage for a highlight change: its own lines when they are known,
+    /// the whole page otherwise.
+    fn mark_highlight(&mut self, range: Option<(u32, u32)>) {
+        match range {
+            Some((start, end)) => self.mark_range(FrameIntent::Annotation, start, end),
+            None => self.mark(FrameIntent::Annotation),
+        }
     }
 
     fn forget_resolved_host_highlights(&mut self) {

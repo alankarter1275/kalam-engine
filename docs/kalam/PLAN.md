@@ -86,7 +86,7 @@ folders*, not surgery.
 | ~~5~~ | ~~`crates/chapbook-app`, `crates/chapbook-app-gtk`~~ | Chapbook's own full app (bookshelf + reader). Kalam *is* the app. `chapbook-viewer-gtk` is the one to keep, not this. **Done** (same commit as 3 and 4 — it was their last user). |
 | ~~6~~ | ~~`crates/chapbook-viewer` (the `winit` one)~~ | Second demo window. GTK one is the one we build on. **Done** (early — it was vello's only consumer). |
 | 7 | `mathml` feature (and the 820 KB STIX font in `chapbook-layout/assets/`) | Math formulas. **Kept, by decision** (2026-09-08): it may be needed later, and it costs nothing at runtime for books without math. |
-| 8 | `crates/chapbook-library` | **Last, and carefully.** This is Chapbook's own SQLite bookshelf: books, positions, highlights. Kalam has its own database. But the *reading session* uses it to save and restore your place, so removing it means wiring Kalam's database in through the adapter first. See §6. |
+| ~~8~~ | ~~`crates/chapbook-library`~~ | Chapbook's own SQLite bookshelf: books, positions, highlights. Kalam has its own database. The *reading session* used it to save and restore your place and to store highlights, so it had to wait for the adapter's position and highlight hooks (§6). **Done** (2026-09-09): the engine now writes nothing to disk, and `rusqlite`/bundled SQLite left the build with it. |
 
 Each step: delete the folder, remove its line from the workspace
 `Cargo.toml` `members` list and `[workspace.dependencies]`, remove the
@@ -110,9 +110,10 @@ removes a little over half. The third-party dependency count drops from
 ~240 to well under 200, and the whole networking stack leaves the build.
 
 Actual result after round 2: 32 K lines across 9 crates (the extra 3 K
-over the estimate is `chapbook-library` and the CLI, which stay for now),
-and `Cargo.lock` went from 618 packages to 351. No HTTP, TLS, PDF or
-GPU code is left in the build.
+over the estimate was `chapbook-library` and the CLI), and `Cargo.lock`
+went from 618 packages to 351. No HTTP, TLS, PDF or GPU code is left in
+the build. `chapbook-library` followed in §7 step 4, taking SQLite with
+it.
 
 ## 5. Things that must not be removed (and why)
 
@@ -186,19 +187,29 @@ right. Two small engine additions were needed and are logged in
 3. **Build the adapter** (§6) against the stripped engine. **Written
    2026-09-09 and run on the target machine the same day**: everything
    works (themes, font size keeps the place, selection, highlights,
-   tap-to-look-up, durable locator in 0.2 ms) but the two numbers the
-   project exists for do not: **3.9 s to the first page, 150 MB
-   resident** (§10 asks for under 1 s and under 100 MB). The strip did
-   not move memory at all, so code size was never where it went. Two
-   bugs found by the run and fixed: selected text carried the
+   tap-to-look-up, durable locator in 0.2 ms). The first run showed
+   **3.9 s to the first page and 150 MB resident**, which looked like a
+   failure of §10 — so the engine was made to log where every
+   millisecond goes before anything was tuned. **The measurement
+   cleared the engine**: it opens a 700-page novel in ~190 ms (of which
+   ~200 ms was the library's file hash, gone with step 4), lays out a
+   chapter in 34–42 ms and paints the first page in 58 ms. The other
+   3.3 s is GTK/GDK starting up from a cold hard disk, and the memory is
+   GTK's too (69 MB before the window exists, 143 MB with it; the
+   engine's cache holds 2 MB). Kalam has already paid both by the time
+   the reader opens, so the demo's numbers are not what Kalam will feel.
+   Two bugs found by the run and fixed: selected text carried the
    publisher's soft hyphens (`Har\u{ad}ry`) into what Kalam would store,
    and the engine's 192 MB comic-sized cache default was inherited
-   unchanged (now 32 MB). **Next: measure before touching anything** —
-   the engine now logs where each chapter's milliseconds go (parse,
-   fonts, images, style, paginate) and the demo prints resident memory,
-   so one more run names the culprit instead of a guess.
-4. **Remove `chapbook-library`** (step 8), now that Kalam's database does
-   its job.
+   unchanged (now 32 MB). **Done; the engine is not to be tuned further
+   without a new measurement that says so.**
+4. **Remove `chapbook-library`** (step 8). **Done** (2026-09-09), in two
+   commits: first highlights moved under Kalam's ids
+   (`host_highlights.rs` — the engine paints, Kalam stores), then the
+   crate, its feature, its tests and the CLI's `lib` commands went. The
+   session now remembers nothing between runs: Kalam hands back the
+   position (`goto_locator`) and the highlights (`set_highlights`) on
+   open.
 5. **Integrate into Kalam**: path dependency, swap the WebKit view for the
    widget.
 6. **Monthly**: review upstream and bring over fixes ([`UPSTREAM.md`](UPSTREAM.md)).

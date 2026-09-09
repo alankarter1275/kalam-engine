@@ -1,6 +1,10 @@
-//! Opening a book: source and format resolution, the library handshake
-//! (match/import/adopt, position restore, stored annotations), and
-//! session construction.
+//! Opening a book: source and format resolution and session construction.
+//!
+//! kalam: upstream's library handshake (match/import/adopt, position
+//! restore, stored annotations) lived here too. It is gone with the
+//! library crate; a host restores its own position with
+//! [`Session::goto_layered`] and paints its own marks with
+//! [`Session::set_host_highlights`].
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -8,21 +12,14 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "opds")]
 use chapbook_core::CredentialStore;
-#[cfg(feature = "library")]
-use chapbook_core::SpineItem;
 use chapbook_core::{Format, PixelFormat, Publication, Result, Source};
 use chapbook_paint::{FrameIntent, ImageStore};
 
-#[cfg(feature = "library")]
-use crate::annotations::StoredAnnotation;
 use crate::frame::PendingDamage;
 #[cfg(feature = "_image-book")]
 use crate::loader::{LoadSource, Loader};
-#[cfg(feature = "library")]
-use crate::text_surface::unit_locator_text;
-#[cfg(not(feature = "library"))]
 use crate::ReadingSettings;
-use crate::{FontSource, OpenedBookId, Session, SessionConfig, WakerCell, DEFAULT_CACHE_BUDGET};
+use crate::{FontSource, Session, SessionConfig, WakerCell, DEFAULT_CACHE_BUDGET};
 #[cfg(feature = "opds")]
 use chapbook_opds::http::HttpClient;
 
@@ -214,72 +211,11 @@ fn book_at_path(format: Format, path: &Path) -> Result<OpenBook> {
     }
 }
 
-/// Match an opened book into the library: by edition fingerprint, then by
-/// publication identifier for a replaced edition, else as a new record —
-/// imported (copied) when there is a path, adopted (recorded, not copied)
-/// when there is not. Returns the book's id and whether the stored state
-/// was written against this same edition; `false` routes restore through
-/// the re-anchor chain.
-#[cfg(feature = "library")]
-fn shelve(
-    library: &mut chapbook_library::Library,
-    book: &OpenBook,
-    fingerprint: &str,
-    path: Option<&Path>,
-) -> (Option<chapbook_library::BookId>, bool) {
-    if let Ok(Some(id)) = library.find_by_fingerprint(fingerprint) {
-        return (Some(id), true);
-    }
-    if let Some(identifier) = &book.publication().metadata().identifier {
-        if let Ok(Some(id)) = library.find_by_identifier(identifier) {
-            let _ = match path {
-                Some(path) => library.update_edition(id, path),
-                None => library.update_edition_fingerprint(id, fingerprint),
-            };
-            return (Some(id), false);
-        }
-    }
-    let id = match path {
-        Some(path) => library.import(path, book.publication()).ok(),
-        None => library.adopt(fingerprint, book.publication()).ok(),
-    };
-    (id, true)
-}
-
-/// Where the reader left off, from the library — the start unit and the
-/// offset held pending until that unit lays out. `(0, None)` wherever
-/// there is nothing stored or nobody to ask.
-#[cfg(feature = "library")]
-fn restored_start(
-    library: &Option<chapbook_library::Library>,
-    book: &OpenBook,
-    book_id: OpenedBookId,
-    same_edition: bool,
-) -> (usize, Option<u32>) {
-    match (library, book_id) {
-        (Some(lib), Some(id)) => match lib.position(id) {
-            Ok(Some(stored)) => {
-                let (locator, tier) = chapbook_library::restore_position(
-                    &stored.locator,
-                    same_edition,
-                    book.publication().spine(),
-                    |i| unit_locator_text(book.publication(), i),
-                );
-                log::info!("resuming at unit {} ({tier:?})", locator.spine_index + 1);
-                (locator.spine_index, Some(locator.char_offset))
-            }
-            _ => (0, None),
-        },
-        _ => (0, None),
-    }
-}
-
 impl Session {
-    /// Open a book from a path or an `http(s)://` OPDS URL (resolved to a
-    /// PSE page stream). Local books are matched into the library
-    /// (fingerprint, then identifier for replaced editions, else imported)
-    /// and their stored position restored; streams skip the library (no
-    /// local file to fingerprint) but honor `pse:lastRead`.
+    /// Open a book from a path. (kalam: upstream also took an `http(s)://`
+    /// OPDS URL here and matched local books into its library; both are
+    /// gone. A book opens at its beginning, and the host hands back the
+    /// place it stored with [`Session::goto_layered`].)
     ///
     /// The format comes from the *bytes*, not the extension — see
     /// [`chapbook_core::Format::sniff`]. A book whose name lies about it
@@ -309,20 +245,12 @@ impl Session {
     /// wrap: nothing in here is reached for behind the caller's back.
     ///
     /// `source` accepts anything that becomes a [`Source`] — a `&str` or
-    /// `String` still means what it always did (`http(s)://` is a catalog,
-    /// anything else a path), a `PathBuf` is a file, and
-    /// [`Source::bytes`] / [`Source::reader`] are for hosts that have no
-    /// path to give: an Android `content://` URI resolved to a file
-    /// descriptor, an iOS security-scoped file, a WASM `ArrayBuffer`.
+    /// `String` is a path, a `PathBuf` is a file, and [`Source::bytes`] /
+    /// [`Source::reader`] are for hosts that have no path to give. An
+    /// `http(s)://` string is refused: the catalog support is gone.
     ///
-    /// Every local source reaches the library. A path is imported — copied
-    /// into the library, which owns it from then on. Bytes and handles are
-    /// *adopted*: hashed on the way in and recorded under the same edition
-    /// fingerprint a path import gets, so positions, annotations and
-    /// per-book settings key on the book's identity while the file stays
-    /// wherever the platform keeps it. Reaching that file again on the
-    /// next launch — the bookmark, the URI grant — is the shell's half of
-    /// custody; see `docs/PLATFORM.md`.
+    /// kalam: nothing is written anywhere. The session remembers nothing
+    /// between runs; the host keeps positions, marks and settings.
     pub fn open_with(source: impl Into<Source>, config: SessionConfig) -> Result<Session> {
         // kalam: timed, reported at `info` — see `layout_text_unit`.
         let clock = std::time::Instant::now();
@@ -336,214 +264,30 @@ impl Session {
             credentials,
             #[cfg(feature = "opds")]
             transport,
-            library_dir,
             cache_budget,
         } = config;
 
-        // Resolved once, and used for the library and the page cache both.
-        // A platform with no default is not a failure to open a book: the
-        // session reads on without a library, exactly as it does when the
-        // database itself cannot be opened.
-        #[cfg(feature = "library")]
-        let library_dir = match library_dir {
-            Some(dir) => Some(dir),
-            None => chapbook_library::Library::default_dir()
-                .map_err(|e| log::warn!("reading without a library: {e}"))
-                .ok(),
-        };
-        #[cfg(not(feature = "library"))]
-        let _ = library_dir;
-        #[cfg(feature = "library")]
-        let mut library = library_dir.as_ref().and_then(|dir| {
-            chapbook_library::Library::open(dir)
-                .map_err(|e| log::warn!("library unavailable: {e}"))
-                .ok()
-        });
-
-        #[cfg_attr(not(feature = "library"), allow(unused_variables))]
-        let (book, book_id, start_spine, pending_offset, same_edition): (
-            OpenBook,
-            OpenedBookId,
-            usize,
-            Option<u32>,
-            bool,
-        ) = match source {
-            Source::Url(_source) => {
-                #[cfg(not(feature = "opds"))]
+        let book: OpenBook = match source {
+            Source::Url(_) => {
+                // kalam: the OPDS page stream needed the library's cache
+                // directory; both are gone.
                 return Err(chapbook_core::ChapbookError::FormatNotBuilt("OPDS"));
-                #[cfg(feature = "opds")]
-                {
-                    let source = _source.as_str();
-                    use chapbook_core::Freshness;
-
-                    // Keyed by origin, not by the URL: the path may carry a
-                    // per-user API key, and a catalog that moves its path must
-                    // not lose its login. See `chapbook_core::credential`.
-                    let key = chapbook_core::CredentialKey::http_origin(source);
-                    // Unlike the library, a page stream cannot do without
-                    // this: every page is a fetch that has to land somewhere.
-                    let Some(cache) = library_dir.as_ref().map(|dir| dir.join("pse-cache")) else {
-                        return Err(chapbook_core::ChapbookError::Library(
-                            "no library location for the page cache; pass \
-                         SessionConfig::with_library_dir"
-                                .into(),
-                        ));
-                    };
-                    let store = credentials.as_ref();
-
-                    // One transport, however many clients the auth flow needs.
-                    let http: Arc<dyn HttpClient> = match transport {
-                        Some(host) => host,
-                        #[cfg(feature = "ureq")]
-                        None => Arc::new(chapbook_opds::UreqHttp::new()),
-                        #[cfg(not(feature = "ureq"))]
-                        None => {
-                            return Err(chapbook_core::ChapbookError::Network(
-                                "this build has no bundled HTTP transport; pass one with \
-                             SessionConfig::with_transport"
-                                    .into(),
-                            ))
-                        }
-                    };
-
-                    let mut client = chapbook_opds::OpdsClient::new(http.clone());
-                    authorize(&mut client, store, key.as_ref(), Freshness::Cached);
-                    let opened = chapbook_opds::StreamedComic::open(client, source, &cache);
-
-                    // One retry, and only on a 401. `Freshness::Renewed` is
-                    // what makes an expiring secret work: a store backed by a
-                    // refreshable token can produce a new one here, and a
-                    // store that cannot says so by returning nothing, which
-                    // costs exactly one skipped retry. Prompting is not our
-                    // job — the error carries the server's Authentication
-                    // Document so the shell can do it.
-                    let comic = match opened {
-                        Err(chapbook_opds::OpdsError::AuthRequired(doc)) => {
-                            let mut retry = chapbook_opds::OpdsClient::new(http.clone());
-                            if !authorize(&mut retry, store, key.as_ref(), Freshness::Renewed) {
-                                return Err(chapbook_opds::to_chapbook_error(
-                                    chapbook_opds::OpdsError::AuthRequired(doc),
-                                ));
-                            }
-                            chapbook_opds::StreamedComic::open(retry, source, &cache)
-                                .map_err(chapbook_opds::to_chapbook_error)?
-                        }
-                        other => other.map_err(chapbook_opds::to_chapbook_error)?,
-                    };
-                    let resume = comic.resume_page().unwrap_or(0);
-                    (OpenBook::Comic(Arc::new(comic)), None, resume, None, true)
-                }
             }
-
             // A source with no file behind it: bytes a host already holds,
             // or a handle it resolved from a `content://` URI or a
-            // security-scoped bookmark. No path — but the library keys
-            // identity by edition fingerprint, not by file, so the bytes
-            // are hashed on the way in and the book is *adopted*: a
-            // record, a position, annotations, no copy. Custody of the
-            // file — the bookmark that reaches it again — stays with the
-            // shell; see `docs/PLATFORM.md`.
+            // security-scoped bookmark.
             Source::Bytes { format, bytes } => {
-                #[cfg(feature = "library")]
-                let fingerprint = library
-                    .is_some()
-                    .then(|| chapbook_library::Library::fingerprint_of_bytes(&bytes));
                 let format = resolve_format(format, &bytes)?;
-                let book = book_from_bytes(format, bytes)?;
-
-                #[cfg(not(feature = "library"))]
-                let (book_id, start_spine, pending_offset, same_edition) = (None, 0, None, true);
-                #[cfg(feature = "library")]
-                let (book_id, same_edition) = match (library.as_mut(), &fingerprint) {
-                    (Some(lib), Some(fp)) => shelve(lib, &book, fp, None),
-                    _ => (None, true),
-                };
-                #[cfg(feature = "library")]
-                let (start_spine, pending_offset) =
-                    restored_start(&library, &book, book_id, same_edition);
-                (book, book_id, start_spine, pending_offset, same_edition)
+                book_from_bytes(format, bytes)?
             }
             Source::Reader { format, mut reader } => {
-                // Hashed before it is opened, while the stream is still
-                // ours to rewind.
-                #[cfg(feature = "library")]
-                let fingerprint = match library.is_some() {
-                    true => chapbook_library::Library::fingerprint_of_reader(reader.as_mut()).ok(),
-                    false => None,
-                };
                 let format = resolve_format(format, &peek(reader.as_mut())?)?;
-                let book = book_from_reader(format, reader)?;
-
-                #[cfg(not(feature = "library"))]
-                let (book_id, start_spine, pending_offset, same_edition) = (None, 0, None, true);
-                #[cfg(feature = "library")]
-                let (book_id, same_edition) = match (library.as_mut(), &fingerprint) {
-                    (Some(lib), Some(fp)) => shelve(lib, &book, fp, None),
-                    _ => (None, true),
-                };
-                #[cfg(feature = "library")]
-                let (start_spine, pending_offset) =
-                    restored_start(&library, &book, book_id, same_edition);
-                (book, book_id, start_spine, pending_offset, same_edition)
+                book_from_reader(format, reader)?
             }
-
             Source::Path(ref source_path) => {
                 let path = source_path.as_path();
-                let book = book_at_path(format_of_path(path), path)?;
-
-                // Matching a book into the library, restoring where the
-                // reader was, and importing it if it is new: all of it is
-                // the library's, and without one the book simply opens at
-                // the beginning.
-                #[cfg(not(feature = "library"))]
-                let (book_id, start_spine, pending_offset, same_edition) = (None, 0, None, true);
-
-                #[cfg(feature = "library")]
-                let (book_id, same_edition) = match library.as_mut() {
-                    Some(lib) => match chapbook_library::Library::fingerprint_of_file(path) {
-                        Ok(fp) => shelve(lib, &book, &fp, Some(path)),
-                        Err(_) => (None, true),
-                    },
-                    None => (None, true),
-                };
-                #[cfg(feature = "library")]
-                let (start_spine, pending_offset) =
-                    restored_start(&library, &book, book_id, same_edition);
-                (book, book_id, start_spine, pending_offset, same_edition)
+                book_at_path(format_of_path(path), path)?
             }
-        };
-
-        // Highlights load with the book; endpoints resolve lazily, per
-        // unit, once that unit's locator text is available.
-        #[cfg(feature = "library")]
-        let stored = match (&library, book_id) {
-            (Some(lib), Some(id)) => lib
-                .annotations(id)
-                .map_err(|e| log::warn!("failed to read annotations: {e}"))
-                .unwrap_or_default()
-                .into_iter()
-                .map(|a| {
-                    let by_href = book
-                        .publication()
-                        .spine()
-                        .iter()
-                        .position(|s: &SpineItem| s.href == a.start.spine_href);
-                    let len = book.publication().spine().len();
-                    StoredAnnotation {
-                        id: a.id,
-                        kind: a.kind,
-                        target: by_href
-                            .unwrap_or(a.start.spine_index)
-                            .min(len.saturating_sub(1)),
-                        href_matched: by_href.is_some(),
-                        start: a.start,
-                        end: a.end,
-                        text: a.text,
-                        color: a.color,
-                    }
-                })
-                .collect(),
-            _ => Vec::new(),
         };
 
         let title = book
@@ -565,15 +309,8 @@ impl Session {
                 }),
             )
         });
-        // The book's override if it has one, else the reader's default,
-        // else the built-in defaults. Without a library there is nowhere
-        // for an override to have been stored, so the defaults it is.
-        #[cfg(feature = "library")]
-        let settings = library
-            .as_ref()
-            .map(|lib| lib.effective_settings(book_id))
-            .unwrap_or_default();
-        #[cfg(not(feature = "library"))]
+        // kalam: the built-in defaults; a host applies its own settings
+        // with `set_settings` before the first layout.
         let settings = ReadingSettings::default();
 
         let before_fonts = clock.elapsed().as_millis();
@@ -598,9 +335,9 @@ impl Session {
             cache_budget: cache_budget.unwrap_or(DEFAULT_CACHE_BUDGET),
             use_clock: 0,
             registered_fonts: HashSet::new(),
-            spine: start_spine,
+            spine: 0,
             page: 0,
-            pending_offset: pending_offset.map(|offset| (start_spine, offset)),
+            pending_offset: None,
             #[cfg(feature = "_image-book")]
             loader,
             #[cfg(feature = "_image-book")]
@@ -610,24 +347,9 @@ impl Session {
             // Seeded with where the book actually opens, so the first
             // drain reports a move only if one happened. A restored
             // position resolves later, in `frame`, and is a real move.
-            reported_position: crate::Position {
-                spine: start_spine,
-                page: 0,
-            },
+            reported_position: crate::Position { spine: 0, page: 0 },
             reported_finished: false,
             selection: None,
-            #[cfg(feature = "library")]
-            library,
-            #[cfg(feature = "library")]
-            library_dir,
-            #[cfg(feature = "library")]
-            suspended: false,
-            #[cfg(feature = "library")]
-            book_id,
-            #[cfg(feature = "library")]
-            stored,
-            #[cfg(feature = "library")]
-            same_edition,
             empty_images: ImageStore::default(),
             pending: FrameIntent::default(),
             pending_damage: PendingDamage::default(),
@@ -635,7 +357,6 @@ impl Session {
             pixel_format: PixelFormat::default(),
             back_stack: Vec::new(),
             pending_anchor: None,
-            #[cfg(feature = "library")]
             char_counts: std::cell::OnceCell::new(),
             unit_text_cache: std::cell::RefCell::new(None),
             host_highlights: Vec::new(),
