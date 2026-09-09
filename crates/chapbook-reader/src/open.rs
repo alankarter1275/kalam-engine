@@ -324,6 +324,8 @@ impl Session {
     /// next launch — the bookmark, the URI grant — is the shell's half of
     /// custody; see `docs/PLATFORM.md`.
     pub fn open_with(source: impl Into<Source>, config: SessionConfig) -> Result<Session> {
+        // kalam: timed, reported at `info` — see `layout_text_unit`.
+        let clock = std::time::Instant::now();
         let source = source.into();
         let SessionConfig {
             fonts,
@@ -574,7 +576,14 @@ impl Session {
         #[cfg(not(feature = "library"))]
         let settings = ReadingSettings::default();
 
+        let before_fonts = clock.elapsed().as_millis();
         let (fonts, font_report) = chapbook_layout::build_font_system(&fonts)?;
+        let total = clock.elapsed().as_millis();
+        log::info!(
+            "opened {title:?} in {total} ms (fonts: {} faces, {} ms)",
+            font_report.faces,
+            total - before_fonts
+        );
 
         Ok(Session {
             book,

@@ -44,4 +44,5 @@ pub use fonts::{font_source, SANS_FONT};
 pub use prefs::{HighlightColor, KalamPrefs, KalamTheme, BODY_FONT};
 pub use view::{
     NewHighlight, ReaderOptions, ReaderView, ReadingPosition, SelectedText, TappedWord,
+    DEFAULT_CACHE_BUDGET,
 };

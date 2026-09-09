@@ -242,9 +242,22 @@ impl Session {
         else {
             return None;
         };
+        // kalam: each stage timed, reported at `info` in one line per
+        // chapter. Where a first page's seconds go is not guessable from
+        // outside, and this is the only place all the stages meet.
+        fn lap(since: &mut std::time::Instant) -> u128 {
+            let took = since.elapsed().as_millis();
+            *since = std::time::Instant::now();
+            took
+        }
+        let clock = std::time::Instant::now();
+        let mut last = clock;
+        let mut stages: Vec<(&str, u128)> = Vec::with_capacity(5);
+
         let href = epub.spine_item(spine).ok()?.href.clone();
         let bytes = epub.unit_bytes(spine).ok()?;
         let mut doc = dom::parse_xhtml(&bytes, &href).ok()?;
+        stages.push(("parse", lap(&mut last)));
         let css: Vec<(String, String)> = doc
             .stylesheet_sources()
             .iter()
@@ -271,9 +284,11 @@ impl Session {
                 }
             }
         }
+        stages.push(("fonts", lap(&mut last)));
         let images = chapbook_layout::collect_images(&doc, Some(&self.fonts), |img_href| {
             epub.resource(&href, img_href).ok().map(|r| r.data)
         });
+        stages.push(("images", lap(&mut last)));
 
         let sheets: Vec<String> = css.iter().map(|(text, _)| text.clone()).collect();
         // NOT kept across chapters, although StyleEngine is built for it
@@ -292,12 +307,28 @@ impl Session {
             engine.set_author_sheets(&[]);
         }
         engine.style_document(&mut doc);
+        stages.push(("style", lap(&mut last)));
         // The document is parsed here and nowhere else; take its links
         // while we have it.
         // Field access, not `unit_mut`: `epub` borrows `self.book` for
         // the rest of this function.
         self.units.entry(spine).or_default().links = Some(dom::links(&doc));
         let layout = chapbook_layout::paginate(&doc, &sheets, metrics, &mut self.fonts, &images);
+        stages.push(("paginate", lap(&mut last)));
+        if log::log_enabled!(log::Level::Info) {
+            let detail: Vec<String> = stages
+                .iter()
+                .map(|(name, ms)| format!("{name} {ms}"))
+                .collect();
+            log::info!(
+                "laid out unit {} ({} pages, {} KB) in {} ms: {}",
+                spine + 1,
+                layout.pages.len(),
+                (layout.approx_bytes() + images.bytes()) / 1024,
+                clock.elapsed().as_millis(),
+                detail.join(", ")
+            );
+        }
         Some((layout, images))
     }
 }

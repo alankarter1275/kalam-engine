@@ -45,6 +45,17 @@ const MARGIN_SIDE_MIN: f32 = 28.0;
 /// threshold; a touchscreen shell would want the platform's own.
 const TAP_SLOP: f64 = 4.0;
 
+/// How much laid-out text and decoded image the engine keeps around when
+/// [`ReaderOptions::cache_budget`] is `None`. The engine's own default is
+/// 192 MB, sized for comics on a phone; a novel's chapter is well under a
+/// megabyte laid out, so this holds a whole book's worth of chapters and
+/// still leaves room for a cover, on a machine with 4 GB in total.
+pub const DEFAULT_CACHE_BUDGET: usize = 32 * 1024 * 1024;
+
+/// A draw slower than this is logged (at `info`), so a run's log says
+/// which page turns were not instant and what the engine was doing.
+const SLOW_FRAME: std::time::Duration = std::time::Duration::from_millis(25);
+
 /// Where the reader is, in the terms Kalam stores and shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadingPosition {
@@ -101,7 +112,8 @@ pub struct ReaderOptions {
     /// under its own data dir so everything lives in one place.
     pub engine_dir: Option<std::path::PathBuf>,
     /// How much decoded-image and layout cache the engine may keep, in
-    /// bytes. `None` is the engine's default.
+    /// bytes. `None` is [`DEFAULT_CACHE_BUDGET`] (32 MB), not the engine's
+    /// own, comic-sized default.
     pub cache_budget: Option<usize>,
 }
 
@@ -130,6 +142,9 @@ struct Inner {
     /// Last position reported, so a repaint that moved nothing says
     /// nothing.
     last_reported: RefCell<Option<(usize, usize, usize)>>,
+    /// Last size drawn at (width, height, scale factor), so a change —
+    /// each one is a full relayout — is logged once.
+    last_size: Cell<(i32, i32, i32)>,
     keys: KeyMap,
     zones: TapZones,
 }
@@ -158,9 +173,8 @@ impl ReaderView {
         if let Some(dir) = &options.engine_dir {
             config = config.with_library_dir(dir.clone());
         }
-        if let Some(budget) = options.cache_budget {
-            config = config.with_cache_budget(budget);
-        }
+        let budget = options.cache_budget.unwrap_or(DEFAULT_CACHE_BUDGET);
+        config = config.with_cache_budget(budget);
         // By handle, not by path. Opened by path, the engine's own library
         // *imports* the book — copies the file into its folder — the first
         // time it sees it. By handle it *adopts* it: a record keyed by the
@@ -211,6 +225,7 @@ impl ReaderView {
                 prefs: Cell::new(prefs.clamped()),
                 callbacks: RefCell::new(Callbacks::default()),
                 last_reported: RefCell::new(None),
+                last_size: Cell::new((0, 0, 0)),
                 keys,
                 zones,
             }),
@@ -411,9 +426,16 @@ impl ReaderView {
 
     // ---- Selection, highlights, words ----
 
-    /// The current selection's text, if any.
+    /// The current selection's text, if any — as a person would type it:
+    /// the publisher's soft hyphens and zero-width spaces are gone and
+    /// whitespace is collapsed, the same as the text in a `NewHighlight`
+    /// and a `TappedWord`.
     pub fn selected_text(&self) -> Option<String> {
-        self.inner.session.borrow().selected_text()
+        self.inner
+            .session
+            .borrow()
+            .selected_text()
+            .map(|text| readable(&text))
     }
 
     /// Drop the selection (Escape, or after the chip's action ran).
@@ -432,7 +454,7 @@ impl ReaderView {
         let result = {
             let mut s = self.inner.session.borrow_mut();
             let (start, end) = s.selected_range()?;
-            let text = s.selected_text().unwrap_or_default();
+            let text = readable(&s.selected_text().unwrap_or_default());
             let start_locator = s.layered_locator_at(start)?;
             let end_locator = s.layered_locator_at(end)?;
             let id = s.add_highlight()?;
@@ -488,6 +510,13 @@ impl ReaderView {
         self.inner.session.borrow_mut().save_position();
     }
 
+    /// Bytes of laid-out chapters and decoded images the engine holds
+    /// right now (capped by [`ReaderOptions::cache_budget`]). For a memory
+    /// readout; the rest of the process is GTK's and the binary's.
+    pub fn cache_bytes(&self) -> usize {
+        self.inner.session.borrow().cache_bytes()
+    }
+
     // ---- Internals ----
 
     fn apply(&self, action: Action) {
@@ -501,7 +530,7 @@ impl ReaderView {
         let selected = {
             let s = self.inner.session.borrow();
             s.selected_range().and_then(|(start, end)| {
-                let text = s.selected_text()?;
+                let text = readable(&s.selected_text()?);
                 let rect = union(&s.range_rects(start, end))?;
                 Some(SelectedText { text, rect })
             })
@@ -533,7 +562,15 @@ impl ReaderView {
             if width <= 0 || height <= 0 {
                 return;
             }
-            let scale = area.scale_factor() as f32;
+            let started = std::time::Instant::now();
+            let size = (width, height, area.scale_factor());
+            if view.inner.last_size.replace(size) != size {
+                // Every new size is a full relayout of the chapter; a log
+                // that shows two of these at start-up has found a second
+                // of start-up time.
+                log::info!("page area {width}x{height} at {}x", size.2);
+            }
+            let scale = size.2 as f32;
             let prefs = view.inner.prefs.get();
             // The column: never wider than Kalam's `column_px`, centred
             // when the widget is wider than that, with at least the
@@ -571,6 +608,10 @@ impl ReaderView {
             ctx.scale(1.0 / scale as f64, 1.0 / scale as f64);
             let _ = ctx.set_source_surface(&surface, 0.0, 0.0);
             let _ = ctx.paint();
+            let took = started.elapsed();
+            if took >= SLOW_FRAME {
+                log::info!("frame took {} ms", took.as_millis());
+            }
 
             // Every content change funnels through a draw, so this is the
             // one place the shell needs telling — from an idle rather than
@@ -722,10 +763,7 @@ impl ReaderView {
                 let redraw = s.poll_loaded();
                 for event in s.drain_events() {
                     if let SessionEvent::UnitFailed { spine, message } = event {
-                        log::warn!(
-                            "kalam-reader: chapter {} will not load: {message}",
-                            spine + 1
-                        );
+                        log::warn!("chapter {} will not load: {message}", spine + 1);
                     }
                 }
                 drop(s);
@@ -775,11 +813,12 @@ fn word_at(s: &mut Session, x: f32, y: f32) -> Option<TappedWord> {
         .get(span.text_start as usize..span.text_end as usize)?
         .iter()
         .collect();
-    let word = word.trim().to_string();
+    let word = readable(&word);
     if !word.chars().any(|c| c.is_alphanumeric()) {
         return None;
     }
     let sentence = sentence_around(&text, span.text_start as usize, span.text_end as usize);
+    let sentence = readable(&sentence);
     let rect = union(&s.range_rects(start, end))?;
     Some(TappedWord {
         word,
@@ -813,6 +852,22 @@ fn sentence_around(text: &[char], start: usize, end: usize) -> String {
     } else {
         sentence
     }
+}
+
+/// Text as a person would type it. Publishers' files are full of invisible
+/// layout hints — soft hyphens inside words (`Har\u{ad}ry`), zero-width
+/// spaces after hard hyphens, word joiners, stray byte-order marks — and
+/// the engine's text keeps them, because its locators are offsets into
+/// that raw text. What Kalam stores and shows (`text_excerpt`, a word
+/// sent to the dictionary) must not: a lookup of "Har\u{ad}ry" finds
+/// nothing. Zero-width joiners stay — they are letters in Devanagari and
+/// Arabic, and hold emoji together. Whitespace runs collapse to one space.
+fn readable(text: &str) -> String {
+    let stripped: String = text
+        .chars()
+        .filter(|c| !matches!(c, '\u{00AD}' | '\u{200B}' | '\u{2060}' | '\u{FEFF}'))
+        .collect();
+    stripped.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The bounding box of several rects; `None` of none.
@@ -855,6 +910,19 @@ fn engine_key(name: &str) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readable_text_drops_the_publishers_invisible_hints() {
+        // Straight from a real book: soft hyphens inside words, a
+        // zero-width space after a hard hyphen.
+        assert_eq!(
+            readable("Har\u{ad}ry ar\u{ad}rived  at the horse-\u{200b}like\nteeth."),
+            "Harry arrived at the horse-like teeth."
+        );
+        // A joiner is part of the word in scripts that use it.
+        assert_eq!(readable("\u{feff}क\u{94d}\u{200d}ष"), "क\u{94d}\u{200d}ष");
+        assert_eq!(readable("  "), "");
+    }
 
     #[test]
     fn sentence_is_cut_at_punctuation_and_collapsed() {

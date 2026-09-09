@@ -121,6 +121,7 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-reader/tests/cache_budget.rs` | `PAGE` constant no longer gated on the removed `cbz` feature (the EPUB test uses it too) | Strip leftover; the file did not compile until CI ran the tests |
 | `docs/STABILITY.md` | Rewritten for the eleven crates that remain, with `kalam-reader` and the demo placed in tiers | The `stability` test in `tools/chapbook-cli` checks the doc against the workspace; upstream's text named twelve crates the strip removed |
 | `tools/chapbook-cli/tests/stability.rs` | Member-count floor 15 → 11 | Same test, same strip |
+| `crates/chapbook-reader/src/layout.rs`, `src/open.rs` | One `info` log line per chapter laid out (parse / fonts / images / style / paginate, in ms, plus pages and KB) and one per session opened (total, and the font system's share) | Finding where a slow first page spends its time; silent at the default `warn` level |
 
 New files inside inherited crates (no conflict risk, listed for completeness):
 

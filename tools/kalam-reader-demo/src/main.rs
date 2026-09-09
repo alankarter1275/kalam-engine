@@ -16,7 +16,10 @@
 //! turn.
 //!
 //! Everything the widget reports goes to stderr, prefixed `demo:`, so a
-//! run doubles as a trace of what Kalam would receive.
+//! run doubles as a trace of what Kalam would receive. The engine's own
+//! timing lines (`chapbook-reader: info: laid out unit …`) are switched
+//! on too, and the process's memory is printed after the first page and
+//! at close, so one run is a complete performance report.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -28,7 +31,9 @@ use gtk4 as gtk;
 use kalam_reader::{HighlightColor, KalamPrefs, ReaderOptions, ReaderView};
 
 fn main() -> glib::ExitCode {
-    chapbook_core::log_to_stderr();
+    // `info` rather than the default `warn`: the engine's timing lines
+    // are the point of this program.
+    chapbook_core::log_to_stderr_at(log::LevelFilter::Info);
     let Some(path) = std::env::args().nth(1) else {
         eprintln!("usage: kalam-reader-demo <book.epub>");
         return glib::ExitCode::from(2);
@@ -54,10 +59,11 @@ fn main() -> glib::ExitCode {
             }
         };
         eprintln!(
-            "demo: opened \"{}\" ({} chapters) in {:?}",
+            "demo: opened \"{}\" ({} chapters) in {:?}; {}",
             view.title(),
             view.chapter_count(),
-            started.elapsed()
+            started.elapsed(),
+            memory_line(&view)
         );
         build_window(app, view, started);
     });
@@ -77,11 +83,13 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
     {
         let first = Rc::new(Cell::new(true));
         let window = window.downgrade();
+        let view_for_memory = view.clone();
         view.connect_position(move |pos| {
             if first.replace(false) {
                 eprintln!(
-                    "demo: first page on screen {:?} after launch",
-                    started.elapsed()
+                    "demo: first page on screen {:?} after launch; {}",
+                    started.elapsed(),
+                    memory_line(&view_for_memory)
                 );
             }
             eprintln!(
@@ -191,10 +199,11 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
                 None => "none".to_string(),
             };
             eprintln!(
-                "demo: closing at chapter {} fraction {:.3}; locator {locator} (took {:?})",
+                "demo: closing at chapter {} fraction {:.3}; locator {locator} (took {:?}); {}",
                 pos.chapter + 1,
                 pos.fraction,
-                started.elapsed()
+                started.elapsed(),
+                memory_line(&view)
             );
             view.flush();
             glib::Propagation::Proceed
@@ -203,4 +212,29 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
 
     window.present();
     view.widget().grab_focus();
+}
+
+/// The process's resident memory and the engine's share of it, in one
+/// line. `VmRSS` from `/proc/self/status` is the same number `ps -o rss`
+/// shows; the engine's cache is what the widget can account for, and the
+/// gap between the two is GTK, the fonts and the binary itself.
+fn memory_line(view: &ReaderView) -> String {
+    let rss = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse::<u64>().ok())
+        });
+    let engine_kb = view.cache_bytes() / 1024;
+    match rss {
+        Some(kb) => format!(
+            "memory {} MB resident, of which engine cache {} MB",
+            kb / 1024,
+            engine_kb / 1024
+        ),
+        None => format!("engine cache {} MB", engine_kb / 1024),
+    }
 }

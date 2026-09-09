@@ -50,6 +50,18 @@ edition; ask for it on close and at chapter changes (the first call counts
 the whole book's text once). Store both; restore with `goto_locator` when
 you have one, `goto_chapter` otherwise.
 
+Text the widget hands over — a selection, a highlight's excerpt, a tapped
+word and its sentence — is cleaned first: publishers' files are full of
+soft hyphens inside words and zero-width spaces after hard hyphens, which
+the engine keeps (its positions are offsets into the raw text) and which
+would send `Har\u{ad}ry` to the dictionary. Store what the widget gives
+you; nothing to strip on Kalam's side.
+
+Memory: the engine keeps laid-out chapters and decoded images up to
+`ReaderOptions::cache_budget`, 32 MB unless Kalam says otherwise (the
+engine's own default is 192 MB, sized for comics). `view.cache_bytes()`
+says how much it holds right now.
+
 ## What it needs from Kalam
 
 * **gtk4-rs 0.11** (Kalam is on 0.9). gtk4-sys can only exist once in a

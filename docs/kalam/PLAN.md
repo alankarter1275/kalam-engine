@@ -183,9 +183,20 @@ right. Two small engine additions were needed and are logged in
    (`publisher_styles` was never read). Verdict: the engine holds up;
    proceed.
 2. **Strip**, steps 1–6 of the table in §4 (7 was kept). **Done** in two rounds, both built and run on the target machine.
-3. **Build the adapter** (§6) against the stripped engine. **First
-   version written 2026-09-09**; awaiting a build and a run on the target
-   machine.
+3. **Build the adapter** (§6) against the stripped engine. **Written
+   2026-09-09 and run on the target machine the same day**: everything
+   works (themes, font size keeps the place, selection, highlights,
+   tap-to-look-up, durable locator in 0.2 ms) but the two numbers the
+   project exists for do not: **3.9 s to the first page, 150 MB
+   resident** (§10 asks for under 1 s and under 100 MB). The strip did
+   not move memory at all, so code size was never where it went. Two
+   bugs found by the run and fixed: selected text carried the
+   publisher's soft hyphens (`Har\u{ad}ry`) into what Kalam would store,
+   and the engine's 192 MB comic-sized cache default was inherited
+   unchanged (now 32 MB). **Next: measure before touching anything** —
+   the engine now logs where each chapter's milliseconds go (parse,
+   fonts, images, style, paginate) and the demo prints resident memory,
+   so one more run names the culprit instead of a guess.
 4. **Remove `chapbook-library`** (step 8), now that Kalam's database does
    its job.
 5. **Integrate into Kalam**: path dependency, swap the WebKit view for the
