@@ -147,7 +147,9 @@ impl Strip {
     }
 
     pub(crate) fn is_measured(&self, spine: usize) -> bool {
-        self.slots.get(spine).is_some_and(|slot| slot.pages.is_some())
+        self.slots
+            .get(spine)
+            .is_some_and(|slot| slot.pages.is_some())
     }
 
     /// The whole strip, margins included.

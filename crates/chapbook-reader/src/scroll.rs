@@ -55,14 +55,16 @@ use crate::{Highlight, Session};
 /// Every line on a page as (top, bottom, locator start), in fragment
 /// order.
 fn page_lines(page: &Page) -> impl Iterator<Item = (f32, f32, u32)> + '_ {
-    page.fragments.iter().filter_map(|fragment| match &fragment.kind {
-        FragmentKind::Line(line) | FragmentKind::HiddenText(line) => Some((
-            fragment.rect.origin.y,
-            fragment.rect.max_y(),
-            line.locator_start,
-        )),
-        _ => None,
-    })
+    page.fragments
+        .iter()
+        .filter_map(|fragment| match &fragment.kind {
+            FragmentKind::Line(line) | FragmentKind::HiddenText(line) => Some((
+                fragment.rect.origin.y,
+                fragment.rect.max_y(),
+                line.locator_start,
+            )),
+            _ => None,
+        })
 }
 
 /// One page's contribution to a continuous strip — see
@@ -282,7 +284,9 @@ impl Session {
     /// line). `None` for a page with no lines.
     pub fn line_at_page(&mut self, spine: usize, page: usize, y: f32) -> Option<u32> {
         let page = self.layout_unit(spine)?.pages.get(page)?;
-        let (mut below, mut last): (Option<(f32, u32)>, Option<(f32, u32)>) = (None, None);
+        // (top, start) of the first line below y, and of the last line.
+        let mut below: Option<(f32, u32)> = None;
+        let mut last: Option<(f32, u32)> = None;
         for (top, bottom, start) in page_lines(page) {
             if bottom > y && below.is_none_or(|(t, _)| top < t) {
                 below = Some((top, start));

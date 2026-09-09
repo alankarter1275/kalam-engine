@@ -640,9 +640,7 @@ impl ReaderView {
         let mut s = self.inner.session.borrow_mut();
         match self.band_at(y as f32) {
             Some((band, py)) => s.host_highlight_at_page(band.spine, band.page, x as f32, py),
-            None if self.mode() == ReadingMode::Paged => {
-                s.host_highlight_at(x as f32, y as f32)
-            }
+            None if self.mode() == ReadingMode::Paged => s.host_highlight_at(x as f32, y as f32),
             None => None,
         }
     }
@@ -677,7 +675,11 @@ impl ReaderView {
                         Some(strip) => strip.viewport() * PAGE_SCROLL_FRACTION,
                         None => return ActionOutcome::Unchanged,
                     };
-                    let dy = if action == Action::NextPage { step } else { -step };
+                    let dy = if action == Action::NextPage {
+                        step
+                    } else {
+                        -step
+                    };
                     return if self.scroll_by(dy) {
                         ActionOutcome::Changed
                     } else {
@@ -690,9 +692,12 @@ impl ReaderView {
                     // the session may not be in while a selection holds
                     // it elsewhere.
                     if action != Action::Back {
-                        let reading = self.inner.strip.borrow().as_ref().and_then(|strip| {
-                            strip.reading_page()
-                        });
+                        let reading = self
+                            .inner
+                            .strip
+                            .borrow()
+                            .as_ref()
+                            .and_then(|strip| strip.reading_page());
                         if let Some((spine, page)) = reading {
                             s.set_position(spine, page);
                         }
@@ -793,7 +798,9 @@ impl ReaderView {
             return position_of(s);
         }
         let page_count = s.page_count_of(spine).unwrap_or(0);
-        let start = s.page_extent(spine, page).map_or(0, |extent| extent.start_offset);
+        let start = s
+            .page_extent(spine, page)
+            .map_or(0, |extent| extent.start_offset);
         let total = s.chapter_char_counts().get(spine).copied().unwrap_or(0);
         ReadingPosition {
             chapter: spine,
@@ -1038,9 +1045,9 @@ impl ReaderView {
             }
             _ => {}
         }
-        let on_line = strip.reading_line().and_then(|(spine, page, y)| {
-            Some((spine, s.line_at_page(spine, page, y)?))
-        });
+        let on_line = strip
+            .reading_line()
+            .and_then(|(spine, page, y)| Some((spine, s.line_at_page(spine, page, y)?)));
         self.inner.reading_offset.set(on_line);
 
         // Paint: each visible band is a slice of its page's raster, drawn

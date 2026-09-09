@@ -431,10 +431,7 @@ fn the_reading_line_names_a_line_and_finds_it_again() {
         "a point on the line is at or after the line's start"
     );
     // An offset before the page's first line has no line here.
-    assert_eq!(
-        s.line_rect_at_page(2, 1, first.saturating_sub(1)),
-        None
-    );
+    assert_eq!(s.line_rect_at_page(2, 1, first.saturating_sub(1)), None);
     assert_eq!(s.position().spine, 0, "nothing here moved the reader");
 }
 
