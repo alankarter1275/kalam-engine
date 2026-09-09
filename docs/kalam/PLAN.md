@@ -219,8 +219,11 @@ the widget half is round H in §7.
      surface — trimmed page extents (`used_height`, and the `gap` a
      break discarded, recorded by the paginator), a frame and hit-tests
      for any page, `set_position` for the shell to report where the
-     reader scrolled to. Paged mode untouched; tests in
-     `tests/scroll.rs` and `chapbook-layout/tests/pagination.rs`.
+     reader scrolled to, `settle` to land jumps without a frame,
+     `layout_generation` to hear that a font change dropped the layouts,
+     `pin_units` so the visible chapters are not evicted mid-frame.
+     Paged mode untouched; tests in `tests/scroll.rs` and
+     `chapbook-layout/tests/pagination.rs`.
    - **H — widget**: the strip in `kalam-reader` (GTK scrolling,
      estimated heights for chapters not yet laid out from
      `chapter_char_count`, corrected on layout; only the visible band

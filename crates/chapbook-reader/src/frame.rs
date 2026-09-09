@@ -155,31 +155,9 @@ impl Session {
     fn page_display_list(&mut self) -> Option<chapbook_paint::DisplayList> {
         self.metrics?;
         // Resolve a restored offset, or a jump's anchor, once the unit
-        // has laid out.
-        // Both of these are dropped rather than deferred once the reader
-        // has left the unit they were captured in. A pending landing is a
-        // statement about one unit, and the reader having navigated away
-        // supersedes it — carrying it along would resolve an offset from
-        // one chapter against the pages of another.
-        if let Some((spine, fragment)) = self.pending_anchor.take() {
-            if spine == self.spine {
-                match self.layout_unit(spine) {
-                    Some(layout) => {
-                        // A fragment that isn't in the unit lands at its start.
-                        self.page = layout.anchors.get(&fragment).copied().unwrap_or(0);
-                    }
-                    None => self.pending_anchor = Some((spine, fragment)),
-                }
-            }
-        }
-        if let Some((spine, offset)) = self.pending_offset {
-            if spine != self.spine {
-                self.pending_offset = None;
-            } else if let Some(layout) = self.layout_unit(spine) {
-                self.page = layout.page_of(offset);
-                self.pending_offset = None;
-            }
-        }
+        // has laid out. kalam: shared with `settle()`, the scroll shell's
+        // frameless way of landing the same jumps.
+        self.land_pending();
         let (spine, page_idx) = (self.spine, self.page);
         // Stored highlights first, the live selection on top of them.
         // kalam: colours come from the effective palette (a shell's exact

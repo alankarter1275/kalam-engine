@@ -276,3 +276,123 @@ fn a_selection_lives_on_the_page_it_was_made_on() {
     assert_eq!(s.host_highlight_at_page(3, 0, x, y), Some(7));
     assert_eq!(s.host_highlight_at_page(4, 0, x, y), None);
 }
+
+#[test]
+fn settle_lands_a_jump_without_a_frame() {
+    let mut s = open_long();
+    // A restored position, the way Kalam hands one back.
+    let stored = {
+        s.set_position(4, 1);
+        s.layered_locator().expect("captures")
+    };
+    let mut s = open_long();
+    assert!(s.goto_layered(&stored, true));
+    // The paged loop would land this on the next frame(); a scroll shell
+    // never takes one, so without settle() the page is still the unit's
+    // first.
+    assert_eq!(s.position().spine, 4);
+    let landed = s.settle();
+    assert_eq!(
+        (landed.spine, landed.page),
+        (4, 1),
+        "settle lands the jump"
+    );
+    assert_eq!(s.position(), landed);
+    assert_eq!(s.settle(), landed, "nothing pending is a no-op");
+
+    // A TOC fragment jump lands the same way.
+    let mut s = open_isolated("scroll-toc", &fixture("epub/minimal.epub"));
+    s.set_metrics(metrics());
+    // The nested entry, as `navigation.rs` reads it.
+    let entry = s.toc()[1].children[0].clone();
+    assert_eq!(entry.fragment.as_deref(), Some("part2"));
+    assert!(s.goto_toc(&entry));
+    let landed = s.settle();
+    assert_eq!(landed.spine, 1);
+    assert_eq!(
+        Some(landed.page),
+        s.page_of_anchor(1, "part2"),
+        "settled where page_of_anchor said it would"
+    );
+}
+
+#[test]
+fn the_layout_generation_moves_when_layouts_are_dropped() {
+    let mut s = open_long();
+    let g0 = s.layout_generation();
+    s.page_extents(2);
+    s.page_extents(3);
+    assert_eq!(s.layout_generation(), g0, "measuring changes nothing");
+    s.set_position(3, 1);
+    assert_eq!(s.layout_generation(), g0, "nor does scrolling");
+
+    s.adjust_font(2.0);
+    let g1 = s.layout_generation();
+    assert!(g1 > g0, "a font change drops every layout");
+    assert!(!s.is_laid_out(2), "and the old extents are gone with them");
+
+    let mut m = metrics();
+    m.size.h += 100.0;
+    s.set_metrics(m);
+    assert!(s.layout_generation() > g1, "so does a resize");
+    let g2 = s.layout_generation();
+
+    s.set_metrics(m);
+    assert_eq!(
+        s.layout_generation(),
+        g2,
+        "the same metrics again: nothing"
+    );
+    s.release_caches();
+    assert!(s.layout_generation() > g2, "and a memory-pressure release");
+}
+
+#[test]
+fn pinned_units_survive_a_budget_that_would_evict_them() {
+    use chapbook_reader::SessionConfig;
+    // A budget that holds roughly one laid-out chapter of the long
+    // fixture, so a second one is normally evicted when a third arrives.
+    let one_chapter = {
+        let mut s = open_long();
+        s.page_extents(3);
+        s.cache_bytes()
+    };
+    let budget = one_chapter + one_chapter / 2;
+    let open = || {
+        let mut s = Session::open_with(
+            fixture("epub/long.epub"),
+            SessionConfig::new(fixture_fonts()).with_cache_budget(budget),
+        )
+        .unwrap();
+        s.set_metrics(metrics());
+        s
+    };
+
+    // Unpinned: the shell measures the chapter below the current one,
+    // then something else lays out, and the neighbour is gone.
+    let mut s = open();
+    s.set_position(3, 0);
+    s.page_extents(4);
+    s.page_extents(5);
+    assert!(
+        !s.is_laid_out(4),
+        "control: without pinning, the neighbour was evicted"
+    );
+
+    // Pinned as the visible band, the same sequence keeps it.
+    let mut s = open();
+    s.set_position(3, 0);
+    s.pin_units(3..5);
+    s.page_extents(4);
+    s.page_extents(5);
+    assert!(s.is_laid_out(4), "pinned, the neighbour survives");
+    assert!(
+        s.cache_bytes() > budget,
+        "pinning is a floor: the budget was exceeded rather than the band broken"
+    );
+
+    // Unpinning lets the next eviction take it.
+    s.pin_units(0..0);
+    s.page_extents(6);
+    assert!(!s.is_laid_out(4), "unpinned, it goes like any other");
+}

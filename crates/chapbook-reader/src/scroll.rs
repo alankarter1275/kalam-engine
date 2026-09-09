@@ -28,6 +28,18 @@
 //! [`Session::chapter_char_count`] and corrects on layout; the engine has
 //! nothing truer to offer without laying the chapter out.
 //!
+//! Two things the paged loop gets for free need saying out loud here.
+//! A jump (`goto`, `goto_layered`, `follow_link`, `goto_toc`,
+//! `goto_host_highlight`) *lands* on the next `frame()`, which a scroll
+//! shell never takes: it calls [`Session::settle`] instead, then reads
+//! `position()` and scrolls there. And a font or metrics change drops
+//! every cached layout, which the paged loop notices through the frame's
+//! `Relayout` intent; a scroll shell watches
+//! [`Session::layout_generation`] and rebuilds its strip when it moves.
+//! While several chapters are on screen the shell names them with
+//! [`Session::pin_units`], so the cache budget does not evict a chapter
+//! between measuring it and drawing it.
+//!
 //! Everything answers in the *page's* coordinate space (CSS px, origin
 //! at the page's top-left, margins included), the same space `frame()`
 //! and `offset_at` use. The shell adds the page's offset in the strip.
@@ -322,6 +334,74 @@ impl Session {
             FrameIntent::UnitChange
         });
         self.position() != before
+    }
+
+    /// Land any pending jump now, without painting — what `frame()` does
+    /// first for a paged shell. A jump made with `goto`, `goto_layered`,
+    /// `follow_link`, `goto_toc` or `goto_host_highlight` records where
+    /// to land and resolves it against the unit's layout on the next
+    /// frame; a scroll shell takes no frames, so it calls this, then
+    /// reads [`Session::position`] and scrolls there. Returns the
+    /// position, landed. Harmless when nothing is pending.
+    pub fn settle(&mut self) -> crate::Position {
+        self.land_pending();
+        if let Some(layout) = self.layout(self.spine) {
+            if !layout.pages.is_empty() {
+                self.page = self.page.min(layout.pages.len() - 1);
+            }
+        }
+        self.position()
+    }
+
+    /// Turn a pending jump into a page, once its unit has laid out.
+    ///
+    /// Both kinds of landing are dropped rather than deferred once the
+    /// reader has left the unit they were captured in. A pending landing
+    /// is a statement about one unit, and the reader having navigated
+    /// away supersedes it — carrying it along would resolve an offset
+    /// from one chapter against the pages of another.
+    pub(crate) fn land_pending(&mut self) {
+        if let Some((spine, fragment)) = self.pending_anchor.take() {
+            if spine == self.spine {
+                match self.layout_unit(spine) {
+                    Some(layout) => {
+                        // A fragment that isn't in the unit lands at its start.
+                        self.page = layout.anchors.get(&fragment).copied().unwrap_or(0);
+                    }
+                    None => self.pending_anchor = Some((spine, fragment)),
+                }
+            }
+        }
+        if let Some((spine, offset)) = self.pending_offset {
+            if spine != self.spine {
+                self.pending_offset = None;
+            } else if let Some(layout) = self.layout_unit(spine) {
+                self.page = layout.page_of(offset);
+                self.pending_offset = None;
+            }
+        }
+    }
+
+    /// A counter that moves every time the session drops its cached
+    /// layouts — a font-size, theme, line-height or metrics change,
+    /// or [`Session::release_caches`]. Page counts and extents read
+    /// before it moved describe layouts that no longer exist; a scroll
+    /// shell that finds it changed rebuilds its strip, anchoring on the
+    /// locator offset at the top of the viewport, which survives.
+    pub fn layout_generation(&self) -> u64 {
+        self.layout_generation
+    }
+
+    /// Name the units a scroll shell has on screen, so eviction spares
+    /// them along with the current unit. Without this the cache budget
+    /// can drop a neighbouring chapter between the shell measuring it and
+    /// drawing it, and the shell's next ask lays it out again — a stall
+    /// on every frame near a chapter seam once the book is bigger than
+    /// the budget. A half-open range of spine indices; `0..0` pins none.
+    /// Pinning is a floor, not a ceiling: the budget still applies to
+    /// everything else.
+    pub fn pin_units(&mut self, units: std::ops::Range<usize>) {
+        self.pinned_units = units;
     }
 
     /// Where a jump would land, without making it: the page in `target`'s

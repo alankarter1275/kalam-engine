@@ -138,6 +138,9 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-reader/src/text_surface.rs` | `speakable_page` body moved to `speakable_unit_page(spine, page)`; `speakable_page` calls it for the current page | The scroll surface's tap-to-look-up needs words on a page that is not the session's |
 | `crates/chapbook-reader/src/lib.rs` | `mod scroll;`, `pub use scroll::PageExtent` | Same feature |
 | `crates/chapbook-reader/src/layout.rs` | The two fabricated image-book `ChapterLayout`s carry `gaps: vec![0.0]` | Struct gained a field |
+| `crates/chapbook-reader/src/frame.rs` | The pending-jump landing at the top of `page_display_list` moved to `Session::land_pending` (in `scroll.rs`), called from there | `settle()` lands the same jumps for a frameless shell; one copy of the rule |
+| `crates/chapbook-reader/src/cache.rs` | `evict_keeping` also spares `pinned_units`; `drop_metrics_dependent` and `release_caches` bump `layout_generation` | A scroll shell's visible band must not be evicted under it, and it needs to hear that layouts were dropped |
+| `crates/chapbook-reader/src/lib.rs`, `src/open.rs` | `Session.layout_generation`, `Session.pinned_units` | Same |
 
 New files inside inherited crates (no conflict risk, listed for completeness):
 
@@ -145,8 +148,8 @@ New files inside inherited crates (no conflict risk, listed for completeness):
 |---|---|
 | `crates/chapbook-reader/src/host_position.rs` | `Session::layered_locator()`, `layered_locator_at()`, `goto_layered()`, `unit_fraction()`, `chapter_char_count()`, `word_at_exact()` — positions as *values* for a host with its own database, and the tap hit-test |
 | `crates/chapbook-reader/src/host_highlights.rs` | `HostHighlight` + `Session::set_host_highlights()`, `show_host_highlight()`, `recolor_host_highlight()`, `hide_host_highlight()`, `host_highlights()`, `host_highlight_at()`, `goto_host_highlight()` — highlights the host stores itself, held in memory and resolved like stored annotations; not gated on `library` |
-| `crates/chapbook-reader/src/scroll.rs` | `PageExtent` + `Session::page_count_of()`, `is_laid_out()`, `page_extent()`/`page_extents()`, `page_frame()`, `render_page()`, `offset_at_page()`, `word_at_page()`, `link_at_page()`, `host_highlight_at_page()`, `range_rects_on_page()`, `selection_begin_on_page()`/`selection_drag_on_page()`, `set_position()`, `page_of()`, `page_of_anchor()` — the by-page surface a scrolling shell composes a continuous view from; the paged API is untouched |
-| `crates/chapbook-reader/tests/scroll.rs` | Five tests over that surface on `long.epub` |
+| `crates/chapbook-reader/src/scroll.rs` | `PageExtent` + `Session::page_count_of()`, `is_laid_out()`, `page_extent()`/`page_extents()`, `page_frame()`, `render_page()`, `offset_at_page()`, `word_at_page()`, `link_at_page()`, `host_highlight_at_page()`, `range_rects_on_page()`, `selection_begin_on_page()`/`selection_drag_on_page()`, `set_position()`, `page_of()`, `page_of_anchor()`, `settle()`, `layout_generation()`, `pin_units()` — the by-page surface a scrolling shell composes a continuous view from; the paged API is untouched |
+| `crates/chapbook-reader/tests/scroll.rs` | Eight tests over that surface on `long.epub` |
 
 ## If upstream goes quiet or goes a direction we dislike
 

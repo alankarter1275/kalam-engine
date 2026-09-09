@@ -470,6 +470,16 @@ page*, without moving the session:
 - `page_of(locator)` / `page_of_anchor(spine, fragment)` — where a jump
   lands, as a page, so the shell scrolls there instead of letting `goto`
   re-page the session behind its back.
+- `settle()` — land any jump the session was asked to make (`goto_layered`
+  at open, `follow_link`, `goto_toc`, `goto_host_highlight`). A paged
+  shell gets this for free from `frame()`; a scroll shell takes no
+  frames, so it calls `settle()` and then scrolls to `position()`.
+- `layout_generation()` — moves whenever cached layouts are dropped (font
+  size, theme, line height, metrics, `release_caches`). Extents read
+  before it moved are stale: rebuild the strip, anchoring on the locator
+  offset at the top of the viewport.
+- `pin_units(range)` — the chapters on screen. Eviction spares them, so
+  a chapter is not dropped between the shell measuring it and drawing it.
 
 Chapters not yet laid out have no extents. Estimate their height from
 `chapter_char_count(spine)` against the ratio the laid-out chapters show,

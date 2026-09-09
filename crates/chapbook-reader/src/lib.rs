@@ -321,6 +321,13 @@ pub struct Session {
     /// anchor-flavored sibling of `pending_offset`, unit-paired for the
     /// same reason.
     pending_anchor: Option<(usize, String)>,
+    /// kalam: bumped every time cached layouts are dropped wholesale (a
+    /// metrics or settings change). A scrolling shell compares it to know
+    /// its strip is stale — see [`Session::layout_generation`].
+    layout_generation: u64,
+    /// kalam: units a scrolling shell has on screen besides the current
+    /// one, spared by eviction — see [`Session::pin_units`].
+    pinned_units: std::ops::Range<usize>,
 }
 
 /// Everything the session caches for one spine unit.

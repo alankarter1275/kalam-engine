@@ -48,6 +48,9 @@ impl Session {
         let pinned = self.spine;
         self.units.retain(|spine, _| *spine == pinned);
         self.unit_text_cache.replace(None);
+        // kalam: layouts are gone, so a scrolling shell's strip is stale
+        // — though only its measured slots, and re-asking rebuilds them.
+        self.layout_generation += 1;
         // The renderer's glyph-mask cache is the one cache with no other
         // release path; a fresh renderer starts it empty.
         self.renderer = chapbook_render_tinyskia::Renderer::new();
@@ -117,6 +120,7 @@ impl Session {
     /// *file*, not the geometry — links are locator-space, image-book
     /// pixels are metrics-independent — and survives.
     pub(crate) fn drop_metrics_dependent(&mut self) {
+        self.layout_generation += 1;
         let epub = matches!(self.book, OpenBook::Epub(_));
         for unit in self.units.values_mut() {
             unit.layout = None;
@@ -149,6 +153,8 @@ impl Session {
     /// it is not the current one (a prefetch, a search).
     pub(crate) fn evict_keeping(&mut self, keep: Option<usize>) {
         let pinned = self.spine;
+        // kalam: a scrolling shell's visible units are pinned too.
+        let visible = self.pinned_units.clone();
         while self.cache_bytes() > self.cache_budget {
             // Oldest use first, among units actually holding memory; a
             // unit with no recorded use is older still (`used_at` of 0).
@@ -158,6 +164,7 @@ impl Session {
                 .filter(|(spine, unit)| {
                     **spine != pinned
                         && Some(**spine) != keep
+                        && !visible.contains(spine)
                         && (unit.layout.is_some() || unit.images.is_some())
                 })
                 .min_by_key(|(_, unit)| unit.used_at)
