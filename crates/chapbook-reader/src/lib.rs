@@ -31,8 +31,11 @@ mod annotations;
 mod cache;
 pub mod conformance;
 mod frame;
-// kalam: layered positions as values, for a host with its own database.
-// Rides on the annotation module's char-count context, so the same gate.
+// kalam: layered positions as values, and highlights the host stores
+// itself, for a host with its own database. Position capture rides on
+// the annotation module's char-count context, so shares its gate; the
+// highlights need no library at all.
+mod host_highlights;
 #[cfg(feature = "library")]
 mod host_position;
 mod layout;
@@ -61,7 +64,26 @@ use loader::Loader;
 use open::OpenBook;
 
 #[cfg(feature = "library")]
-pub use annotations::{AnnotationSummary, Highlight};
+pub use annotations::AnnotationSummary;
+pub use host_highlights::HostHighlight;
+
+/// A highlight resolved into the open book's locator space — one the
+/// library stores or one the host does ([`HostHighlight`]); a shell paints
+/// and lists both the same way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Highlight {
+    /// The library's annotation id, or the host's own id for a host
+    /// highlight — the handle for recolouring, removing and jumping.
+    pub id: i64,
+    pub spine: usize,
+    /// Locator offsets within the unit, `[start, end)`.
+    pub start: u32,
+    pub end: u32,
+    /// The text as captured, for a highlight list.
+    pub text: Option<String>,
+    /// Stored color as written (`#rrggbb`); `None` follows the theme.
+    pub color: Option<String>,
+}
 
 // Everything a shell needs to consume what the session produces, so it
 // depends on chapbook-reader alone and can't skew versions with it: the
@@ -321,6 +343,9 @@ pub struct Session {
     /// inflate + parse + walk. Survives relayout by design — locator text
     /// is metrics-independent.
     unit_text_cache: std::cell::RefCell<Option<(usize, String)>>,
+    /// kalam: highlights the host stores in its own database and asked
+    /// the session to paint. See `host_highlights.rs`.
+    host_highlights: Vec<HostHighlight>,
     /// Fragment to land on once the target unit has laid out — the
     /// anchor-flavored sibling of `pending_offset`, unit-paired for the
     /// same reason.
@@ -361,6 +386,9 @@ struct UnitState {
     /// nothing — distinct from never having run.
     #[cfg(feature = "library")]
     resolved_highlights: Option<Vec<Highlight>>,
+    /// kalam: the host's own highlights, resolved the same way and cached
+    /// for the same reason.
+    resolved_host_highlights: Option<Vec<Highlight>>,
     /// Last use, in [`Session::use_clock`] ticks, for eviction order.
     used_at: u64,
 }

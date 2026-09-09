@@ -8,22 +8,7 @@ use chapbook_library::AnnotationKind;
 use chapbook_paint::FrameIntent;
 
 use crate::text_surface::unit_locator_text;
-use crate::Session;
-
-/// A stored highlight resolved into the open book's locator space.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Highlight {
-    /// Library annotation id — the handle for [`Session::remove_highlight`].
-    pub id: i64,
-    pub spine: usize,
-    /// Locator offsets within the unit, `[start, end)`.
-    pub start: u32,
-    pub end: u32,
-    /// The text as captured, for a highlight list.
-    pub text: Option<String>,
-    /// Stored color as written (`#rrggbb`); `None` follows the theme.
-    pub color: Option<String>,
-}
+use crate::{Highlight, Session};
 
 /// One stored annotation as recorded — enough to list every mark in a book
 /// without resolving any of them against unit text.

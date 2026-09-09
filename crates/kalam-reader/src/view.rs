@@ -29,7 +29,7 @@ use chapbook_core::{
     Action, EdgeSizes, Key, KeyMap, LayeredLocator, PageMetrics, Rect, Rotation, Size, TapZones,
     TocEntry,
 };
-use chapbook_reader::{Session, SessionConfig, SessionEvent};
+use chapbook_reader::{HostHighlight, Session, SessionConfig, SessionEvent};
 
 use crate::prefs::{HighlightColor, KalamPrefs};
 
@@ -86,6 +86,10 @@ pub struct TappedWord {
     /// Where the word sits, in widget coordinates, so a popover can point
     /// at it.
     pub rect: Rect,
+    /// Kalam's id of the highlight the word sits in, if any — the tap
+    /// that means "this highlight" (recolour, delete) rather than "this
+    /// word" (look it up). Kalam decides which; the widget reports both.
+    pub highlight: Option<i64>,
 }
 
 /// A text selection the reader finished, for the copy/highlight/lookup
@@ -445,23 +449,21 @@ impl ReaderView {
         self.area.queue_draw();
     }
 
-    /// Turn the current selection into a stored highlight in Kalam's
-    /// colour. Returns the engine's id for it (the handle for
-    /// [`ReaderView::remove_highlight`] and
-    /// [`ReaderView::recolor_highlight`]), plus the two endpoints as
-    /// layered locators and the text, for Kalam's `annotations` row.
-    pub fn add_highlight(&self, color: HighlightColor) -> Option<NewHighlight> {
+    /// Capture the current selection as a highlight for Kalam to store:
+    /// the text and the two endpoints as durable locators, in Kalam's
+    /// colour. **Nothing is stored or painted by this call.** Kalam writes
+    /// its `annotations` row, then calls [`ReaderView::show_highlight`]
+    /// with the row's id — that id is the handle for everything after.
+    /// `None` without a selection.
+    pub fn capture_highlight(&self, color: HighlightColor) -> Option<NewHighlight> {
         let result = {
             let mut s = self.inner.session.borrow_mut();
             let (start, end) = s.selected_range()?;
             let text = readable(&s.selected_text().unwrap_or_default());
             let start_locator = s.layered_locator_at(start)?;
             let end_locator = s.layered_locator_at(end)?;
-            let id = s.add_highlight()?;
-            s.set_highlight_color(id, Some(color.css()));
             s.selection_clear();
             NewHighlight {
-                id,
                 color,
                 text,
                 start: start_locator,
@@ -473,30 +475,70 @@ impl ReaderView {
         Some(result)
     }
 
+    /// Paint a highlight Kalam has on file, under Kalam's id. Called once
+    /// per row after [`ReaderView::capture_highlight`], or for every row
+    /// of the book at open — [`ReaderView::set_highlights`] does the
+    /// latter in one go. Showing an id already shown replaces it.
+    pub fn show_highlight(&self, id: i64, highlight: &NewHighlight) {
+        self.inner
+            .session
+            .borrow_mut()
+            .show_host_highlight(host_highlight(id, highlight));
+        self.area.queue_draw();
+    }
+
+    /// Replace every highlight shown with Kalam's list for this book —
+    /// what to call at open, or after Kalam's annotations table changed
+    /// behind the widget's back (`AnnotationsReload`).
+    pub fn set_highlights<'a>(
+        &self,
+        highlights: impl IntoIterator<Item = (i64, &'a NewHighlight)>,
+    ) {
+        let list: Vec<HostHighlight> = highlights
+            .into_iter()
+            .map(|(id, h)| host_highlight(id, h))
+            .collect();
+        self.inner.session.borrow_mut().set_host_highlights(list);
+        self.area.queue_draw();
+    }
+
+    /// Repaint a shown highlight in another of Kalam's colours (Kalam has
+    /// already updated its row).
     pub fn recolor_highlight(&self, id: i64, color: HighlightColor) {
         self.inner
             .session
             .borrow_mut()
-            .set_highlight_color(id, Some(color.css()));
+            .recolor_host_highlight(id, Some(color.css()));
         self.area.queue_draw();
     }
 
+    /// Stop painting a highlight (Kalam has already deleted its row).
     pub fn remove_highlight(&self, id: i64) {
-        self.inner.session.borrow_mut().remove_annotation(id);
+        self.inner.session.borrow_mut().hide_host_highlight(id);
         self.area.queue_draw();
     }
 
-    /// Highlights the engine knows for the chapter on screen, with their
-    /// ids — for Kalam's annotations panel to line up against its rows.
+    /// The highlights painted in the chapter on screen, with Kalam's ids
+    /// and where each lands in the chapter's text — for lining a panel up
+    /// against what is visible.
     pub fn highlights(&self) -> Vec<chapbook_reader::Highlight> {
         let mut s = self.inner.session.borrow_mut();
         let spine = s.spine();
-        s.highlights(spine).to_vec()
+        s.host_highlights(spine).to_vec()
     }
 
-    /// Jump to a stored highlight by the engine's id.
+    /// The shown highlight under a point in widget coordinates — a tap on
+    /// a marked passage, for a "recolour / delete" chip. `None` off any.
+    pub fn highlight_at(&self, x: f64, y: f64) -> Option<i64> {
+        self.inner
+            .session
+            .borrow_mut()
+            .host_highlight_at(x as f32, y as f32)
+    }
+
+    /// Jump to a shown highlight by Kalam's id.
     pub fn goto_highlight(&self, id: i64) -> bool {
-        let moved = self.inner.session.borrow_mut().goto_annotation(id);
+        let moved = self.inner.session.borrow_mut().goto_host_highlight(id);
         if moved {
             self.area.queue_draw();
         }
@@ -775,18 +817,29 @@ impl ReaderView {
     }
 }
 
-/// What [`ReaderView::add_highlight`] hands back: everything Kalam's
-/// `annotations` row needs.
+/// A highlight as Kalam's `annotations` row holds it: what
+/// [`ReaderView::capture_highlight`] hands out and what
+/// [`ReaderView::show_highlight`] takes back. The id is Kalam's and
+/// travels beside it, never inside it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewHighlight {
-    /// The engine's id for the highlight.
-    pub id: i64,
     pub color: HighlightColor,
     /// The highlighted text — Kalam's `text_excerpt`.
     pub text: String,
-    /// Start and end of the highlighted span as durable locators.
+    /// Start and end of the highlighted span as durable locators — the
+    /// JSON for Kalam's `cfi` column, or two columns of its own.
     pub start: LayeredLocator,
     pub end: LayeredLocator,
+}
+
+fn host_highlight(id: i64, h: &NewHighlight) -> HostHighlight {
+    HostHighlight {
+        id,
+        start: h.start.clone(),
+        end: h.end.clone(),
+        color: Some(h.color.css().to_string()),
+        text: Some(h.text.clone()),
+    }
 }
 
 fn position_of(s: &mut Session) -> ReadingPosition {
@@ -820,10 +873,12 @@ fn word_at(s: &mut Session, x: f32, y: f32) -> Option<TappedWord> {
     let sentence = sentence_around(&text, span.text_start as usize, span.text_end as usize);
     let sentence = readable(&sentence);
     let rect = union(&s.range_rects(start, end))?;
+    let highlight = s.host_highlight_at(x, y);
     Some(TappedWord {
         word,
         sentence,
         rect,
+        highlight,
     })
 }
 

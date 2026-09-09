@@ -11,9 +11,15 @@
 //! `n` / `p` skip chapters, `b` goes back after a link, Escape clears a
 //! selection. This window's: `t` cycles Kalam's four themes, `+`/`-`
 //! change the font size, `[`/`]` the line height, `{`/`}` the column
-//! width, `h` highlights the selection, `q` quits. Mouse: drag to select,
-//! tap a word to "look it up" (printed), tap the left or right third to
+//! width, `h` highlights the selection, `r` reloads every highlight from
+//! this program's stand-in for Kalam's table, `x` removes the newest,
+//! `q` quits. Mouse: drag to select, tap a word to "look it up"
+//! (printed), tap a highlight to name it, tap the left or right third to
 //! turn.
+//!
+//! Highlights work the way they will in Kalam: the widget captures one,
+//! *this program* stores it (in a `Vec`, where Kalam has a table) and
+//! hands the widget back its own id to paint under.
 //!
 //! Everything the widget reports goes to stderr, prefixed `demo:`, so a
 //! run doubles as a trace of what Kalam would receive. The engine's own
@@ -21,14 +27,18 @@
 //! on too, and the process's memory is printed after the first page and
 //! at close, so one run is a complete performance report.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use kalam_reader::{HighlightColor, KalamPrefs, ReaderOptions, ReaderView};
+use kalam_reader::{HighlightColor, KalamPrefs, NewHighlight, ReaderOptions, ReaderView};
+
+/// Kalam's `annotations` table, stood in for: rows keyed by an id this
+/// program hands out. The widget never sees this; it sees ids.
+type Shelf = Rc<RefCell<Vec<(i64, NewHighlight)>>>;
 
 fn main() -> glib::ExitCode {
     // `info` rather than the default `warn`: the engine's timing lines
@@ -111,11 +121,12 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
             }
         });
     }
-    view.connect_word(|word| {
-        eprintln!(
+    view.connect_word(|word| match word.highlight {
+        Some(id) => eprintln!("demo: tapped highlight #{id} (on {:?})", word.word),
+        None => eprintln!(
             "demo: word tapped {:?} at ({:.0},{:.0}) — sentence: {:?}",
             word.word, word.rect.origin.x, word.rect.origin.y, word.sentence
-        );
+        ),
     });
     view.connect_selection(|selected| match selected {
         Some(s) => eprintln!("demo: selected {:?}", s.text),
@@ -123,9 +134,12 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
     });
     view.connect_external_link(|href| eprintln!("demo: external link {href}"));
 
+    let shelf: Shelf = Rc::new(RefCell::new(Vec::new()));
+
     // ---- This window's keys (Kalam's controls, stood in for) ----
     {
         let view = view.clone();
+        let shelf = shelf.clone();
         let window_weak = window.downgrade();
         let key = gtk::EventControllerKey::new();
         key.connect_key_pressed(move |_, keyval, _, _| {
@@ -161,12 +175,31 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
                     view.set_column_px(prefs.column_px - 40.0);
                     eprintln!("demo: column {} px", view.prefs().column_px);
                 }
-                Some("h") => match view.add_highlight(HighlightColor::Yellow) {
-                    Some(h) => eprintln!(
-                        "demo: highlight #{} {:?} from offset {} to {}",
-                        h.id, h.text, h.start.char_offset, h.end.char_offset
-                    ),
+                Some("h") => match view.capture_highlight(HighlightColor::Yellow) {
+                    Some(h) => {
+                        // What Kalam does: INSERT, take the row id, show it.
+                        let id = shelf.borrow().len() as i64 + 1;
+                        eprintln!(
+                            "demo: stored highlight #{id} {:?} from offset {} to {}",
+                            h.text, h.start.char_offset, h.end.char_offset
+                        );
+                        view.show_highlight(id, &h);
+                        shelf.borrow_mut().push((id, h));
+                    }
                     None => eprintln!("demo: nothing selected to highlight"),
+                },
+                Some("r") => {
+                    // Kalam's AnnotationsReload: hand the whole table back.
+                    let shelf = shelf.borrow();
+                    view.set_highlights(shelf.iter().map(|(id, h)| (*id, h)));
+                    eprintln!("demo: reloaded {} highlights from the shelf", shelf.len());
+                }
+                Some("x") => match shelf.borrow_mut().pop() {
+                    Some((id, _)) => {
+                        view.remove_highlight(id);
+                        eprintln!("demo: removed highlight #{id}");
+                    }
+                    None => eprintln!("demo: no highlight to remove"),
                 },
                 Some("q") => {
                     view.flush();

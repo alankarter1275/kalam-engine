@@ -34,10 +34,13 @@ ReaderMsg::Theme(t)             ──▶ view.set_theme(t)
 ReaderMsg::FontDelta(d)         ──▶ view.set_font_px(prefs.font_px + d)
 ReaderMsg::JumpToLocation(c, f) ──▶ view.goto_chapter(c, f)
 ReaderMsg::TocSelect(entry)     ──▶ view.goto_toc(&entry)
-"highlight yellow" chip button  ──▶ view.add_highlight(Yellow) → NewHighlight
+"highlight yellow" chip button  ──▶ view.capture_highlight(Yellow) → NewHighlight
+  INSERT INTO annotations … → id ──▶ view.show_highlight(id, &h)
+open / AnnotationsReload        ──▶ view.set_highlights(rows)
+Delete/RecolorAnnotation(id, c) ──▶ view.remove_highlight(id) / recolor_highlight(id, c)
 
 save_progress(chapter, fraction) ◀── connect_position(|pos| …)
-dictionary popover               ◀── connect_word(|word| …)   (word, sentence, rect)
+dictionary popover               ◀── connect_word(|word| …)   (word, sentence, rect, highlight?)
 selection chip                   ◀── connect_selection(|sel| …)
 open in browser                  ◀── connect_external_link(|href| …)
 ```
@@ -49,6 +52,15 @@ re-finds the text by its surrounding words after a re-import or a different
 edition; ask for it on close and at chapter changes (the first call counts
 the whole book's text once). Store both; restore with `goto_locator` when
 you have one, `goto_chapter` otherwise.
+
+Highlights live in **Kalam's** `annotations` table and nowhere else. The
+widget captures one (`capture_highlight`: text + two `LayeredLocator`s, the
+JSON of which fits the unused `cfi` column), Kalam inserts the row, and the
+widget paints it under Kalam's row id (`show_highlight`). Recolour, delete
+and jump all take that id; at open, `set_highlights` takes every row for the
+book. Re-anchoring after a re-import is the engine's, by the quote context
+in the locator. A tap on a highlighted word reports the word *and* the
+highlight's id, so Kalam can offer "recolour / delete" instead of a lookup.
 
 Text the widget hands over — a selection, a highlight's excerpt, a tapped
 word and its sentence — is cleaned first: publishers' files are full of

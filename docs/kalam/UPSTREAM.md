@@ -117,7 +117,9 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-reader/src/frame.rs` | Background / selection / highlight colours from `settings.palette()` | Same feature |
 | `crates/chapbook-library/src/lib.rs` | `palette: None` in the settings row read (one line) | Struct gained a field |
 | `crates/chapbook-layout/tests/pagination.rs` | One new test (`a_palette_supplies_the_colours_and_the_theme_the_rules`) | Covers the feature; appended, nothing existing touched |
-| `crates/chapbook-reader/src/lib.rs` | `mod host_position;` (gated on `library`, like `annotations`) | New file, see below |
+| `crates/chapbook-reader/src/lib.rs` | `mod host_position;` (gated on `library`, like `annotations`); `mod host_highlights;` (ungated); `Highlight` moved here from `annotations.rs` so it exists without the library; `UnitState.resolved_host_highlights`; `Session.host_highlights` | New files, see below |
+| `crates/chapbook-reader/src/frame.rs` | Paints host highlights beside the library's, through one closure | Same feature |
+| `crates/chapbook-reader/src/open.rs` | Initialises `host_highlights` | Same feature |
 | `crates/chapbook-reader/tests/cache_budget.rs` | `PAGE` constant no longer gated on the removed `cbz` feature (the EPUB test uses it too) | Strip leftover; the file did not compile until CI ran the tests |
 | `docs/STABILITY.md` | Rewritten for the eleven crates that remain, with `kalam-reader` and the demo placed in tiers | The `stability` test in `tools/chapbook-cli` checks the doc against the workspace; upstream's text named twelve crates the strip removed |
 | `tools/chapbook-cli/tests/stability.rs` | Member-count floor 15 → 11 | Same test, same strip |
@@ -128,6 +130,7 @@ New files inside inherited crates (no conflict risk, listed for completeness):
 | File | What |
 |---|---|
 | `crates/chapbook-reader/src/host_position.rs` | `Session::layered_locator()`, `layered_locator_at()`, `goto_layered()`, `unit_fraction()`, `chapter_char_count()`, `word_at_exact()` — positions as *values* for a host with its own database, and the tap hit-test |
+| `crates/chapbook-reader/src/host_highlights.rs` | `HostHighlight` + `Session::set_host_highlights()`, `show_host_highlight()`, `recolor_host_highlight()`, `hide_host_highlight()`, `host_highlights()`, `host_highlight_at()`, `goto_host_highlight()` — highlights the host stores itself, held in memory and resolved like stored annotations; not gated on `library` |
 
 ## If upstream goes quiet or goes a direction we dislike
 

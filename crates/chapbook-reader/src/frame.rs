@@ -1,12 +1,10 @@
 //! The frame: what changed since the last one (intent and damage), and
 //! the display list a shell rasterizes.
 
-use chapbook_core::Rect;
-#[cfg(feature = "library")]
-use chapbook_core::Rgba;
+use chapbook_core::{Rect, Rgba};
 use chapbook_paint::{Frame, FrameIntent, Selection};
 
-use crate::Session;
+use crate::{Highlight, Session};
 
 /// Where changes have landed since the last frame was taken.
 ///
@@ -187,31 +185,26 @@ impl Session {
         }
         let (spine, page_idx) = (self.spine, self.page);
         // Stored highlights first, the live selection on top of them.
-        // Without a library nothing is stored, so the live selection is
-        // the only thing that paints.
-        #[cfg(not(feature = "library"))]
-        let mut selections: Vec<Selection> = Vec::new();
         // kalam: colours come from the effective palette (a shell's exact
-        // colours if it set them, else the theme's presets).
-        #[cfg(feature = "library")]
+        // colours if it set them, else the theme's presets). Two sources
+        // of highlight: the library's own (when built with one) and the
+        // host's (`host_highlights.rs`), painted alike.
         let highlight_color = self.settings.palette().highlight;
+        // A stored color keeps the theme's transparency unless it states
+        // its own; an unparseable one falls back rather than vanishing.
+        let paint = |h: &Highlight| Selection {
+            start: h.start,
+            end: h.end,
+            color: h
+                .color
+                .as_deref()
+                .and_then(|hex| Rgba::from_hex(hex, highlight_color.a))
+                .unwrap_or(highlight_color),
+        };
+        let mut selections: Vec<Selection> = Vec::new();
         #[cfg(feature = "library")]
-        let mut selections: Vec<Selection> = self
-            .highlights(spine)
-            .iter()
-            .map(|h| Selection {
-                start: h.start,
-                end: h.end,
-                // A stored color keeps the theme's transparency unless it
-                // states its own; an unparseable one falls back rather
-                // than vanishing.
-                color: h
-                    .color
-                    .as_deref()
-                    .and_then(|hex| Rgba::from_hex(hex, highlight_color.a))
-                    .unwrap_or(highlight_color),
-            })
-            .collect();
+        selections.extend(self.highlights(spine).iter().map(paint));
+        selections.extend(self.host_highlights(spine).iter().map(paint));
         if let Some((start, end)) = self.selected_range() {
             selections.push(Selection {
                 start,
