@@ -739,7 +739,9 @@ impl<F: FnMut() -> Session> Harness<F> {
         // offset is what must come back; the page follows from it.
         let saved_offset = session.current_offset();
         let Some(locator) = session.layered_locator() else {
-            return Outcome::Skipped("the current unit has no text to capture a position in".into());
+            return Outcome::Skipped(
+                "the current unit has no text to capture a position in".into(),
+            );
         };
 
         let mut reopened = (self.open)();

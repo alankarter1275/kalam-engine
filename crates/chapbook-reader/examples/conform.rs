@@ -34,9 +34,7 @@ fn main() {
     });
 
     let Some(source) = args.first().cloned() else {
-        eprintln!(
-            "usage: conform <book.epub> [width height] [--fonts <dir> <family>]"
-        );
+        eprintln!("usage: conform <book.epub> [width height] [--fonts <dir> <family>]");
         std::process::exit(2);
     };
     let size = match args.get(1).zip(args.get(2)) {

@@ -59,7 +59,6 @@ fn epub_session_renders_navigates_and_selects() {
     assert_eq!(s.page(), 1);
     s.prev_page();
     assert_eq!(s.page(), 0);
-
 }
 
 #[test]
@@ -98,7 +97,6 @@ fn cbz_session_pages_through_images() {
     // End of book: stays put.
     s.next_page();
     assert_eq!(s.spine(), 2);
-
 }
 
 #[test]
