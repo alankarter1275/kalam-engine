@@ -502,7 +502,10 @@ mod tests {
         let mut strip = Strip::new(vec![1000, 1000, 1000], VIEWPORT, 0.5, 1);
         let guessed_top1 = MARGIN_TOP + 500.0 + CHAPTER_GAP;
         let guessed_top2 = guessed_top1 + 500.0 + CHAPTER_GAP;
-        assert!(near(strip.total_height(), guessed_top2 + 500.0 + MARGIN_BOTTOM));
+        assert!(near(
+            strip.total_height(),
+            guessed_top2 + 500.0 + MARGIN_BOTTOM
+        ));
 
         // The reader scrolls a fifth of the way into the second
         // chapter's guess.
@@ -684,7 +687,11 @@ mod tests {
         let dividers = strip.visible_dividers();
         assert_eq!(dividers.len(), 1);
         assert_eq!(dividers[0].0, 1, "the chapter that begins below it");
-        assert!(near(dividers[0].1, center1), "{} vs {center1}", dividers[0].1);
+        assert!(
+            near(dividers[0].1, center1),
+            "{} vs {center1}",
+            dividers[0].1
+        );
         // The second seam comes into view when the scroll reaches it.
         strip.set_scroll(center2 - VIEWPORT + 1.0);
         let spines: Vec<usize> = strip.visible_dividers().iter().map(|d| d.0).collect();

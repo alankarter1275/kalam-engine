@@ -106,8 +106,10 @@ impl DividerPainter {
         let rule_x = place.column_x + place.column_w * RULE_INSET;
         let rule_w = place.column_w * (1.0 - 2.0 * RULE_INSET);
         let rule_y = snap(place.center_y - 0.5);
-        let mut paint = Paint::default();
-        paint.anti_alias = false;
+        let mut paint = Paint {
+            anti_alias: false,
+            ..Paint::default()
+        };
         paint.set_color_rgba8(fg.r, fg.g, fg.b, RULE_ALPHA);
         if let Some(rect) = tiny_skia::Rect::from_xywh(rule_x, rule_y, rule_w, 1.0) {
             out.fill_rect(rect, &paint, to_device, None);
