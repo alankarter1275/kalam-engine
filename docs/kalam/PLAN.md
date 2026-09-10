@@ -251,8 +251,18 @@ the same day — round H in §7, run and accepted on the target machine on
      (`kalam-reader/src/divider.rs`, painted with the engine's own
      rasterizer, no new dependency). Widget-only; no inherited file
      changed.
-6. **Integrate into Kalam**: path dependency, swap the WebKit view for the
-   widget.
+6. **Integrate into Kalam** (recipe written 2026-09-10:
+   [`INTEGRATION.md`](INTEGRATION.md), with the new glue file ready to
+   drop in under [`patch/`](patch/)). Kalam takes the crate as a git
+   dependency, moves to gtk4 0.11 / libadwaita 0.9 / relm4 0.11, and the
+   reader page swaps the WebView and its JavaScript bridge for one
+   `ReaderView` and four callbacks. Highlights store the engine's
+   locator JSON in the unused `annotations.cfi` column; the position
+   stays `(chapter_index, fraction)`. The widget gained `close()` for
+   this — GTK's draw function and controllers hold the view, so a
+   closed book would otherwise stay in memory until Kalam quits — and
+   `b` is left to Kalam's bookmarks key. Done when the checklist at the
+   end of `INTEGRATION.md` passes on the target machine.
 7. **Monthly**: review upstream and bring over fixes ([`UPSTREAM.md`](UPSTREAM.md)).
 
 ## 8. The gate

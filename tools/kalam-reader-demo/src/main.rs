@@ -8,7 +8,7 @@
 //! ```
 //!
 //! Keys — the widget's own: arrows / PageUp / PageDown / space turn pages,
-//! `n` / `p` skip chapters, `b` goes back after a link, Escape clears a
+//! `n` / `p` skip chapters, Backspace goes back after a link, Escape clears a
 //! selection. This window's: `s` switches between paged and scrolled
 //! reading, `t` cycles Kalam's four themes, `+`/`-` change the font size,
 //! `[`/`]` the line height, `{`/`}` the column width, `h` highlights the
@@ -270,6 +270,9 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
                 started.elapsed(),
                 memory_line(&view)
             );
+            // What Kalam does in its reader page's `shutdown`: cut the
+            // widget loose so the book is freed with the page.
+            view.close();
             glib::Propagation::Proceed
         });
     }

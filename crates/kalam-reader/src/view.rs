@@ -221,6 +221,11 @@ struct Inner {
     /// The one-time character count has been queued (see
     /// [`ReaderView::schedule_char_count`]).
     count_queued: Cell<bool>,
+    /// The controllers on the area and the adjustment's handler, kept so
+    /// [`ReaderView::close`] can take them off again: each closes over
+    /// this view, and the view owns the area they hang on.
+    controllers: RefCell<Vec<gtk::EventController>>,
+    adjustment_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 /// The reading widget. Cheap to clone (a reference); dropped when the last
@@ -264,7 +269,9 @@ impl ReaderView {
         // Page turns and chapter skips from the engine's default map;
         // font size and theme are Kalam's preferences, changed through
         // Kalam's own controls, so those keys are unbound rather than
-        // left to move the text behind the settings panel's back.
+        // left to move the text behind the settings panel's back. `b`
+        // is Kalam's bookmarks panel (the engine's "back" stays on
+        // Backspace), `m` its add-bookmark.
         let mut keys = KeyMap::default();
         for key in [
             Key::Char('+'),
@@ -272,6 +279,7 @@ impl ReaderView {
             Key::Char('-'),
             Key::Char('t'),
             Key::Char('m'),
+            Key::Char('b'),
         ] {
             keys.unbind(key);
         }
@@ -304,6 +312,8 @@ impl ReaderView {
                 dividers: RefCell::new(DividerPainter::default()),
                 prefetch_queued: Cell::new(false),
                 count_queued: Cell::new(false),
+                controllers: RefCell::new(Vec::new()),
+                adjustment_handler: RefCell::new(None),
             }),
         };
         view.install_draw();
@@ -369,6 +379,32 @@ impl ReaderView {
     /// The GTK widget to put in a container.
     pub fn widget(&self) -> &gtk::DrawingArea {
         &self.area
+    }
+
+    /// Let go of the book. Call when the reader page closes — from a
+    /// relm4 component's `shutdown`, say.
+    ///
+    /// GTK owns the draw function and the controllers, and each of them
+    /// closes over this view, which owns the area they hang on: a cycle
+    /// that neither side breaks by itself. Without this call a closed
+    /// reader — its session, layouts, fonts, decoded images — would stay
+    /// in memory until the process ends, once per book opened. After
+    /// `close` the widget draws nothing and reports nothing; the caller
+    /// drops its own clones and the whole thing is freed.
+    pub fn close(&self) {
+        self.area.set_draw_func(|_, _, _, _| {});
+        for controller in self.inner.controllers.borrow_mut().drain(..) {
+            self.area.remove_controller(&controller);
+        }
+        if let Some(id) = self.inner.adjustment_handler.borrow_mut().take() {
+            self.inner.vadjustment.disconnect(id);
+        }
+        *self.inner.callbacks.borrow_mut() = Callbacks::default();
+        let mut s = self.inner.session.borrow_mut();
+        // The loader task holds a clone of this view until the waker it
+        // was given goes away; a fresh, empty waker ends it.
+        s.set_waker(|| {});
+        s.release_caches();
     }
 
     // ---- Callbacks ----
@@ -968,12 +1004,13 @@ impl ReaderView {
     /// The reader dragged the scrollbar's thumb (or clicked its trough).
     fn install_adjustment(&self) {
         let view = self.clone();
-        self.inner.vadjustment.connect_value_changed(move |adj| {
+        let id = self.inner.vadjustment.connect_value_changed(move |adj| {
             if view.inner.syncing_adjustment.get() || view.mode() != ReadingMode::Scrolled {
                 return;
             }
             view.scroll_to(adj.value() as f32);
         });
+        *self.inner.adjustment_handler.borrow_mut() = Some(id);
     }
 
     fn notify_selection(&self) {
@@ -1276,6 +1313,7 @@ impl ReaderView {
                 glib::Propagation::Proceed
             }
         });
+        self.keep_controller(&key);
         self.area.add_controller(key);
     }
 
@@ -1297,6 +1335,7 @@ impl ReaderView {
             let _ = view.scroll_by(step);
             glib::Propagation::Stop
         });
+        self.keep_controller(&scroll);
         self.area.add_controller(scroll);
     }
 
@@ -1440,7 +1479,15 @@ impl ReaderView {
                 }
             });
         }
+        self.keep_controller(&drag);
         self.area.add_controller(drag);
+    }
+
+    fn keep_controller(&self, controller: &impl IsA<gtk::EventController>) {
+        self.inner
+            .controllers
+            .borrow_mut()
+            .push(controller.clone().upcast());
     }
 
     /// The engine's background loader (image units) nudges the widget

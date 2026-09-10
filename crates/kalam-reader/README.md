@@ -112,6 +112,13 @@ says how much it holds right now.
   database of its own: the engine writes nothing to disk. Kalam's
   database is the only store, fed from the position callback and the
   highlight calls above.
+* One call on the way out: `view.close()` when the reader page goes
+  away. GTK's draw function and controllers hold the view, and the view
+  holds the widget they hang on; `close` cuts that loop so the book,
+  its layouts and its fonts are freed.
+
+The step-by-step recipe for the swap, with the glue file Kalam drops
+in, is [`docs/kalam/INTEGRATION.md`](../../docs/kalam/INTEGRATION.md).
 
 ## Where the numbers come from
 
