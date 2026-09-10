@@ -77,9 +77,10 @@ Positions come in two forms. Every page turn reports `chapter` +
 `fraction` — exactly what Kalam's `reading_progress` table holds today, and
 cheap. `view.locator()` gives the durable form, a `LayeredLocator` that
 re-finds the text by its surrounding words after a re-import or a different
-edition; ask for it on close and at chapter changes (the first call counts
-the whole book's text once). Store both; restore with `goto_locator` when
-you have one, `goto_chapter` otherwise.
+edition; ask for it on close and at chapter changes (it needs the whole
+book's text counted once, which the widget does in an idle after the first
+frame). Store both; restore with `goto_locator` when you have one,
+`goto_chapter` otherwise.
 
 Highlights live in **Kalam's** `annotations` table and nowhere else. The
 widget captures one (`capture_highlight`: text + two `LayeredLocator`s, the

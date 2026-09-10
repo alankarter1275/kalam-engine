@@ -218,6 +218,9 @@ struct Inner {
     /// A prefetch idle is queued (see [`ReaderView::schedule_prefetch`]);
     /// never more than one.
     prefetch_queued: Cell<bool>,
+    /// The one-time character count has been queued (see
+    /// [`ReaderView::schedule_char_count`]).
+    count_queued: Cell<bool>,
 }
 
 /// The reading widget. Cheap to clone (a reference); dropped when the last
@@ -300,6 +303,7 @@ impl ReaderView {
                 chapter_titles,
                 dividers: RefCell::new(DividerPainter::default()),
                 prefetch_queued: Cell::new(false),
+                count_queued: Cell::new(false),
             }),
         };
         view.install_draw();
@@ -838,7 +842,29 @@ impl ReaderView {
     fn after_draw(&self) {
         self.sync_adjustment();
         self.report_position();
+        self.schedule_char_count();
         self.schedule_prefetch();
+    }
+
+    /// Count the book's characters once, in an idle after the first
+    /// frame. Two things need the count — the strip's guesses when the
+    /// reader switches to scrolled mode, and the book progression in
+    /// the first `locator()` — and whichever came first paid for it at
+    /// that moment: 111 ms for a 1.2-million-character novel on the
+    /// target machine, as a stall on the first scrolled frame. Done here,
+    /// while the reader is looking at the first page, it is finished
+    /// before either asks. The engine caches the answer, so an ask that
+    /// comes first (a book opened in scrolled mode) simply counts then
+    /// and this idle finds nothing left to do.
+    fn schedule_char_count(&self) {
+        if self.inner.count_queued.replace(true) {
+            return;
+        }
+        let view = self.clone();
+        glib::idle_add_local_full(glib::Priority::LOW, move || {
+            let _ = view.inner.session.borrow_mut().chapter_char_counts();
+            glib::ControlFlow::Break
+        });
     }
 
     /// Lay out the chapter the reader will reach next while they are
