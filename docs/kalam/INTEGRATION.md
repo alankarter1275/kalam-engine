@@ -74,6 +74,13 @@ their own commit.
 `v4_12`, so the binary needs GTK ≥ 4.16 at build and run time (Arch has
 4.20+).
 
+**Build profile.** Kalam's `[profile.release]` has `lto = true` and
+`codegen-units = 1`. On the owner's 4 GB machine that gets `rustc`
+OOM-killed (`signal: 15, SIGTERM`, no error message) while compiling
+`stylo`, the largest crate the engine brings in. Change it to
+`lto = "thin"` and delete the `codegen-units` line; build with `-j 1`
+if it is still killed. CI runners have the memory and never see this.
+
 System side (Arch): `pacman -S gtk4 libadwaita` are already there.
 `webkit2gtk-6.0` can be uninstalled at the end. The engine's git
 dependency pulls stylo, which needs Python 3 at build time (Arch has

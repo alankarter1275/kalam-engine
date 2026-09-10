@@ -227,6 +227,12 @@ real tree in RESEARCH.md (R14 open questions first).
 
 ## 8. Deferred (known, not done, in no particular order)
 
+- "Unsave" from the dictionary card. The old popup's bookmark toggle
+  could forget a saved word; the new card only saves ("Saved ✓" is
+  disabled afterwards) and unsaving lives on the Words page. Kalam's
+  `delete_saved_word_by_word` was deleted with its last caller; a
+  "Saved ✓ → tap to unsave" affordance is a small Kalam-side change if
+  the owner misses it (R12c).
 - Page-raster cache in scrolled mode (drawing was measured at ~8 ms per
   frame, so this is low value until proven otherwise).
 - Kinetic (flick) scrolling in scrolled mode.

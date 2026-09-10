@@ -328,10 +328,9 @@ pub(crate) struct DictCard {
 }
 
 impl DictCard {
-    /// `EntryData.pos` is a `Vec<String>` (`src/db/dictionaries.rs`);
-    /// the WebKit popup joined it with middle dots and so does this.
-    /// `Sense.example` is taken through `Option::<String>::from`, which
-    /// accepts a `String` or an `Option<String>`.
+    /// `EntryData.pos` is a `Vec<String>` and `Sense.example` is an
+    /// `Option<String>` (`src/db/dictionaries.rs`); the old popup joined
+    /// the parts of speech with middle dots and so does this.
     pub(crate) fn from_entry(
         data: &crate::db::EntryData,
         pronunciation: Option<String>,
@@ -345,7 +344,7 @@ impl DictCard {
             .map(|(i, s)| {
                 (
                     s.def.clone(),
-                    Option::<String>::from(s.example.clone()).filter(|e| !e.is_empty()),
+                    s.example.clone().filter(|e| !e.is_empty()),
                     hint == Some(i),
                 )
             })

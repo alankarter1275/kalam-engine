@@ -449,6 +449,42 @@ revert them. Owner committed the ef11e46 bundle on calibre-alt `main`
 instead of the agent's branch — relay instruction: check out the
 agent's branch before copying and before every build.
 
+## R12c. Third report: Kalam compiles without WebKit (2026-09-11)
+
+**Found.**
+- Making both repos public unblocked calibre-alt's Actions at once
+  (private-repo minutes were the cause). Its first run then died in
+  `gdk4-sys`'s build script: `ubuntu-latest` = 24.04 = GTK 4.14.5, and
+  `kalam-reader`'s `v4_16` unifies with Kalam's `v4_12` → `gtk4 >= 4.16`
+  required. Fixed there by `ubuntu-26.04`, same as this repo's ci.yml.
+- With a compiler, clippy `-D warnings` named exactly 8 errors: 7
+  `dead_code` in the old reader path (3 321 lines deleted from
+  `epub_book.rs`, incl. the ~2 380-line JS shell; `read_file_string`,
+  `parent_zip_path`, `join_zip_path`, `ReadingTheme`, the free
+  `spine_index_for` are live and stayed) and 1 in the patch:
+  `useless_conversion` on `Option::<String>::from(s.example.clone())`
+  because `Sense.example` *is* `Option<String>`. Lesson: a
+  "compiles-either-way" conversion is itself a lint under `-D warnings`
+  once the type is known — write the type, do not hedge it.
+- Owner's local `cargo build --release -j 2` was SIGTERM-killed
+  compiling `stylo`: Kalam's `[profile.release]` is `lto = true`,
+  `codegen-units = 1`, and 4 GB is not enough for that with stylo in
+  the graph. This workspace uses `lto = "thin"` and built the demo on
+  the same machine. Recipe now says: thin LTO, default codegen-units,
+  `-j 1` if needed.
+- Gate after Kalam's 73ed7cf (run 34531632536): clippy clean; 341 tests,
+  339 passed, 2 ignored; debug and release builds succeed; calibre-alt
+  has a headless *screenshots* job (139 books, `window_shown` 243 ms,
+  library pages only — the reader still needs a human).
+- `delete_saved_word_by_word` (dictionaries.rs) lost its only caller
+  (the old popup's unsave toggle, js_bridge.rs:551). The new card has
+  "Save word" → "Saved ✓" (disabled); unsave lives on the Words page.
+
+**Decision.** Patch corrected (this commit). `delete_saved_word_by_word`:
+delete; "unsave from the card" goes on the deferred list (WORKING.md §8)
+and comes back only if the owner misses it. Next: the owner runs the
+step-4 checklist on Kalam's branch.
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,
