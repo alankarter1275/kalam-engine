@@ -383,6 +383,50 @@ highlights, rendering. No open issues upstream.
 for later: `open_publication` if Kalam's importer wants the engine to
 read metadata/covers.
 
+## R12a. First report from the calibre-alt agent (2026-09-10)
+
+**Investigated.** The Kalam-side agent's static review of the recipe
+against Kalam's real tree (it has the four files the snapshot lacked,
+but no compiler either — see below).
+
+**Found.**
+- **`gtk4-sys` 0.9 and 0.11 both declare `links = "gtk-4"`** (verified
+  on docs.rs: `gtk4-sys` 0.11.4 `Cargo.toml`), and webkit6 0.4 depends on
+  gtk4 0.9. Cargo rejects a graph containing both before compiling
+  anything ("multiple packages link to native library `gtk-4`"). So
+  INTEGRATION.md's "step 0 builds with webkit still in" was impossible;
+  steps 0–3 are necessarily one build. Recipe corrected.
+- `EntryData.pos` is `Vec<String>` (`src/db/dictionaries.rs:96`), not
+  `String`/`Option<String>`; the WebKit popup joined it with ` · `
+  (`epub_book.rs:2107`). `patch/engine.rs` `DictCard::from_entry`
+  corrected to `data.pos.join(" \u{00b7} ")`. `Sense.example` shape still
+  unconfirmed; the `Option::<String>::from` form covers `String` and
+  `Option<String>`.
+- gtk4 0.11 narrows `PopoverExt::set_popover` to `impl IsA<Popover>` and
+  drops six unused `connect_*_notify` names; relm4 0.11 changes no name
+  Kalam uses; `Component::Input` is `Debug + 'static` (no `Send`), which
+  the `gdk::Rectangle`-carrying `ReaderMsg` variants rely on.
+- Cargo unifies `kalam-reader`'s `v4_16` with Kalam's `v4_12` → the
+  binary needs GTK ≥ 4.16 at runtime. Fine on Arch.
+- **Neither agent can compile Kalam**: the calibre-alt sandbox has the
+  same no-toolchain/no-crates.io restriction as this one, and
+  calibre-alt's GitHub Actions is refusing to start jobs ("recent
+  account payments have failed or your spending limit needs to be
+  increased") since 2026-09-10T20:20Z. kalam-engine's Actions still ran
+  at 18:48Z the same day; whether it is affected is unknown until the
+  next push here. The private-repo Actions minutes quota is the likely
+  cause (public repos are free).
+- Kalam's ReaderModel has 73 fields; the agent verified the literal in
+  the rewritten `init` sets all of them, and that every
+  `engine::`/`ReaderView` name used resolves against `e6a3c25`.
+
+**Decision.** Recipe and patch corrected in this commit (bundle must be
+regenerated). Verification path: the owner's machine is now the only
+compiler for Kalam until Actions billing is fixed — owner runs
+`cargo build --release -j 2` in calibre-alt and pastes the first error
+block into the Kalam agent's chat; that agent fixes and reports here
+only when the engine is implicated.
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,

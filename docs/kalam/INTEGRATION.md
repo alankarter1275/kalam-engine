@@ -2,7 +2,8 @@
 
 This is the recipe for swapping WebKit out of Kalam's reader page and
 putting `kalam-reader` in. It is written to be followed top to bottom,
-in the `calibre-alt` repo, compiling after each numbered step. The
+in the `calibre-alt` repo. Steps 0–3 form one build (see step 0 for
+why); step 4 is the run. The
 finished code for the new file ships beside this document (in the
 handoff bundle: `patch/engine.rs`; in kalam-engine:
 `docs/kalam/patch/src/pages/reader/engine.rs`); the rest are edits to
@@ -57,18 +58,26 @@ kalam-reader = { git = "https://github.com/alankarter1275/kalam-engine", branch 
 # delete: webkit6, javascriptcore
 ```
 
-Then `cargo build --release -j 2` **before touching any reader code**.
-Expect a handful of small breakages from the gtk-rs 0.9 → 0.11 move
-(renamed methods, a `glib::Propagation` here and there). Fix those
-first, on their own commit, so the reader swap is not mixed up with them.
-The build will also fail on `webkit6` being gone — that is fine, it
-tells you the exact list of files step 3 replaces. If you would rather
-keep it compiling the whole way, leave `webkit6` in for step 0 and
-remove it in step 3.
+**Why webkit6 goes in the same commit as the bump:** `gtk4-sys` 0.9
+and 0.11 both declare `links = "gtk-4"`, and webkit6 0.4 is built on
+gtk4 0.9, so Cargo refuses a graph that has the bump and WebKit at once
+("multiple packages link to native library `gtk-4`") before compiling a
+line. There is no intermediate state that builds: steps 0–3 are **one
+build**. Keep them as separate commits for readability, but do not
+expect anything to compile until step 3 is complete. Expect a handful of
+small breakages from the gtk-rs 0.9 → 0.11 move elsewhere in the app
+(renamed methods, `set_popover` now taking `impl IsA<Popover>`, a
+`glib::Propagation` here and there) — fix those in step 3's build, on
+their own commit.
 
-System side (Arch): `pacman -S gtk4 libadwaita` are already there for
-0.9; 0.11 needs no newer system GTK at the `v4_12` feature level.
-`webkit2gtk-6.0` can be uninstalled at the end.
+`kalam-reader` asks gtk4 for `v4_16`; Cargo unifies that with Kalam's
+`v4_12`, so the binary needs GTK ≥ 4.16 at build and run time (Arch has
+4.20+).
+
+System side (Arch): `pacman -S gtk4 libadwaita` are already there.
+`webkit2gtk-6.0` can be uninstalled at the end. The engine's git
+dependency pulls stylo, which needs Python 3 at build time (Arch has
+it); Kalam's toolchain must be ≥ 1.92 (the engine workspace's floor).
 
 ## Step 1 — the database: one column gains a meaning, one function is added
 

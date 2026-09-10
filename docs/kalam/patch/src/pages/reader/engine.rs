@@ -328,9 +328,10 @@ pub(crate) struct DictCard {
 }
 
 impl DictCard {
-    /// `Option::<String>::from` accepts both a `String` and an
-    /// `Option<String>`, so this compiles whichever way those two
-    /// fields are declared in `EntryData`.
+    /// `EntryData.pos` is a `Vec<String>` (`src/db/dictionaries.rs`);
+    /// the WebKit popup joined it with middle dots and so does this.
+    /// `Sense.example` is taken through `Option::<String>::from`, which
+    /// accepts a `String` or an `Option<String>`.
     pub(crate) fn from_entry(
         data: &crate::db::EntryData,
         pronunciation: Option<String>,
@@ -357,7 +358,11 @@ impl DictCard {
         DictCard {
             word: data.word.clone(),
             pronunciation,
-            pos: Option::<String>::from(data.pos.clone()).filter(|p| !p.is_empty()),
+            pos: if data.pos.is_empty() {
+                None
+            } else {
+                Some(data.pos.join(" \u{00b7} "))
+            },
             senses,
             synonyms: data.synonyms.iter().map(|s| s.to_string()).collect(),
             antonyms: data.antonyms.iter().map(|s| s.to_string()).collect(),
