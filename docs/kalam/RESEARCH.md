@@ -485,6 +485,38 @@ delete; "unsave from the card" goes on the deferred list (WORKING.md §8)
 and comes back only if the owner misses it. Next: the owner runs the
 step-4 checklist on Kalam's branch.
 
+## R12d. Fourth report: the reader runs headless in Kalam's CI (2026-09-11)
+
+**Found.**
+- Kalam 990fab7: `[profile.release]` is now `lto = "thin"` with no
+  `codegen-units`; CI's release build is green with it.
+- Kalam's CI has a headless screenshot job (sway + Cairo renderer, 139
+  seeded books). `KALAM_ROUTE` now accepts `book-<id>` / `read-<id>`;
+  the seeder writes a valid minimal EPUB (stored `mimetype` first,
+  container.xml, OPF, EPUB 3 nav + NCX, six ~1 900-word chapters).
+  Before that, the reader mounted on the open-error label — so that
+  path (step 3's) renders without a panic. `KALAM_TIMING=1` prints
+  `[timing]` lines.
+- Run 34538345557, route `read-1`, Kalam 2b3050b: no panic, no widget
+  warning; `[timing] window_shown 161.7 ms, startup_first_page 2.8 ms,
+  book_open 4.2 ms`; peak RSS 121 MB with a book open vs 83 MB
+  library-only → reading ≈ 38 MB under Cairo. Screenshot 203 KB, three
+  samples byte-identical (the page settles; no repaint loop).
+- Caveat: Cairo headless proves "lays out and paints without
+  panicking", not "looks right". On the owner's desktop (GL renderer,
+  real fonts, a real novel) expect higher absolute RSS — the demo alone
+  measured 139–155 MB there (R7/R10); the figure that matters is
+  reading minus library.
+- The memory one-liner the Kalam agent gave the owner
+  (`while sleep 1; do … done | sort -n | tail -1`) cannot print: Ctrl-C
+  kills `sort` with the loop. Replacement: print every sample, read the
+  peak by eye.
+
+**Decision.** No engine change; bundle stays at 1058af3. Owner runs
+step 4 on Kalam's branch (`-j 1`). Visual faults (colour, spacing,
+blank areas, stuck frames) are engine-side reports even when no message
+names `kalam_reader`.
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,
