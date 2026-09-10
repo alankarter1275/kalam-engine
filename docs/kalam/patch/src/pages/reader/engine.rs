@@ -1,6 +1,6 @@
 //! The reading engine, wired to the reader page.
 //!
-//! This file replaces the WebKit `WebView` + JavaScript bridge. Every
+//! This file replaces the old in-app browser page and its JS bridge. Every
 //! line of JS the old reader shipped is now a method call on
 //! [`ReaderView`], and everything the JS used to *send back* (progress,
 //! taps, selections, links) arrives through the four callbacks
@@ -95,7 +95,7 @@ pub(crate) fn mode_from_pref(value: i64) -> ReadingMode {
 // ---------------------------------------------------------------------
 
 /// Install the four callbacks. Each one only *sends a message*; the
-/// model reacts in `update_with_view` like it did for `JsRaw`, so the
+/// model reacts in `update_with_view` like it did for the old payloads, so the
 /// borrow rules stay simple (a callback never touches the model).
 pub(crate) fn wire(view: &ReaderView, sender: &ComponentSender<ReaderModel>) {
     let tx = sender.input_sender().clone();
@@ -556,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn webkit_rows_are_not_mistaken_for_locators() {
+    fn legacy_rows_are_not_mistaken_for_locators() {
         assert!(range_from_json("").is_none());
         assert!(range_from_json("epubcfi(/6/4!/4/2/1:0)").is_none());
         assert!(range_from_json("{\"kalam_locator\":2}").is_none());

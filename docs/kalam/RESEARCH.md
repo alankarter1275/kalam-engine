@@ -427,6 +427,28 @@ compiler for Kalam until Actions billing is fixed — owner runs
 block into the Kalam agent's chat; that agent fixes and reports here
 only when the engine is implicated.
 
+## R12b. Second report: the static pass (2026-09-10)
+
+**Found.** After the swap, 28 `webkit` string hits remain in Kalam's
+`src/epub_book.rs`, all inside three items with no callers:
+`OpenBook::chapter_html` (:120–149), `inject_reading_shell` (:503–2884,
+the ~2 400-line JS shell), `reading_css` (:2938–3795). Shared helpers
+(`path_to_file_url`, `read_file_string`, `parent_zip_path`,
+`join_zip_path`) sit between them. `Sense.example` is `Option<String>`
+(`src/db/dictionaries.rs:86`). Kalam's branch head: `14c2cd9`.
+`OpenBook` itself is still used by `pages/book.rs` for chapter titles
+(R4), so the struct stays.
+
+**Decision.** Dead code is deleted *with* a compiler, not before one:
+ruled "accept as clean for the first build"; the three items (and any
+helper that orphans) are removed in the build-fix commit, where
+`dead_code` warnings from `-D warnings` will name exactly what is
+unreferenced. The Kalam agent's three wording edits to `patch/engine.rs`
+folded in here (this commit) so a regenerated bundle does not
+revert them. Owner committed the ef11e46 bundle on calibre-alt `main`
+instead of the agent's branch — relay instruction: check out the
+agent's branch before copying and before every build.
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,
