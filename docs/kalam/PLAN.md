@@ -7,6 +7,12 @@ it. Do not re-argue it unless the owner asks.*
 
 ---
 
+> Companion documents: [`WORKING.md`](WORKING.md) — how to work in this
+> repo (for AI agents; technical); [`RESEARCH.md`](RESEARCH.md) — what was
+> investigated and why each decision came out the way it did;
+> [`UPSTREAM.md`](UPSTREAM.md) — keeping up with Chapbook;
+> [`INTEGRATION.md`](INTEGRATION.md) — wiring the widget into Kalam.
+
 ## 1. What this is, in three sentences
 
 Kalam (`calibre-alt`) is a desktop ebook app for Linux. Today it shows books

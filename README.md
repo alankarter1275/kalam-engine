@@ -14,7 +14,12 @@ terms.
 > **New here? Read [`docs/kalam/PLAN.md`](docs/kalam/PLAN.md) first.**
 > It is written in plain language and explains why this repo exists, what
 > gets removed, what must not be touched, and how we keep up with Chapbook.
-> Every AI-assisted session should start there too.
+>
+> **AI agents:** start with [`docs/kalam/WORKING.md`](docs/kalam/WORKING.md)
+> (constraints, owner directives, the build/CI loop, sandbox traps) and
+> [`docs/kalam/RESEARCH.md`](docs/kalam/RESEARCH.md) (every investigation
+> so far and the decision it produced). Append to RESEARCH.md whenever you
+> research something — that is a standing instruction from the owner.
 
 ## Status
 

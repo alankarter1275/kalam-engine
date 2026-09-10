@@ -85,7 +85,10 @@ If a test fails after a cherry-pick, the fix depended on another upstream
 commit you skipped. `git log --oneline <hash>~5..<hash>` shows its
 neighbours; usually the missing one is right before it.
 
-**6. Update the "last reviewed" line** at the top of this file and commit.
+**6. Update the "last reviewed" line** at the top of this file, add a
+row to the review log below (what upstream did, what was taken), add an
+entry to [`RESEARCH.md`](RESEARCH.md) if anything was investigated in
+depth, and commit.
 
 ## Deferred
 
