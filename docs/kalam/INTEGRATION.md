@@ -3,8 +3,10 @@
 This is the recipe for swapping WebKit out of Kalam's reader page and
 putting `kalam-reader` in. It is written to be followed top to bottom,
 in the `calibre-alt` repo, compiling after each numbered step. The
-finished code for the new file is in `docs/kalam/patch/`; the rest are
-edits to files you already have.
+finished code for the new file ships beside this document (in the
+handoff bundle: `patch/engine.rs`; in kalam-engine:
+`docs/kalam/patch/src/pages/reader/engine.rs`); the rest are edits to
+files you already have.
 
 If something here does not match your tree, the tree wins — I worked
 from the snapshot you committed (`kalam-src.txt`), and a few files
@@ -103,7 +105,7 @@ are painted and survive font changes, resizes and re-imports.
 
 ## Step 2 — drop the new file in
 
-Copy `docs/kalam/patch/src/pages/reader/engine.rs` to
+Copy `patch/engine.rs` (from the handoff bundle) to
 `src/pages/reader/engine.rs` and add `mod engine;` to
 `src/pages/reader/mod.rs`. It provides:
 

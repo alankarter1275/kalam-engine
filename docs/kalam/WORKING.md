@@ -209,6 +209,22 @@ RESEARCH.md. The owner has explicitly asked that all research be
 recorded in the repo for future agents; five consecutive read-only
 turns happened once and were rightly called out as slow.
 
+## 7a. The two-agent handoff (step 5 onwards)
+
+Kalam's repo is worked on by a *second* agent that cannot see this one;
+the owner relays `=== KALAM REPORT ===` / `=== ENGINE REPLY ===` blocks
+between the two chats by copy-paste. Everything that side needs is
+generated from this repo by `docs/kalam/handoff/make-bundle.sh`
+(→ `./kalam-handoff/`, git-ignored, copied into calibre-alt as
+`docs/engine-handoff/`): the recipe, the drop-in `engine.rs`, a
+source-generated API reference (`api-reference.py`), the widget README
+and the engine commit. Protocol for the other agent: `AGENT-BRIEF.md`;
+for the owner: `RELAY.md`. Rules for this side: answer a report with a
+reply block only; never ask the owner to interpret; when the widget
+needs to change, change it here, push, and reply "engine updated to
+<commit>; regenerate bundle". Record anything learned about Kalam's
+real tree in RESEARCH.md (R14 open questions first).
+
 ## 8. Deferred (known, not done, in no particular order)
 
 - Page-raster cache in scrolled mode (drawing was measured at ~8 ms per
