@@ -10,7 +10,7 @@ month is plenty. Each step is a command you can paste.
 | Upstream repo | https://github.com/ophymx/chapbook |
 | Imported at | commit `ab14cb78d2f7e63e8e2f7bc066bfc8ee57318cc9`, 2026-09-07 |
 | How it was imported | `git merge --allow-unrelated-histories` — the full history is in this repo |
-| Last reviewed up to | `ab14cb7` *(update this line every time you finish a review)* |
+| Last reviewed up to | `7ace24a` (upstream `main`, 2026-09-10) *(update this line every time you finish a review)* |
 
 Because the history was merged rather than copied, Git knows exactly which
 upstream commits we already have. That is what makes everything below
@@ -93,6 +93,14 @@ Upstream commits we wanted but could not take cleanly. Revisit when there
 is time; delete the line if it stops mattering.
 
 *(none yet)*
+
+## Review log
+
+One line per review: what upstream did, what we took.
+
+| Date | Upstream range | What changed there | Taken |
+|---|---|---|---|
+| 2026-09-10 | `ab14cb7..7ace24a` (PRs #32–#36, 42 files) | Phone and Windows shells: FFI/JNI navigation and OPDS catalog bindings, Swift reader surface, .NET parity, vello GPU test gating. In crates we kept, only `chapbook-reader`: a new `pub fn open_publication(path)` (open a file as a `Publication` without a session, for an importer) and a re-export of `chapbook_opds` behind the `opds` feature. No bug fixes; nothing touches layout, EPUB parsing, positions, highlights or rendering. | Nothing. Kalam has its own importer and the engine has no OPDS. Take `open_publication` later only if Kalam's import wants the engine to read metadata. |
 
 ## Things we changed inside inherited files
 
