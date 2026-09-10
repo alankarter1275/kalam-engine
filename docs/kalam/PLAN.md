@@ -174,7 +174,8 @@ right. Two small engine additions were needed and are logged in
 `host_position.rs` (positions as values for Kalam's database). The
 engine half of continuous scrolling (`scroll.rs`) followed on 2026-09-09,
 and the widget half (`ReadingMode::Scrolled`, `kalam-reader/src/scroll.rs`)
-the same day — round H in §7, awaiting the run on the target machine.
+the same day — round H in §7, run and accepted on the target machine on
+2026-09-10; round I's polish followed.
 
 ## 7. The order of work
 
@@ -225,7 +226,8 @@ the same day — round H in §7, awaiting the run on the target machine.
      `pin_units` so the visible chapters are not evicted mid-frame.
      Paged mode untouched; tests in `tests/scroll.rs` and
      `chapbook-layout/tests/pagination.rs`.
-   - **H — widget** (written 2026-09-09, awaiting the owner's run):
+   - **H — widget** (written 2026-09-09; run on the target machine
+     2026-09-10, "everything looks fine"):
      `ReadingMode::{Paged, Scrolled}` on `ReaderView`; the strip model
      in `kalam-reader/src/scroll.rs` (chapters guessed from
      `chapter_char_counts` at a learned density, measured when the
@@ -237,8 +239,18 @@ the same day — round H in §7, awaiting the run on the target machine.
      scrollbar appears. Three small engine additions
      (`chapter_char_counts`, `line_at_page`/`line_rect_at_page`,
      `speakable_page_of`) are in `UPSTREAM.md`.
-   - **I — polish** after that run: a tile cache if drawing stutters,
-     chapter separators, whatever the run shows.
+   - **I — polish** (written 2026-09-10, after the owner's run of H on a
+     39-chapter novel: 8 ms to draw a frame, 20–80 ms whenever a chapter
+     was first laid out, 70–85 ms on every mode switch). No tile cache —
+     the drawing was never the cost. Instead: the next chapter is laid
+     out in an idle while the current one is read, so a seam costs
+     nothing; the demo's scrollbar moved into a `gtk::Overlay` so
+     showing it no longer narrows the widget (the mode-switch relayout);
+     and the chapter divider Kalam's WebKit reader drew — hairline,
+     uppercase title pill — between every pair of chapters
+     (`kalam-reader/src/divider.rs`, painted with the engine's own
+     rasterizer, no new dependency). Widget-only; no inherited file
+     changed.
 6. **Integrate into Kalam**: path dependency, swap the WebKit view for the
    widget.
 7. **Monthly**: review upstream and bring over fixes ([`UPSTREAM.md`](UPSTREAM.md)).

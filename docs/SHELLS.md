@@ -500,8 +500,11 @@ not on a pixel offset, so the reader's line does not move when a chapter
 above them turns out longer than guessed. The cache budget still applies:
 a chapter far from the viewport may be evicted and its extents must then
 be re-asked, which is why the shell keeps its own copy of the strip's
-slots. `crates/kalam-reader/src/scroll.rs` is a worked example of all of
-this, with the arithmetic under test.
+slots. And lay the *next* chapter out before the reader reaches it — from
+an idle, while they are still on this one — because a first layout met at
+the seam is a visible hitch and met in an idle is nothing.
+`crates/kalam-reader/src/scroll.rs` is a worked example of all of this,
+with the arithmetic under test.
 
 ## 6. Background loads, and the one rule that is not negotiable
 

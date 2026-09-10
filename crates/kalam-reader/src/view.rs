@@ -13,11 +13,14 @@
 //! the session's current page, drawn whole, and a turn is the session
 //! moving. **Scrolled** is the whole book as one strip (`scroll.rs`):
 //! the same laid-out pages, each trimmed to its text and glued to the
-//! next, with the viewport drawn from whichever bands it crosses. In
-//! that mode the session is told where the reader is, not asked — the
-//! page under the reading line, `MARGIN_TOP` below the top edge — so
-//! positions, highlights, taps and selections mean the same in both.
-//! Switching modes lands on the same page, hence the same first line.
+//! next, with the viewport drawn from whichever bands it crosses and
+//! Kalam's chapter divider (`divider.rs`) in each seam. In that mode the
+//! session is told where the reader is, not asked — the page under the
+//! reading line, `MARGIN_TOP` below the top edge — so positions,
+//! highlights, taps and selections mean the same in both. Switching
+//! modes lands on the same page, hence the same first line. The chapter
+//! after the visible ones is laid out in an idle while the reader is
+//! still on these, so reaching a seam costs nothing.
 //!
 //! The widget owns nothing Kalam owns. Positions, highlights, bookmarks and
 //! the dictionary stay in Kalam's database; this widget reports what
@@ -41,6 +44,7 @@ use chapbook_core::{
 };
 use chapbook_reader::{HostHighlight, Session, SessionConfig, SessionEvent};
 
+use crate::divider::{DividerPainter, DividerPlace, DividerStyle};
 use crate::prefs::{HighlightColor, KalamPrefs};
 use crate::scroll::{Band, Strip, PAGE_SCROLL_FRACTION};
 
@@ -206,6 +210,14 @@ struct Inner {
     /// Set while the widget itself updates `vadjustment`, so the echo of
     /// its own change is not taken for the reader dragging the thumb.
     syncing_adjustment: Cell<bool>,
+    /// What each chapter's divider says in scrolled mode — see
+    /// `chapter_titles()` at the bottom of this file.
+    chapter_titles: Vec<String>,
+    /// Draws the dividers; keeps its glyph cache from frame to frame.
+    dividers: RefCell<DividerPainter>,
+    /// A prefetch idle is queued (see [`ReaderView::schedule_prefetch`]);
+    /// never more than one.
+    prefetch_queued: Cell<bool>,
 }
 
 /// The reading widget. Cheap to clone (a reference); dropped when the last
@@ -267,6 +279,7 @@ impl ReaderView {
         area.set_focusable(true);
         area.set_can_focus(true);
 
+        let chapter_titles = chapter_titles(session.toc(), session.spine_len());
         let view = ReaderView {
             area,
             inner: Rc::new(Inner {
@@ -284,6 +297,9 @@ impl ReaderView {
                 reading_offset: Cell::new(None),
                 vadjustment: gtk::Adjustment::new(0.0, 0.0, 0.0, ARROW_STEP as f64, 0.0, 0.0),
                 syncing_adjustment: Cell::new(false),
+                chapter_titles,
+                dividers: RefCell::new(DividerPainter::default()),
+                prefetch_queued: Cell::new(false),
             }),
         };
         view.install_draw();
@@ -815,12 +831,90 @@ impl ReaderView {
         }
     }
 
-    /// After a draw, off the draw vfunc: the scrollbar and the position
-    /// callback. Both may call back into the widget, so neither runs
+    /// After a draw, off the draw vfunc: the scrollbar, the position
+    /// callback, and the next chapter's layout queued for a quiet moment.
+    /// The first two may call back into the widget, so neither runs
     /// while the draw holds the session.
     fn after_draw(&self) {
         self.sync_adjustment();
         self.report_position();
+        self.schedule_prefetch();
+    }
+
+    /// Lay out the chapter the reader will reach next while they are
+    /// still reading this one. A chapter's first layout is 20–80 ms on
+    /// the target machine; met at the seam, when the reader scrolls into
+    /// it, that is a visible hitch. Met here — from an idle at the lowest
+    /// priority, after every scrolled draw, so it yields to input and to
+    /// redraws — it happens while the reader is reading, which is most
+    /// of the time. One chapter per idle: the guessed chapter right
+    /// after the visible ones, else the one right before them (a book
+    /// opened in the middle is scrolled up too), and no further — every
+    /// chapter laid out ahead of need is memory and time the reader may
+    /// never use. The strip takes the measurement as it takes any other:
+    /// the anchor holds, nothing on screen moves, only the scrollbar is
+    /// told. Nothing is queued in paged mode.
+    fn schedule_prefetch(&self) {
+        if self.mode() != ReadingMode::Scrolled || self.inner.prefetch_queued.replace(true) {
+            return;
+        }
+        let view = self.clone();
+        glib::idle_add_local_full(glib::Priority::LOW, move || {
+            view.inner.prefetch_queued.set(false);
+            // Go again for the other neighbour, if there is one to do.
+            if view.prefetch_one() {
+                view.schedule_prefetch();
+            }
+            glib::ControlFlow::Break
+        });
+    }
+
+    /// One prefetch — see [`ReaderView::schedule_prefetch`]. Whether a
+    /// chapter was laid out.
+    fn prefetch_one(&self) -> bool {
+        if self.mode() != ReadingMode::Scrolled || self.inner.pending_jump.get() {
+            return false;
+        }
+        {
+            let mut s = self.inner.session.borrow_mut();
+            let mut strip_slot = self.inner.strip.borrow_mut();
+            let Some(strip) = strip_slot.as_mut() else {
+                return false;
+            };
+            // Stale measurements are the next draw's to rebuild first.
+            if strip.generation() != s.layout_generation() {
+                return false;
+            }
+            let visible = strip.visible_units();
+            let next = visible.end;
+            let previous = visible.start.checked_sub(1);
+            let target = if next < strip.chapter_count() && !strip.is_measured(next) {
+                Some(next)
+            } else {
+                previous.filter(|&spine| !strip.is_measured(spine))
+            };
+            let Some(spine) = target else {
+                return false;
+            };
+            s.pin_units(visible);
+            let started = std::time::Instant::now();
+            let pages = s.page_extents(spine);
+            log::info!(
+                "strip: prefetched chapter {} — {} pages in {} ms",
+                spine + 1,
+                pages.len(),
+                started.elapsed().as_millis()
+            );
+            strip.measure(spine, pages);
+        }
+        // The text on screen has not moved — the anchor saw to that — but
+        // the scrollbar's idea of the book has, and a frame is cheap
+        // insurance for the one case the anchor cannot cover: the last
+        // chapter measuring shorter than its guess, which clamps the
+        // scroll.
+        self.sync_adjustment();
+        self.area.queue_draw();
+        true
     }
 
     fn sync_adjustment(&self) {
@@ -1076,6 +1170,37 @@ impl ReaderView {
             let dst_y = ((band.top - scroll_y) * scale).round() as i32;
             let rows = (band.height * scale).ceil() as i32;
             blit_rows(&mut out, &page, src_y, dst_y, rows);
+        }
+
+        // The dividers: one in every seam the viewport shows, carrying
+        // the title of the chapter that begins below it. Drawn after the
+        // bands because the pill's ground must cover the hairline, and
+        // in Kalam's ink and paper — the same palette as the pages.
+        let dividers = strip.visible_dividers();
+        if !dividers.is_empty() {
+            let style = DividerStyle {
+                font_px: self.inner.prefs.get().font_px,
+                foreground: s.settings().palette().foreground,
+                background,
+            };
+            let (column_x, column_w) = (metrics.margins.left, metrics.content_width());
+            let (fonts, _) = s.paint_resources();
+            let mut painter = self.inner.dividers.borrow_mut();
+            for (spine, center) in dividers {
+                let title = self
+                    .inner
+                    .chapter_titles
+                    .get(spine)
+                    .map_or("", String::as_str);
+                let place = DividerPlace {
+                    center_y: center - scroll_y,
+                    width: metrics.size.w,
+                    column_x,
+                    column_w,
+                    scale,
+                };
+                painter.paint(&mut out, fonts, &style, title, &place);
+            }
         }
         Some(out)
     }
@@ -1455,6 +1580,33 @@ fn blit_rows(
     }
 }
 
+/// What each chapter's divider says: the label of the first table-of-
+/// contents entry that points at the chapter, in reading order and
+/// through the nesting, or "Chapter N" for a chapter no entry names —
+/// the same fallback Kalam's WebKit reader used. One string per spine
+/// item, so the first chapter has a title too, though no divider ever
+/// shows it.
+fn chapter_titles(toc: &[TocEntry], chapters: usize) -> Vec<String> {
+    fn walk(entries: &[TocEntry], titles: &mut [Option<String>]) {
+        for entry in entries {
+            if let Some(slot) = entry.spine_index.and_then(|spine| titles.get_mut(spine)) {
+                let label = readable(&entry.label);
+                if slot.is_none() && !label.is_empty() {
+                    *slot = Some(label);
+                }
+            }
+            walk(&entry.children, titles);
+        }
+    }
+    let mut titles = vec![None; chapters];
+    walk(toc, &mut titles);
+    titles
+        .into_iter()
+        .enumerate()
+        .map(|(i, title)| title.unwrap_or_else(|| format!("Chapter {}", i + 1)))
+        .collect()
+}
+
 /// The bounding box of several rects; `None` of none.
 fn union(rects: &[Rect]) -> Option<Rect> {
     let mut iter = rects.iter();
@@ -1538,5 +1690,33 @@ mod tests {
         assert_eq!(engine_key("space"), Some(Key::Space));
         assert_eq!(engine_key("N"), Some(Key::Char('n')));
         assert_eq!(engine_key("Shift_L"), None);
+    }
+
+    #[test]
+    fn divider_titles_come_from_the_toc_or_count_the_chapters() {
+        let entry = |label: &str, spine: Option<usize>, children: Vec<TocEntry>| TocEntry {
+            label: label.to_string(),
+            href: None,
+            fragment: None,
+            spine_index: spine,
+            children,
+        };
+        let toc = vec![
+            entry("Cover", Some(0), vec![]),
+            entry(
+                "Part One",
+                None,
+                vec![
+                    entry("  The Riddle\u{ad} House ", Some(2), vec![]),
+                    entry("Another entry into 3", Some(2), vec![]),
+                ],
+            ),
+            entry("Beyond the book", Some(9), vec![]),
+        ];
+        assert_eq!(
+            chapter_titles(&toc, 4),
+            vec!["Cover", "Chapter 2", "The Riddle House", "Chapter 4"]
+        );
+        assert!(chapter_titles(&[], 0).is_empty());
     }
 }

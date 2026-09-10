@@ -40,10 +40,20 @@ use chapbook_reader::PageExtent;
 
 use crate::view::{MARGIN_BOTTOM, MARGIN_TOP};
 
-/// Space between the last line of one chapter and the first of the next:
-/// one page's bottom margin plus the next page's top margin, so a chapter
-/// seam in the strip looks like the page turn it is in paged mode.
-pub(crate) const CHAPTER_GAP: f32 = MARGIN_TOP + MARGIN_BOTTOM;
+/// The seam between two chapters, top to bottom: air after the last
+/// line, the divider band (a hairline with the next chapter's title on
+/// it — `divider.rs`), air before the first line of the next chapter.
+/// The proportions are Kalam's WebKit reader's at its default 17 px — a
+/// section's 2.5 rem of bottom padding and the divider's 4.5 rem top
+/// margin above the line, the title pill's own height, 3.5 rem below —
+/// drawn a little tighter, and fixed rather than scaling with the font,
+/// so the strip's arithmetic does not depend on a preference.
+pub(crate) const GAP_ABOVE_DIVIDER: f32 = 108.0;
+pub(crate) const DIVIDER_BAND: f32 = 42.0;
+pub(crate) const GAP_BELOW_DIVIDER: f32 = 50.0;
+
+/// Space between the last line of one chapter and the first of the next.
+pub(crate) const CHAPTER_GAP: f32 = GAP_ABOVE_DIVIDER + DIVIDER_BAND + GAP_BELOW_DIVIDER;
 
 /// How much of the viewport a "page" of scrolling moves: a little less
 /// than all of it, so the last line read is still on screen as the first.
@@ -144,6 +154,10 @@ impl Strip {
 
     pub(crate) fn scroll_y(&self) -> f32 {
         self.scroll_y
+    }
+
+    pub(crate) fn chapter_count(&self) -> usize {
+        self.slots.len()
     }
 
     pub(crate) fn is_measured(&self, spine: usize) -> bool {
@@ -288,6 +302,25 @@ impl Strip {
         self.visible_units()
             .flat_map(|spine| self.bands(spine))
             .filter(|band| band.top < hi && band.bottom() > lo)
+            .collect()
+    }
+
+    /// The chapter seams the viewport shows: (spine of the chapter that
+    /// begins below the seam, strip y of the divider's centre line). A
+    /// seam before a guessed chapter counts — its place is the guess's,
+    /// and the text above it is real. Nothing before the first chapter.
+    pub(crate) fn visible_dividers(&self) -> Vec<(usize, f32)> {
+        // The pill on the divider is taller than the band at a large
+        // font; a band's worth of slack either side keeps it drawn while
+        // any of it shows.
+        let lo = self.scroll_y - DIVIDER_BAND;
+        let hi = self.scroll_y + self.viewport + DIVIDER_BAND;
+        self.slots
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(spine, slot)| (spine, slot.top - GAP_BELOW_DIVIDER - DIVIDER_BAND / 2.0))
+            .filter(|&(_, center)| center > lo && center < hi)
             .collect()
     }
 
@@ -465,18 +498,20 @@ mod tests {
     #[test]
     fn a_measurement_never_moves_the_text_under_the_reading_line() {
         // Three chapters of a thousand chars, guessed at half a pixel
-        // each: 500 px slots at 48, 636 and 1224.
+        // each: three 500 px slots, a seam between each pair.
         let mut strip = Strip::new(vec![1000, 1000, 1000], VIEWPORT, 0.5, 1);
-        assert!(near(strip.total_height(), 1224.0 + 500.0 + MARGIN_BOTTOM));
+        let guessed_top1 = MARGIN_TOP + 500.0 + CHAPTER_GAP;
+        let guessed_top2 = guessed_top1 + 500.0 + CHAPTER_GAP;
+        assert!(near(strip.total_height(), guessed_top2 + 500.0 + MARGIN_BOTTOM));
 
-        // The reader scrolls into the second chapter's guess.
-        strip.set_scroll(700.0);
-        let line = 700.0 + MARGIN_TOP;
+        // The reader scrolls a fifth of the way into the second
+        // chapter's guess.
+        strip.set_scroll(guessed_top1 + 100.0 - MARGIN_TOP);
         assert_eq!(
             strip.anchor,
             Anchor::Estimate {
                 spine: 1,
-                fraction: (line - 636.0) / 500.0
+                fraction: 0.2
             }
         );
         assert_eq!(strip.reading_page(), None, "nothing measured yet");
@@ -485,7 +520,7 @@ mod tests {
         // the other two guesses; the reading line keeps its fraction.
         strip.measure(1, vec![extent(0.0, 700.0, 0), extent(20.0, 300.0, 5000)]);
         let top1 = MARGIN_TOP + 1020.0 + CHAPTER_GAP;
-        assert!(near(strip.scroll_y(), top1 + 0.224 * 1020.0 - MARGIN_TOP));
+        assert!(near(strip.scroll_y(), top1 + 0.2 * 1020.0 - MARGIN_TOP));
         strip.settle_anchor();
         assert_eq!(strip.reading_page(), Some((1, 0)));
         let before = strip.widget_to_page(MARGIN_TOP).expect("on the first band");
@@ -504,7 +539,7 @@ mod tests {
         assert!(near(after.0.top - before.0.top, 980.0));
         assert!(near(
             strip.scroll_y(),
-            before.0.top + 980.0 + 228.48 - MARGIN_TOP
+            before.0.top + 980.0 + 0.2 * 1020.0 - MARGIN_TOP
         ));
     }
 
@@ -609,7 +644,7 @@ mod tests {
         for spine in 0..3 {
             strip.measure(spine, vec![extent(0.0, 700.0, 0)]);
         }
-        // Slots at 48, 836 and 1624. The top of the book sees one.
+        // Slots at 48, 948 and 1848. The top of the book sees one.
         assert_eq!(strip.visible_units(), 0..1);
         assert_eq!(strip.visible_bands().len(), 1);
         // Halfway down the first chapter, the seam and the second are in.
@@ -630,5 +665,38 @@ mod tests {
             strip.unmeasured_visible(),
             strip.visible_units().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn dividers_sit_in_the_seams_the_viewport_shows() {
+        let mut strip = Strip::new(vec![1000; 3], VIEWPORT, 0.5, 1);
+        for spine in 0..3 {
+            strip.measure(spine, vec![extent(0.0, 700.0, 0)]);
+        }
+        // The seam after the first chapter: its divider's centre line is
+        // the air above it plus half the band below the last line.
+        let center1 = MARGIN_TOP + 700.0 + GAP_ABOVE_DIVIDER + DIVIDER_BAND / 2.0;
+        let center2 = center1 + 700.0 + CHAPTER_GAP;
+        // At the top of the book neither seam is on screen.
+        assert!(strip.visible_dividers().is_empty());
+        // Halfway down the first chapter the first seam is.
+        strip.set_scroll(500.0);
+        let dividers = strip.visible_dividers();
+        assert_eq!(dividers.len(), 1);
+        assert_eq!(dividers[0].0, 1, "the chapter that begins below it");
+        assert!(near(dividers[0].1, center1), "{} vs {center1}", dividers[0].1);
+        // The second seam comes into view when the scroll reaches it.
+        strip.set_scroll(center2 - VIEWPORT + 1.0);
+        let spines: Vec<usize> = strip.visible_dividers().iter().map(|d| d.0).collect();
+        assert_eq!(spines, vec![2]);
+
+        // A screen tall enough for the whole book shows both seams, and
+        // nothing marks the start of the first chapter.
+        let mut tall = Strip::new(vec![1000; 3], 5000.0, 0.5, 1);
+        for spine in 0..3 {
+            tall.measure(spine, vec![extent(0.0, 700.0, 0)]);
+        }
+        let spines: Vec<usize> = tall.visible_dividers().iter().map(|d| d.0).collect();
+        assert_eq!(spines, vec![1, 2]);
     }
 }

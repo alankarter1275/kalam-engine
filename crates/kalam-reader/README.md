@@ -32,7 +32,7 @@ overlay.set_child(view.widget())
 
 ReaderMsg::NextChapter          ──▶ view.next_chapter()
 "scroll" / "pages" toggle       ──▶ view.set_mode(ReadingMode::Scrolled / Paged)
-gtk::Scrollbar beside it        ──▶ ::new(Vertical, Some(view.vadjustment()))
+gtk::Scrollbar in the overlay   ──▶ ::new(Vertical, Some(view.vadjustment()))
 ReaderMsg::Theme(t)             ──▶ view.set_theme(t)
 ReaderMsg::FontDelta(d)         ──▶ view.set_font_px(prefs.font_px + d)
 ReaderMsg::JumpToLocation(c, f) ──▶ view.goto_chapter(c, f)
@@ -61,8 +61,17 @@ place: the page on screen becomes the page under the reading line (48 px
 below the top edge, where a page's first line sits) and back. Everything
 below — positions, highlights, taps, selections — means the same in both
 modes; in scrolled mode "the page" is the one under the reading line.
+Between chapters the strip draws Kalam's divider — the hairline with the
+chapter's title in a small pill, as the WebKit reader had; the title is
+the table of contents' entry for that chapter, else "Chapter N". While the
+reader is reading one chapter the widget lays out the next (and the
+previous) in an idle, so arriving at a seam costs nothing.
+
 `view.vadjustment()` drives a `gtk::Scrollbar`; it reads all zeros in
-paged mode, so hide the bar then.
+paged mode, so hide the bar then. Put the bar in a `gtk::Overlay` over the
+widget (`halign: End`), as the demo does, not in a box beside it: a bar
+that appears beside the widget narrows it, and a new width is a new
+layout of every chapter.
 
 Positions come in two forms. Every page turn reports `chapter` +
 `fraction` — exactly what Kalam's `reading_progress` table holds today, and
@@ -124,9 +133,11 @@ Kalam's theme wins, as before.
 ## Not yet
 
 * Scrolled mode paints each visible page whole and copies out the band it
-  shows — two or three pages a frame, a few milliseconds each on a novel.
-  A book of full-page images would want the rasters cached; wait for it
-  to show before building it.
+  shows — two or three pages a frame, about 8 ms in all on a novel on the
+  target machine. A book of full-page images would want the rasters
+  cached; wait for it to show before building it.
+* Kinetic (flick) scrolling: the wheel moves in steps, a touchpad's
+  smooth deltas are honoured, but nothing coasts after the finger lifts.
 * A converter for Kalam's existing highlight rows (node-path anchors) to
   layered locators — planned to match by `text_excerpt`.
 * Search in chapter, bookmarks list — the engine has the calls, the widget

@@ -16,8 +16,8 @@
 //! for Kalam's table, `x` removes the newest, `q` quits. Mouse: drag to
 //! select, tap a word to "look it up" (printed), tap a highlight to name
 //! it, tap the left or right third to turn (paged), wheel to scroll
-//! (scrolled). In scrolled mode a scrollbar sits at the right edge; its
-//! length is the book's estimated length.
+//! (scrolled). In scrolled mode a scrollbar lies over the right edge;
+//! its length is the book's estimated length.
 //!
 //! Highlights work the way they will in Kalam: the widget captures one,
 //! *this program* stores it (in a `Vec`, where Kalam has a table) and
@@ -92,13 +92,19 @@ fn build_window(app: &gtk::Application, view: ReaderView, started: std::time::In
         .default_height(800)
         .build();
     // The widget and, in scrolled mode, a scrollbar driven by the
-    // widget's adjustment — what Kalam would put in its overlay.
+    // widget's adjustment. The bar lies *over* the widget's right edge
+    // rather than beside it: beside it, showing or hiding the bar
+    // changes the widget's width, and a new width is a new layout of
+    // every chapter (70–85 ms on the target machine, on every `s`).
+    // Kalam's reader already puts its bar in an overlay; do the same.
     let scrollbar = gtk::Scrollbar::new(gtk::Orientation::Vertical, Some(view.vadjustment()));
+    scrollbar.set_halign(gtk::Align::End);
+    scrollbar.set_valign(gtk::Align::Fill);
     scrollbar.set_visible(false);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    row.append(view.widget());
-    row.append(&scrollbar);
-    window.set_child(Some(&row));
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(view.widget()));
+    overlay.add_overlay(&scrollbar);
+    window.set_child(Some(&overlay));
 
     // ---- What the widget reports ----
     {

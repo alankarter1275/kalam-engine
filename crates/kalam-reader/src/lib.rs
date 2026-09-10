@@ -12,7 +12,8 @@
 //!   container, connect the callbacks, forward Kalam's messages to its
 //!   methods. Two [`ReadingMode`]s: one page at a time, or the whole book
 //!   as one scrolling strip. See `view.rs`; the strip's arithmetic is in
-//!   `scroll.rs`.
+//!   `scroll.rs`, the chapter divider it draws between chapters in
+//!   `divider.rs`.
 //! * [`KalamPrefs`] / [`KalamTheme`] / [`HighlightColor`] — Kalam's
 //!   reading preferences and colours, copied from Kalam's own source, and
 //!   the one function that turns them into engine settings. See
@@ -36,6 +37,7 @@
 //! // ReaderMsg::NextChapter => view.next_chapter(), and so on.
 //! ```
 
+mod divider;
 mod fonts;
 mod prefs;
 mod scroll;
