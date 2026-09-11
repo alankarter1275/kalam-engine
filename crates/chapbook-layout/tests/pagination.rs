@@ -1479,7 +1479,11 @@ fn multi_line_selection_covers_each_line() {
 #[test]
 fn selection_band_is_the_glyph_box_plus_padding_not_the_line_box() {
     let html = "<html><body><p>select some of this text please</p></body></html>";
-    let (layout, _) = layout_html(html, "p { margin: 0; line-height: 2.2; }", &page_for_lines(10));
+    let (layout, _) = layout_html(
+        html,
+        "p { margin: 0; line-height: 2.2; }",
+        &page_for_lines(10),
+    );
     let page = &layout.pages[0];
     let (fragment, line) = page
         .fragments
@@ -1492,7 +1496,10 @@ fn selection_band_is_the_glyph_box_plus_padding_not_the_line_box() {
     let line_h = fragment.rect.size.h;
     // The glyph box is well inside a 2.2 line box.
     assert!(line.ascent > 0.0 && line.descent > 0.0, "{line:?}");
-    assert!(line.ascent + line.descent < line_h * 0.8, "{line_h} vs {line:?}");
+    assert!(
+        line.ascent + line.descent < line_h * 0.8,
+        "{line_h} vs {line:?}"
+    );
 
     let rects = page.rects_for_range(line.locator_start, line.locator_start + 6);
     assert_eq!(rects.len(), 1, "{rects:?}");

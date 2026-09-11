@@ -272,6 +272,11 @@ impl LineFragment {
     /// sized each line's band to its first glyph's height plus 2 px, and
     /// this is that rule in fragment terms.
     pub fn band_extent(&self, line_height: f32) -> (f32, f32) {
+        // No glyph box (a producer that left the metrics zero): the
+        // whole line box, as before.
+        if self.ascent + self.descent <= 0.0 {
+            return (0.0, line_height);
+        }
         let top = (self.baseline - self.ascent - BAND_PADDING).max(0.0);
         let bottom = (self.baseline + self.descent + BAND_PADDING).min(line_height);
         if bottom > top {

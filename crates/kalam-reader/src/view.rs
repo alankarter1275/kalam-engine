@@ -1115,8 +1115,7 @@ impl ReaderView {
                     let mut pixmap = s.render();
                     // The selection's handles, over the page. Paged
                     // widget coordinates are page coordinates.
-                    if let (Some(out), Some(handles)) = (pixmap.as_mut(), view.place_handles(&s))
-                    {
+                    if let (Some(out), Some(handles)) = (pixmap.as_mut(), view.place_handles(&s)) {
                         handles::paint(out, &handles, prefs.theme.handle(), scale);
                     }
                     pixmap
@@ -1311,7 +1310,12 @@ impl ReaderView {
         // reads the strip, so the mutable borrow above must end first.
         drop(strip_slot);
         if let Some(handles) = self.place_handles(&s) {
-            handles::paint(&mut out, &handles, self.inner.prefs.get().theme.handle(), scale);
+            handles::paint(
+                &mut out,
+                &handles,
+                self.inner.prefs.get().theme.handle(),
+                scale,
+            );
         }
         Some(out)
     }

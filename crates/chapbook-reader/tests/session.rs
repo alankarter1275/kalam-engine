@@ -243,7 +243,10 @@ fn grabbing_an_end_moves_only_that_end() {
         .first()
         .copied()
         .expect("the later paragraph is on this page");
-    let later_point = (later_line.min_x() + 2.0, later_line.min_y() + later_line.size.h / 2.0);
+    let later_point = (
+        later_line.min_x() + 2.0,
+        later_line.min_y() + later_line.size.h / 2.0,
+    );
 
     // Grab the end and drag it to the later paragraph: the start stays.
     s.select_range(a, b);
@@ -251,7 +254,10 @@ fn grabbing_an_end_moves_only_that_end() {
     s.selection_drag(later_point.0, later_point.1);
     let (start2, end2) = s.selected_range().expect("still a selection");
     assert_eq!(start2, a, "the start did not move");
-    assert!(end2 >= later, "the end followed the pointer: {start2}..{end2}");
+    assert!(
+        end2 >= later,
+        "the end followed the pointer: {start2}..{end2}"
+    );
 
     // Grab the start of a fresh range and drag it there instead: the
     // ends cross, the old end is now the start.
@@ -260,7 +266,10 @@ fn grabbing_an_end_moves_only_that_end() {
     s.selection_drag(later_point.0, later_point.1);
     let (start3, end3) = s.selected_range().expect("a crossed drag still selects");
     assert_eq!(start3, b, "the fixed end became the start");
-    assert!(end3 >= later, "and the moved end passed it: {start3}..{end3}");
+    assert!(
+        end3 >= later,
+        "and the moved end passed it: {start3}..{end3}"
+    );
 }
 
 /// The live selection's blend follows the page ground: multiply over a
@@ -272,7 +281,11 @@ fn selection_blend_follows_the_page_ground() {
 
     let mut s = open_isolated("epub-blend", &fixture("epub/illustrated.epub"));
     s.set_metrics(metrics());
-    assert_eq!(s.selection_blend(), Blend::Multiply, "the default theme is light");
+    assert_eq!(
+        s.selection_blend(),
+        Blend::Multiply,
+        "the default theme is light"
+    );
 
     let mut settings = s.settings().clone();
     settings.theme = Theme::Dark;
