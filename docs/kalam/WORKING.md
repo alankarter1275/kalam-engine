@@ -225,6 +225,19 @@ needs to change, change it here, push, and reply "engine updated to
 <commit>; regenerate bundle". Record anything learned about Kalam's
 real tree in RESEARCH.md (R14 open questions first).
 
+## 7b. What was WebKit's and what was Kalam's (read before promising parity)
+
+Kalam's old reader page was two things. The **text** — layout, fonts,
+themes, pagination, highlights on the page — was WebKit's rendering,
+and the engine replaces it; that swap is measured and done. The
+**overlay UI** — selection chip, dictionary popup, chapter divider,
+search hits, selection handles — was HTML+CSS+JS *inside* the WebView.
+None of it can be copied: GTK CSS lacks `flex`, `color-mix`,
+`max-width`, `position: fixed`, and no agent in the loop has a display.
+Each overlay element is a redesign that the owner sees first, so plan
+two or three screenshot rounds per element and say so up front. Design
+sources: calibre-alt `docs/files/*.html` (R12h).
+
 ## 8. Deferred (known, not done, in no particular order)
 
 - `ReaderView::search(&str)` — `chapbook_reader::Session::search`

@@ -674,6 +674,60 @@ follow-up if the owner wants "Find in chapter": expose search on
 `patch/engine.rs` (the recipe's copy follows Kalam's file). No widget
 change. Owner renders the card for the first time on the next run.
 
+## R12h. The card is bad on screen; the mockup exists; tap-lookup was never on (2026-09-11)
+
+**Found.**
+- Owner's verdict on the first render of the GTK card: "extremely bad".
+  Root cause is structural, not a slip: the old popup was a **web
+  page** (HTML built in JS, browser CSS with `color-mix`, `flex`,
+  `position: fixed`, box shadows) rendered by WebKit. GTK CSS is a
+  dialect with none of those; the card had to be re-drawn as widgets,
+  blind, by an agent with no display, from my R12f prose. The first
+  render is the first feedback. Every reader-overlay element (chip,
+  divider, dictionary, search hits) was HTML inside the WebView and
+  falls in this class; the page text itself did not (the engine
+  replaced WebKit's layout, and that part the owner has seen work).
+  My earlier framing — "Kalam's reader logic is not WebKit-dependent" —
+  was true of the logic and silent about the overlay UI; the owner
+  planned on copy-paste and got a redesign.
+- calibre-alt keeps the design source: `docs/files/
+  kalam_dictionary_popup_v3.html` (the standalone mockup: 380×520,
+  Fraunces 26 px 600 headword, IBM Plex Mono 11 px pronunciation, POS
+  pill in the `--info` violet, 30 px round save button, body padding
+  4/20/24, section labels 9 px with 10/20 margins, senses 13 px/1.6,
+  chips 12 px 4/12, idiom cards radius 10 padding 10/12; palette
+  `--bg #1b1e24 --surface #21242b --surface2 #282c34 --border #343842
+  --text #abb2bf --dim #6b7280 --accent #61afef --danger #e06c75
+  --info #c678dd`), `kalam_dictionary_popup_v3_preview.html` (the
+  *shipped* popup's CSS+JS extracted verbatim from `epub_book.rs` by
+  `gen_kalam_dict_preview.py`, with the app tokens substituted — the
+  exact thing the owner used to see), and `test_kalam_dict_preview.js`.
+  Also `reader.html`, `float_panel.html`, `kalam_annotations_panel.html`,
+  `settings.html`, `book_detail.html`, `kalam_my_library_v5.html`,
+  `style.rs`: mockups for the rest of the app. Kalam's `style.css`
+  already references "Fraunces" (falls back to system serif; not
+  bundled). The R12f spec was derived from the shipped CSS and is
+  consistent with the preview file, but a picture beats prose: the
+  agent can open neither, the owner can open both.
+- **Tap-to-look-up**: on calibre-alt `main` the JS `fireTapLookup`
+  exists but nothing arms it (no `setTimeout(.., tapDelay)` caller) —
+  the owner removed the feature deliberately. INTEGRATION.md 3e wired
+  the widget's `connect_word` to the dictionary as "Kalam's
+  tap-to-look-up", reviving it. My error: written from the old code's
+  functions, not from what `main` did. Widget side: `drag_end`
+  (`view.rs` ~:1440) treats a tap on a word as a word *before* the
+  page-turn zones, so with the callback unwired a tap on a word turns
+  no page. Fix on the engine side: only claim the tap as a word when a
+  word callback is connected; otherwise fall through to the zones.
+
+**Decision.** (1) Kalam agent rebuilds the card against the mockup
+files, with the owner's screenshots as the loop; the R12f spec is
+demoted to a cross-check. (2) Kalam drops the `EngineWord` → dictionary
+path; the chip's "Look up" is the only entry. (3) Engine: `drag_end`
+falls through to the tap zones when no word handler is connected
+(next widget change; bundle regeneration then). (4) WORKING.md gains
+the lesson: overlay UI is a redesign, plan for screenshot rounds.
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,
