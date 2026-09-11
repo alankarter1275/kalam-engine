@@ -1498,6 +1498,7 @@ impl ReaderView {
         }
         {
             let view = self.clone();
+            let grabbing = grabbing.clone();
             drag.connect_drag_end(move |gesture, dx, dy| {
                 let was_tap = tap.replace(false);
                 let was_grab = grabbing.replace(false);
