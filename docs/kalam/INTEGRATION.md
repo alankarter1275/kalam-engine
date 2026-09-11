@@ -560,6 +560,11 @@ strip mode is reachable without a key:
   nothing now; add classes for the chip and the popover
   (`kalam-reader-chip`, `kalam-reader-chip-dot-yellow` … `-orange`,
   `kalam-reader-chip-action`, `kalam-reader-dict*`, `kalam-reader-strip-bar`).
+  The dictionary card's 37 `kalam-reader-dict*` rules are the old
+  `#kalam-dict-popup` design translated to GTK CSS with the app's
+  `@kalam_*` colour tokens; the reference copy is calibre-alt's
+  `resources/style.css` from the branch that landed the card (Kalam
+  1e0dfd3), and `patch/engine.rs` is the matching Rust.
   The five dot colours are the engine's `HighlightColor::css()` values:
   yellow `#f4d35e`, green `#8acb9c`, blue `#8bb7f2`, pink `#e99bbd`,
   orange `#f2ae72`.

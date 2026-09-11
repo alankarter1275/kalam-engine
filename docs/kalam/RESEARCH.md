@@ -642,6 +642,38 @@ recipe's copy of Kalam's file, not the other way round). Engine
 follow-up if the owner wants "Find in chapter": expose search on
 `ReaderView` (WORKING.md §8).
 
+## R12g. The card rebuilt; TOC nesting fixed (2026-09-11)
+
+**Found.** Kalam 1e0dfd3 (+ three CI-driven build fixes, tip 4a3e6d6):
+- `build_dict_popover` rebuilt to the R12f spec: `DictSense { pos, def,
+  example, hinted }` per sense (so `DictCard.senses: Vec<DictSense>`,
+  not the 3-tuple); POS grouping over the flat list with
+  `POS_GROUP_ORDER`; header = word / pronunciation / conditional POS
+  pill + three 26 px round buttons (☆→✓ save, disabled magnifier, ⧉
+  copy via `Widget::clipboard()` with a 900 ms tick); body in a
+  `ScrolledWindow` (`max_content_height(300)`,
+  `propagate_natural_height`) under a 40 px gradient `Overlay`; extra
+  senses behind a `Revealer` with `RevealerTransitionType::None` and a
+  "Show N more"/"Show less" button; chips in a `FlowBox`. GTK CSS has
+  no `max-width`, so 320 px is a `set_size_request` minimum. CSS: 37
+  `kalam-reader-dict*` rules on the `@kalam_*` tokens; the popover's
+  own frame is made transparent and the `> contents` node carries the
+  radius-18 border, surface and shadow.
+- `rebuild_toc` now walks the tree depth-first (`toc_rows`), indents 16
+  px per level, draws target-less part headings as non-clickable rows,
+  and shares that walk with the active-row/scroll logic; three unit
+  tests; CI's seeded book 1 now has a two-part nested nav + NCX.
+- The three compile errors were all in the new code (`String` vs
+  `&&str` in a filter closure, a field name, `iter().any()` →
+  `contains`); CI found each within one round. The relay's "one error
+  per round, compiler on CI" loop works without the owner.
+- Still stale in Kalam: `src/pages/settings.rs:1381` describes the
+  cache as "Temporary files extracted for the WebKitGTK reader".
+
+**Decision.** Kalam's `engine.rs` mirrored verbatim into
+`patch/engine.rs` (the recipe's copy follows Kalam's file). No widget
+change. Owner renders the card for the first time on the next run.
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,
