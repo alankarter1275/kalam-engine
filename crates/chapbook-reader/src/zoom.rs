@@ -224,7 +224,8 @@ impl Session {
         let Some(view) = &self.view else { return };
         for op in list.ops.iter_mut().skip(1) {
             match op {
-                chapbook_paint::DisplayOp::FillRect { rect, .. } => {
+                chapbook_paint::DisplayOp::FillRect { rect, .. }
+                | chapbook_paint::DisplayOp::Band { rect, .. } => {
                     rect.origin.x = rect.origin.x * view.zoom + view.pan_x;
                     rect.origin.y = rect.origin.y * view.zoom + view.pan_y;
                     rect.size.w *= view.zoom;

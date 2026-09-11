@@ -1434,13 +1434,14 @@ fn selection_paints_under_text_in_display_list() {
             start: 2,
             end: 12,
             color: sel_color,
+            blend: chapbook_paint::Blend::Multiply,
         }],
     );
     let sel_idx = dl
         .ops
         .iter()
         .position(
-            |op| matches!(op, chapbook_paint::DisplayOp::FillRect { color, .. } if *color == sel_color),
+            |op| matches!(op, chapbook_paint::DisplayOp::Band { color, .. } if *color == sel_color),
         )
         .expect("selection rect present");
     let glyph_idx = dl
@@ -1468,6 +1469,77 @@ fn multi_line_selection_covers_each_line() {
     assert_eq!(all.len(), 3);
     let rects = page.rects_for_range(all[0] + 2, all[2] + 2);
     assert_eq!(rects.len(), 3, "one rect per touched line: {rects:?}");
+}
+
+// ---- kalam: the selection band ----
+
+/// The band is the glyph box plus 2 px, not the line box: at a generous
+/// line-height the tint leaves a gap between lines instead of fusing
+/// them into a slab. `rects_for_range` and the painted op agree.
+#[test]
+fn selection_band_is_the_glyph_box_plus_padding_not_the_line_box() {
+    let html = "<html><body><p>select some of this text please</p></body></html>";
+    let (layout, _) = layout_html(html, "p { margin: 0; line-height: 2.2; }", &page_for_lines(10));
+    let page = &layout.pages[0];
+    let (fragment, line) = page
+        .fragments
+        .iter()
+        .find_map(|f| match &f.kind {
+            FragmentKind::Line(line) => Some((f, line)),
+            _ => None,
+        })
+        .expect("a text line");
+    let line_h = fragment.rect.size.h;
+    // The glyph box is well inside a 2.2 line box.
+    assert!(line.ascent > 0.0 && line.descent > 0.0, "{line:?}");
+    assert!(line.ascent + line.descent < line_h * 0.8, "{line_h} vs {line:?}");
+
+    let rects = page.rects_for_range(line.locator_start, line.locator_start + 6);
+    assert_eq!(rects.len(), 1, "{rects:?}");
+    let band = rects[0];
+    let pad = chapbook_paint::BAND_PADDING;
+    let expected_top = fragment.rect.origin.y + line.baseline - line.ascent - pad;
+    let expected_h = line.ascent + line.descent + 2.0 * pad;
+    assert!(
+        (band.origin.y - expected_top).abs() < 1e-3,
+        "{band:?} vs top {expected_top}"
+    );
+    assert!(
+        (band.size.h - expected_h).abs() < 1e-3,
+        "{band:?} vs height {expected_h}"
+    );
+    assert!(band.origin.y > fragment.rect.origin.y + 1.0, "a gap above");
+    assert!(band.max_y() < fragment.rect.max_y() - 1.0, "a gap below");
+
+    // And the painter fills exactly that rect, rounded, with the blend
+    // it was asked for.
+    let color = chapbook_core::Rgba::new(80, 120, 200, 120);
+    let dl = chapbook_paint::build_display_list(
+        page,
+        chapbook_core::Rgba::WHITE,
+        &[chapbook_paint::Selection {
+            start: line.locator_start,
+            end: line.locator_start + 6,
+            color,
+            blend: chapbook_paint::Blend::Screen,
+        }],
+    );
+    let painted = dl
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            chapbook_paint::DisplayOp::Band {
+                rect,
+                color: c,
+                radius,
+                blend,
+            } if *c == color => Some((*rect, *radius, *blend)),
+            _ => None,
+        })
+        .expect("a band op");
+    assert_eq!(painted.0, band);
+    assert_eq!(painted.1, chapbook_paint::BAND_RADIUS);
+    assert_eq!(painted.2, chapbook_paint::Blend::Screen);
 }
 
 // ---- kalam: the strip view's numbers (gaps, used_height) ----

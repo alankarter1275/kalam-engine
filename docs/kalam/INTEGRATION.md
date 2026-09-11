@@ -398,6 +398,14 @@ Then, arm by arm (only the changed lines shown):
                 }
             }
   ```
+
+  The widget paints the selection band and the two drag handles itself
+  (R12j); Kalam draws only the chip. `SelectedText` also carries
+  `start_rect`/`end_rect` (the first and last line's band, widget
+  coordinates — where the handles stand) for a host that wants its chip
+  clear of them; `rect` is still the union. This message arrives again
+  after a handle drag, with the new text and rects: dismiss and rebuild
+  the chip as above.
 * **`HighlightSelection(color_name)`** (new) — the old `"highlight"` bridge message:
 
   ```rust

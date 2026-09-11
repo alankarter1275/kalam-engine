@@ -39,6 +39,7 @@
 
 mod divider;
 mod fonts;
+mod handles;
 mod prefs;
 mod scroll;
 mod view;

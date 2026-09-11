@@ -152,6 +152,14 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-reader/src/frame.rs` | The pending-jump landing at the top of `page_display_list` moved to `Session::land_pending` (in `scroll.rs`), called from there | `settle()` lands the same jumps for a frameless shell; one copy of the rule |
 | `crates/chapbook-reader/src/cache.rs` | `evict_keeping` also spares `pinned_units`; `drop_metrics_dependent` and `release_caches` bump `layout_generation` | A scroll shell's visible band must not be evicted under it, and it needs to hear that layouts were dropped |
 | `crates/chapbook-reader/src/lib.rs`, `src/open.rs` | `Session.layout_generation`, `Session.pinned_units` | Same |
+| `crates/chapbook-paint/src/page.rs`, `src/display.rs`, `src/lib.rs` | `LineFragment` gains `ascent`/`descent`; `LineFragment::band_extent()`, `BAND_PADDING`; `rects_for_range` answers with the band, not the line box; new `DisplayOp::Band { rect, color, radius, blend }` and `Blend`, `BAND_RADIUS`; `Selection` gains `blend`; `push_selection_rect` emits `Band`s | The selection band (R12j): glyph box + 2 px, 2 px corners, multiply/screen — the old reader's look. Upstream filled the whole line box square with no blend |
+| `crates/chapbook-layout/src/paginate.rs` | `ShapedLine` carries `ascent`/`descent` read off the `LayoutLine` a run came from (found by `ptr::eq` on its `glyphs`); the three `LineFragment` constructors fill them | Same |
+| `crates/chapbook-reader/src/layout.rs` | PDF hidden-text lines fill `ascent`/`descent` (0.8/0.2 of the line) | Struct gained fields |
+| `crates/chapbook-reader/src/frame.rs`, `src/scroll.rs` | `Selection { blend }`: stored highlights `Normal`, the live selection `selection_blend()` | Same |
+| `crates/chapbook-reader/src/text_surface.rs` | `Session::selection_grab_end(start)` (a handle press: makes that end the focus so `selection_drag` moves it) and `Session::selection_blend()` (luma of the palette ground → `Multiply`/`Screen`) | Draggable handles (R12j) |
+| `crates/chapbook-reader/src/zoom.rs` | `apply_view` scales `Band` like `FillRect` | New op |
+| `crates/chapbook-render-tinyskia/src/lib.rs` | `Band` → `fill_band`: rounded `PathBuilder` path, `Paint.blend_mode` | New op |
+| `crates/chapbook-layout/tests/pagination.rs`, `crates/chapbook-reader/tests/{bidi,session}.rs` | Selection fills matched as `Band`; tests for the band geometry, `selection_grab_end`, `selection_blend` | Covers the feature |
 
 New files inside inherited crates (no conflict risk, listed for completeness):
 

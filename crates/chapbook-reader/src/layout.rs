@@ -387,6 +387,9 @@ fn push_hidden_text(
             rect,
             kind: chapbook_paint::FragmentKind::HiddenText(chapbook_paint::LineFragment {
                 baseline: rect.size.h * 0.8,
+                // kalam: the extracted line's box is all glyph box.
+                ascent: rect.size.h * 0.8,
+                descent: rect.size.h * 0.2,
                 runs: vec![chapbook_paint::GlyphRun {
                     font: cosmic_text::fontdb::ID::dummy(),
                     font_size: rect.size.h,

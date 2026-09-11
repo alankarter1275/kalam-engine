@@ -211,7 +211,7 @@ fn selection_spans(session: &mut Session, y: f32) -> Vec<(f32, f32)> {
         .ops
         .iter()
         .filter_map(|op| match op {
-            DisplayOp::FillRect { rect, color } if *color == selection => Some(*rect),
+            DisplayOp::Band { rect, color, .. } if *color == selection => Some(*rect),
             _ => None,
         })
         .filter(|r| r.origin.y <= y && y <= r.origin.y + r.size.h)

@@ -11,10 +11,12 @@ mod images;
 mod page;
 mod panel;
 
-pub use display::{build_display_list, DisplayList, DisplayOp, Frame, FrameIntent, Selection};
+pub use display::{
+    build_display_list, Blend, DisplayList, DisplayOp, Frame, FrameIntent, Selection, BAND_RADIUS,
+};
 pub use images::{ImageStore, StoredImage};
 pub use page::{
     image_page, BoxDecoration, Decoration, Fragment, FragmentKind, Glyph, GlyphRun, LineFragment,
-    Page,
+    Page, BAND_PADDING,
 };
 pub use panel::{panel_rect, rotate};

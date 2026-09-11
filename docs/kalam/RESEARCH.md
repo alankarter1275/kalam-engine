@@ -738,6 +738,92 @@ is unchanged; for Kalam, which will not connect one, a tap on a word
 turns the page, matching `main`. INTEGRATION.md 3e and step-4 item 6
 corrected. No API change; `connect_word` keeps its signature.
 
+## R12j. Selection band, draggable handles, tap-clear notify (2026-09-11)
+
+**Source.** The calibre-alt agent's `docs/kalam-reports/selection-experience.md`
+(its branch, 2f9ca09) compared the old reader's selection UI with the
+engine's and split the work: the chip is Kalam's (rebuilt at 46c4169),
+the band and the handles are painted on the page and so are ours.
+
+**What the old reader did** (calibre-alt `main` 4628dbf,
+`src/epub_book.rs`: `positionSelectionBands` ~:1195, `.kalam-selection-band`
+:3117, `.kalam-selection-handle` :3138, `ReadingTheme::selection_style`
+:3836). Band per line: height = the paragraph's first-glyph height + 2 px
+above and below (`selectionBandPadding = 2`), centred on the line rect,
+`border-radius: 2px`, colour = theme `::selection` rgba (already in
+`prefs.rs` `selection()`), `mix-blend-mode: multiply` on Light/Sepia and
+`screen` on Dark/Ink, drawn in a layer *under* the text. Handles: a 2 px
+bar in `handle_color` (`#0b0b0b` Light/Sepia, `#ffd166` Dark/Ink) as tall
+as the band, at the start's left edge and the end's right edge; a 24 px
+wide hit area reaching 12 px past either end; a 5 px teardrop grip
+(`border-radius: 50% 50% 50% 0`, rotated) at the outer end — above the
+start bar, below the end bar; `cursor: grab`; dragging moved *that* end
+only, bands and chip following live.
+
+**What the engine did.** `push_selection_rect` filled `fragment.rect`
+(the whole line box) per span, square, source-over; at Kalam's
+line-height 1.8 that fused a multi-line selection into one slab. No
+handles; a press always `selection_begin`s (replaces the selection), so
+no way to adjust one end. `view.rs`'s tap path cleared the selection
+without `notify_selection` (harmless — the host had already heard `None`
+at the press when a selection stood; documented in the code now).
+
+**Engine facts found on the way.**
+- `LineFragment` had `baseline` but no glyph-box metrics. cosmic-text's
+  `LayoutLine` has `max_ascent`/`max_descent`; `LayoutRun` (what
+  `layout_runs()` yields) carries `line_y`, `line_top`, `line_height`
+  but not those two, and does not say which layout line of its buffer
+  line it is. Its `glyphs: &[LayoutGlyph]` *is* the `LayoutLine`'s vector
+  though, so `ptr::eq(line.glyphs.as_ptr(), run.glyphs.as_ptr())` finds
+  the line; `buffer.lines[run.line_i].layout_opt()` is still populated
+  right after `shape_until_scroll`. cosmic-text centres the glyph box in
+  the line height (`LayoutRunIter::next`: `line_y = line_top +
+  (line_height − (max_ascent + max_descent)) / 2 + max_ascent`).
+- tiny-skia 0.12: `Paint { blend_mode: BlendMode::Multiply | Screen }`,
+  `PathBuilder` cubics for rounded corners; `fill_rect` has neither.
+- `Page::rects_for_range` feeds `range_rects`, `range_rects_on_page`,
+  the frame's `damage_for`, the widget's `notify_selection`/`word_at`,
+  and the reference viewer's TTS extents — it now returns the band
+  rects, which is what every consumer actually wants (chips, damage,
+  handles all sit on the visible band).
+- `selection_drag` moves the *focus* (`selection.1`) and keeps the
+  anchor (`selection.0`); `selected_range()` normalises. So a handle
+  press only has to swap the pair so the grabbed end is the focus, and
+  the existing drag handlers (both modes) do the rest.
+
+**Change (this commit).**
+- Paint: `LineFragment { ascent, descent }`, `band_extent(line_h)` =
+  `[baseline − ascent − 2, baseline + descent + 2]` clamped to the line
+  box; `DisplayOp::Band { rect, color, radius: 2, blend }`; `Blend
+  { Normal, Multiply, Screen }`; `Selection.blend` (stored highlights
+  `Normal`, live selection `Session::selection_blend()` = Rec. 601 luma
+  of the palette ground < 128 → `Screen`, else `Multiply`). Math lines
+  use the formula's ascent/descent; PDF hidden text 0.8/0.2.
+- Backend: `fill_band` = rounded path + blend mode; `zoom.rs` scales it.
+- Session: `selection_grab_end(start: bool) -> bool`.
+- Widget (`kalam-reader`): new `handles.rs` (geometry, hit-test, painter
+  — bar on whole device pixels, teardrop as tangents + four arcs);
+  `KalamTheme::handle()` colours; `Inner.handles` remembers the last
+  painted pair; `drag_begin` tests the handles before links/selection
+  and grabs the end; `drag_end` reports the selection after a grab (the
+  chip re-places itself); handles are painted after the page in paged
+  mode and after the dividers in scrolled mode. `SelectedText` gains
+  `start_rect`/`end_rect` (informational; Kalam reads `text`/`rect` by
+  field so nothing breaks). No cursor change (GTK `set_cursor` on the
+  drawing area would need a motion controller; deferred, WORKING §8).
+- Tests: `page.rs` unit tests for `band_extent`; pagination test that
+  the band is glyph box + padding at line-height 2.2 and the painted op
+  matches `rects_for_range`; `bidi.rs` reads `Band` ops; session tests
+  for grab-end (start fixed / ends cross) and blend by ground;
+  `handles.rs` tests for placement, hit areas, overlap preference, and
+  painted pixels; `view.rs` test for `ends()`.
+
+**Not done / to watch.** Grab cursor; handle grips in a strip when the
+selection's first or last line is scrolled off screen (the handle is
+simply not painted — `ends()` sees only visible bands); a selection
+across two bands of the same chapter works (rects come from every
+visible band).
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,

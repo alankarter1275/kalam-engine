@@ -249,6 +249,11 @@ sources: calibre-alt `docs/files/*.html` (R12h).
   `delete_saved_word_by_word` was deleted with its last caller; a
   "Saved ✓ → tap to unsave" affordance is a small Kalam-side change if
   the owner misses it (R12c).
+- A grab cursor over the selection handles (the old reader's
+  `cursor: grab`). Needs a `gtk::EventControllerMotion` on the drawing
+  area and `set_cursor_from_name("grab")` when the pointer is inside a
+  handle's hit rect (`handles::handle_at`); the handles themselves are
+  done (R12j).
 - Page-raster cache in scrolled mode (drawing was measured at ~8 ms per
   frame, so this is low value until proven otherwise).
 - Kinetic (flick) scrolling in scrolled mode.

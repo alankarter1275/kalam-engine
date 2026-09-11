@@ -117,6 +117,36 @@ impl Session {
         self.mark(FrameIntent::Selection);
     }
 
+    /// kalam: take hold of one end of a standing selection — a press on
+    /// its start or end handle. The grabbed end becomes the focus and the
+    /// other end the anchor, so the [`Session::selection_drag`] calls
+    /// that follow move the grabbed end and leave the other where it is.
+    /// The ends may cross mid-drag (the range is normalised when read)
+    /// and the focus keeps following the pointer. Returns whether there
+    /// was a selection to grab; `false` leaves everything as it was.
+    pub fn selection_grab_end(&mut self, start: bool) -> bool {
+        let Some((lo, hi)) = self.selected_range() else {
+            return false;
+        };
+        self.selection = Some(if start { (hi, lo) } else { (lo, hi) });
+        true
+    }
+
+    /// kalam: how the live selection's tint composites on this page —
+    /// multiply on a light ground, screen on a dark one — so it reads as
+    /// a marker behind the ink instead of a wash over it. The ground is
+    /// the effective palette's, so a host's own dark theme is dark here.
+    pub fn selection_blend(&self) -> chapbook_paint::Blend {
+        let bg = self.settings.palette().background;
+        // Rec. 601 luma, the usual "is this colour dark" test.
+        let luma = 0.299 * f32::from(bg.r) + 0.587 * f32::from(bg.g) + 0.114 * f32::from(bg.b);
+        if luma < 128.0 {
+            chapbook_paint::Blend::Screen
+        } else {
+            chapbook_paint::Blend::Multiply
+        }
+    }
+
     /// The selected locator range `[start, end)`, when non-empty.
     pub fn selected_range(&self) -> Option<(u32, u32)> {
         let (a, b) = self.selection?;

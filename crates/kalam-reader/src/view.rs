@@ -45,6 +45,7 @@ use chapbook_core::{
 use chapbook_reader::{HostHighlight, Session, SessionConfig, SessionEvent};
 
 use crate::divider::{DividerPainter, DividerPlace, DividerStyle};
+use crate::handles::{self, Edge, Handle};
 use crate::prefs::{HighlightColor, KalamPrefs};
 use crate::scroll::{Band, Strip, PAGE_SCROLL_FRACTION};
 
@@ -127,6 +128,12 @@ pub struct SelectedText {
     /// The selected span's bounding box in widget coordinates, for placing
     /// the chip clear of it.
     pub rect: Rect,
+    /// The first line's band and the last line's band (the same rect for
+    /// a one-line selection), widget coordinates: where the two handles
+    /// stand. Informational — the widget draws and drags the handles
+    /// itself; a host only needs these to keep its chip clear of them.
+    pub start_rect: Rect,
+    pub end_rect: Rect,
 }
 
 /// What to do about the host's fonts, and other knobs a shell sets once.
@@ -200,6 +207,9 @@ struct Inner {
     /// in one chapter's text and moving the session out of that chapter
     /// would drop it.
     dragging: Cell<bool>,
+    /// The handles as last painted, widget coordinates — what the next
+    /// press is tested against. `None` without a selection on screen.
+    handles: Cell<Option<[Handle; 2]>>,
     /// The text on the reading line at the end of the last scrolled
     /// draw: (chapter, locator offset of the line). What a relayout
     /// anchors to — a font change makes every page anew, but this line
@@ -305,6 +315,7 @@ impl ReaderView {
                 strip: RefCell::new(None),
                 pending_jump: Cell::new(false),
                 dragging: Cell::new(false),
+                handles: Cell::new(None),
                 reading_offset: Cell::new(None),
                 vadjustment: gtk::Adjustment::new(0.0, 0.0, 0.0, ARROW_STEP as f64, 0.0, 0.0),
                 syncing_adjustment: Cell::new(false),
@@ -1020,13 +1031,34 @@ impl ReaderView {
             let s = self.inner.session.borrow();
             s.selected_range().and_then(|(start, end)| {
                 let text = readable(&s.selected_text()?);
-                let rect = union(&self.widget_rects(&s, s.spine(), start, end))?;
-                Some(SelectedText { text, rect })
+                let rects = self.widget_rects(&s, s.spine(), start, end);
+                let rect = union(&rects)?;
+                let (start_rect, end_rect) = ends(&rects)?;
+                Some(SelectedText {
+                    text,
+                    rect,
+                    start_rect,
+                    end_rect,
+                })
             })
         };
         if let Some(cb) = &self.inner.callbacks.borrow().selection {
             cb(selected.as_ref());
         }
+    }
+
+    /// The selection's handles for this frame, widget coordinates, and
+    /// remember them for the next press. `None` — and nothing remembered
+    /// — without a selection, or with one whose lines are all off screen
+    /// (scrolled away in a strip).
+    fn place_handles(&self, s: &Session) -> Option<[Handle; 2]> {
+        let handles = s.selected_range().and_then(|(start, end)| {
+            let rects = self.widget_rects(s, s.spine(), start, end);
+            let (first, last) = ends(&rects)?;
+            Some(Handle::pair(first, last))
+        });
+        self.inner.handles.set(handles);
+        handles
     }
 
     /// Report the position if it moved since last time. Called from an
@@ -1080,7 +1112,14 @@ impl ReaderView {
                 ReadingMode::Paged => {
                     let mut s = view.inner.session.borrow_mut();
                     s.set_metrics(metrics);
-                    s.render()
+                    let mut pixmap = s.render();
+                    // The selection's handles, over the page. Paged
+                    // widget coordinates are page coordinates.
+                    if let (Some(out), Some(handles)) = (pixmap.as_mut(), view.place_handles(&s))
+                    {
+                        handles::paint(out, &handles, prefs.theme.handle(), scale);
+                    }
+                    pixmap
                 }
                 ReadingMode::Scrolled => view.draw_scrolled(metrics),
             };
@@ -1267,6 +1306,13 @@ impl ReaderView {
                 painter.paint(&mut out, fonts, &style, title, &place);
             }
         }
+
+        // The selection's handles, last, over everything. `place_handles`
+        // reads the strip, so the mutable borrow above must end first.
+        drop(strip_slot);
+        if let Some(handles) = self.place_handles(&s) {
+            handles::paint(&mut out, &handles, self.inner.prefs.get().theme.handle(), scale);
+        }
         Some(out)
     }
 
@@ -1348,12 +1394,17 @@ impl ReaderView {
         // link. A press that then never moves is a tap, and `drag_end`
         // decides what a tap there means: a word, or a page turn.
         let tap = Rc::new(Cell::new(false));
+        // Set when the press took hold of a selection handle: the drag
+        // moves that end, and its release is never a tap.
+        let grabbing = Rc::new(Cell::new(false));
         {
             let view = self.clone();
             let tap = tap.clone();
+            let grabbing = grabbing.clone();
             drag.connect_drag_begin(move |_, x, y| {
                 view.area.grab_focus();
                 tap.set(false);
+                grabbing.set(false);
                 let (x, y) = (x as f32, y as f32);
                 // In a strip the press is on some band's page; in paged
                 // mode it is on the session's page.
@@ -1363,6 +1414,23 @@ impl ReaderView {
                     return;
                 }
                 let mut s = view.inner.session.borrow_mut();
+                // A press on one of the selection's handles takes hold
+                // of that end: the drag that follows moves it and leaves
+                // the other end where it is. Tested first — a handle
+                // stands on the text it selects, and over a link's edge
+                // as easily as anything else's.
+                let grabbed = view
+                    .inner
+                    .handles
+                    .get()
+                    .and_then(|handles| handles::handle_at(&handles, x, y))
+                    .is_some_and(|edge| s.selection_grab_end(edge == Edge::Start));
+                if grabbed {
+                    drop(s);
+                    grabbing.set(true);
+                    view.inner.dragging.set(true);
+                    return;
+                }
                 // A press on a link follows it rather than starting a
                 // selection there; one the engine will not follow (an
                 // external URL) is the shell's.
@@ -1422,22 +1490,29 @@ impl ReaderView {
             let view = self.clone();
             drag.connect_drag_end(move |gesture, dx, dy| {
                 let was_tap = tap.replace(false);
+                let was_grab = grabbing.replace(false);
                 view.inner.dragging.set(false);
                 let Some((x, y)) = gesture.start_point() else {
                     return;
                 };
                 // A press that wandered was a selection, and the drag
-                // handlers already have it; say so once it is done.
-                if !was_tap || dx.abs() > TAP_SLOP || dy.abs() > TAP_SLOP {
+                // handlers already have it; say so once it is done. So
+                // is a handle let go of, moved or not: the chip goes
+                // back up where the selection now is.
+                if was_grab || !was_tap || dx.abs() > TAP_SLOP || dy.abs() > TAP_SLOP {
                     if view.inner.session.borrow().selected_range().is_some() {
                         view.notify_selection();
                     }
+                    view.area.queue_draw();
                     return;
                 }
                 let (x, y) = (x as f32, y as f32);
                 let mut s = view.inner.session.borrow_mut();
                 // The press anchored an empty selection; drop it before
                 // anything else, so the anchor does not outlive the page.
+                // The host heard `None` at the press if a selection stood
+                // then (`had_selection`), so there is nothing to report
+                // here — the tap path below turns the page or nothing.
                 s.selection_clear();
                 // A tap on a word is a dictionary lookup only for a host
                 // that asked for one (`connect_word`); then it takes
@@ -1701,6 +1776,26 @@ fn union(rects: &[Rect]) -> Option<Rect> {
     Some(Rect::new(x0, y0, x1 - x0, y1 - y0))
 }
 
+/// The first and last of a selection's line bands, in reading order:
+/// the topmost band's leftmost piece, and the bottommost band's rightmost
+/// piece. `rects_for_range` walks the page's fragments in order, so the
+/// first rect is on the first line; on that line a bidi split can yield
+/// two pieces, of which the start handle wants the left one — and the
+/// mirror at the end.
+fn ends(rects: &[Rect]) -> Option<(Rect, Rect)> {
+    let first_y = rects.first()?.min_y();
+    let last_y = rects.last()?.min_y();
+    let first = rects
+        .iter()
+        .filter(|r| (r.min_y() - first_y).abs() < 0.5)
+        .min_by(|a, b| a.min_x().total_cmp(&b.min_x()))?;
+    let last = rects
+        .iter()
+        .filter(|r| (r.min_y() - last_y).abs() < 0.5)
+        .max_by(|a, b| a.max_x().total_cmp(&b.max_x()))?;
+    Some((*first, *last))
+}
+
 /// A GDK keyval name in the engine's key vocabulary — the same table as
 /// the reference viewer's.
 fn engine_key(name: &str) -> Option<Key> {
@@ -1751,6 +1846,22 @@ mod tests {
         assert_eq!(sentence_around(&text, 0, 5), "First one.");
         let last = text.len() - 6;
         assert_eq!(sentence_around(&text, last, last + 5), "Third?");
+    }
+
+    #[test]
+    fn ends_pick_the_outer_pieces_of_the_first_and_last_lines() {
+        // Three lines; the first is a bidi split (two pieces), the last
+        // is one piece.
+        let rects = [
+            Rect::new(300.0, 100.0, 80.0, 20.0),
+            Rect::new(120.0, 100.0, 60.0, 20.0),
+            Rect::new(100.0, 130.0, 300.0, 20.0),
+            Rect::new(100.0, 160.0, 90.0, 20.0),
+        ];
+        let (first, last) = ends(&rects).unwrap();
+        assert_eq!(first, rects[1]);
+        assert_eq!(last, rects[3]);
+        assert!(ends(&[]).is_none());
     }
 
     #[test]

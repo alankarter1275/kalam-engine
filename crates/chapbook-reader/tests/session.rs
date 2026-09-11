@@ -219,3 +219,82 @@ fn a_session_takes_its_host_capabilities_explicitly() {
         chapbook_core::CredentialLookup::Found(_)
     ));
 }
+
+// ---- kalam: selection handles ----
+
+/// Taking hold of one end of a selection and dragging moves that end
+/// only; the other stays where it was. A drag past the other end crosses
+/// and keeps following — the range is normalised when read.
+#[test]
+fn grabbing_an_end_moves_only_that_end() {
+    let mut s = open_isolated("epub-grab", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    s.render().expect("page renders");
+
+    // Nothing to grab without a selection.
+    assert!(!s.selection_grab_end(true));
+    assert_eq!(s.selected_range(), None);
+
+    let (a, b) = only_hit(&mut s, "Text before the picture");
+    let (later, _) = only_hit(&mut s, "aliased embedded font");
+    assert!(later > b, "the later paragraph is further into the chapter");
+    let later_line = s
+        .range_rects(later, later + 7)
+        .first()
+        .copied()
+        .expect("the later paragraph is on this page");
+    let later_point = (later_line.min_x() + 2.0, later_line.min_y() + later_line.size.h / 2.0);
+
+    // Grab the end and drag it to the later paragraph: the start stays.
+    s.select_range(a, b);
+    assert!(s.selection_grab_end(false));
+    s.selection_drag(later_point.0, later_point.1);
+    let (start2, end2) = s.selected_range().expect("still a selection");
+    assert_eq!(start2, a, "the start did not move");
+    assert!(end2 >= later, "the end followed the pointer: {start2}..{end2}");
+
+    // Grab the start of a fresh range and drag it there instead: the
+    // ends cross, the old end is now the start.
+    s.select_range(a, b);
+    assert!(s.selection_grab_end(true));
+    s.selection_drag(later_point.0, later_point.1);
+    let (start3, end3) = s.selected_range().expect("a crossed drag still selects");
+    assert_eq!(start3, b, "the fixed end became the start");
+    assert!(end3 >= later, "and the moved end passed it: {start3}..{end3}");
+}
+
+/// The live selection's blend follows the page ground: multiply over a
+/// light palette, screen over a dark one. Stored highlights stay normal.
+#[test]
+fn selection_blend_follows_the_page_ground() {
+    use chapbook_core::{Palette, Rgba, Theme};
+    use chapbook_reader::chapbook_paint::{Blend, DisplayOp};
+
+    let mut s = open_isolated("epub-blend", &fixture("epub/illustrated.epub"));
+    s.set_metrics(metrics());
+    assert_eq!(s.selection_blend(), Blend::Multiply, "the default theme is light");
+
+    let mut settings = s.settings().clone();
+    settings.theme = Theme::Dark;
+    settings.palette = Some(Palette {
+        background: Rgba::new(0x1b, 0x1e, 0x24, 255),
+        ..Palette::of(Theme::Dark)
+    });
+    s.set_settings(settings, chapbook_reader::SettingsScope::Global);
+    assert_eq!(s.selection_blend(), Blend::Screen);
+
+    s.render().expect("page renders");
+    let (a, b) = only_hit(&mut s, "Text before the picture");
+    s.select_range(a, b);
+    let frame = s.frame().expect("a frame");
+    let band = frame
+        .list
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            DisplayOp::Band { blend, .. } => Some(*blend),
+            _ => None,
+        })
+        .expect("the selection is a band op");
+    assert_eq!(band, Blend::Screen);
+}

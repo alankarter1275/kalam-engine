@@ -64,6 +64,14 @@ pub struct BoxDecoration {
 pub struct LineFragment {
     /// Baseline offset from the top of the fragment rect.
     pub baseline: f32,
+    /// kalam: the reference glyph box around the baseline — the tallest
+    /// ascent and deepest descent among the line's fonts, in CSS px. The
+    /// line box is taller than `ascent + descent` by the line-height's
+    /// leading, split above and below; `baseline - ascent` is where the
+    /// glyph box starts within the fragment. What a selection band is
+    /// sized by (see [`LineFragment::band_extent`]).
+    pub ascent: f32,
+    pub descent: f32,
     pub runs: Vec<GlyphRun>,
     /// Underlines/strikethroughs, positioned relative to the fragment rect.
     pub decorations: Vec<Decoration>,
@@ -234,16 +242,45 @@ impl Page {
             };
             line.selected_spans(start, end, &mut spans);
             let r = fragment.rect;
+            // kalam: the band, not the line box — the same extent the
+            // painter fills, so a shell placing a chip or a grip on these
+            // rects lands on the pixels the reader sees.
+            let (top, bottom) = line.band_extent(r.size.h);
             rects.extend(spans.iter().map(|&(from, to)| Rect {
-                origin: Point::new(r.origin.x + from, r.origin.y),
-                size: Size::new(to - from, r.size.h),
+                origin: Point::new(r.origin.x + from, r.origin.y + top),
+                size: Size::new(to - from, bottom - top),
             }));
         }
         rects
     }
 }
 
+/// kalam: breathing room a selection band gets above and below the glyph
+/// box, in CSS px — the old reader's `selectionBandPadding`.
+pub const BAND_PADDING: f32 = 2.0;
+
 impl LineFragment {
+    /// kalam: the vertical extent of a selection band on this line, as
+    /// (top, bottom) offsets from the fragment top: the glyph box plus
+    /// [`BAND_PADDING`] above and below, kept inside the line box so the
+    /// bands of adjacent lines never overlap. A line whose glyph box is
+    /// as tall as its box (line-height 1, a formula) gets the whole box.
+    ///
+    /// The line box is what upstream filled. It reads as a slab: at
+    /// Kalam's line-height of 1.8 the tint covered the leading between
+    /// lines too, so a two-line selection was one block. The old reader
+    /// sized each line's band to its first glyph's height plus 2 px, and
+    /// this is that rule in fragment terms.
+    pub fn band_extent(&self, line_height: f32) -> (f32, f32) {
+        let top = (self.baseline - self.ascent - BAND_PADDING).max(0.0);
+        let bottom = (self.baseline + self.descent + BAND_PADDING).min(line_height);
+        if bottom > top {
+            (top, bottom)
+        } else {
+            (0.0, line_height)
+        }
+    }
+
     /// The visually contiguous pieces of the locator range `[start, end)`
     /// on this line, as fragment-local x spans, left to right. Written
     /// into `out`, which is cleared first — this runs per line per drag
@@ -383,5 +420,44 @@ pub fn image_page(metrics: &PageMetrics, width: u32, height: u32, resource: u64)
         size: metrics.size,
         content,
         fragments,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(baseline: f32, ascent: f32, descent: f32) -> LineFragment {
+        LineFragment {
+            baseline,
+            ascent,
+            descent,
+            runs: Vec::new(),
+            decorations: Vec::new(),
+            text: String::new(),
+            locator_start: 0,
+        }
+    }
+
+    #[test]
+    fn band_is_the_glyph_box_plus_padding_inside_the_line_box() {
+        // 17 px Literata at line-height 1.8: a 30.6 px line box around a
+        // ~21 px glyph box, centred. The band is that box plus 2 px each
+        // way, so a gap is left between the bands of two lines.
+        let l = line(4.8 + 16.0, 16.0, 5.0);
+        let (top, bottom) = l.band_extent(30.6);
+        assert!((top - 2.8).abs() < 1e-4, "top {top}");
+        assert!((bottom - 27.8).abs() < 1e-4, "bottom {bottom}");
+    }
+
+    #[test]
+    fn band_never_leaves_the_line_box() {
+        // Line-height 1: the glyph box is the line box; the padding is
+        // clipped rather than spilling into the neighbours.
+        let l = line(16.0, 16.0, 5.0);
+        assert_eq!(l.band_extent(21.0), (0.0, 21.0));
+        // Nonsense metrics (no ascent at all) still yield the whole box.
+        let l = line(0.0, 0.0, 0.0);
+        assert_eq!(l.band_extent(10.0), (0.0, 10.0));
     }
 }

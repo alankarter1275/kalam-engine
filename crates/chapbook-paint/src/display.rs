@@ -44,6 +44,18 @@ pub enum DisplayOp {
         rect: Rect,
         color: Rgba,
     },
+    /// kalam: a selection band — a fill with rounded corners, composited
+    /// with `blend` so the tint sits *behind* the ink rather than over the
+    /// page: multiply on a light page darkens paper and leaves black text
+    /// black; screen on a dark page lightens paper and leaves light text
+    /// light. A plain `FillRect` is the right op for everything else, and
+    /// a backend without blend modes may paint this one as a `FillRect`.
+    Band {
+        rect: Rect,
+        color: Rgba,
+        radius: f32,
+        blend: Blend,
+    },
     /// Positioned glyphs sharing one face/size/weight/color. `origin` is the
     /// baseline origin in page coordinates; glyph offsets are relative to it.
     GlyphRun {
@@ -130,15 +142,36 @@ pub struct Frame {
     pub damage: Option<Rect>,
 }
 
+/// kalam: how a [`DisplayOp::Band`] composites onto what is under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Blend {
+    /// Source-over: the plain translucent fill every other op uses.
+    #[default]
+    Normal,
+    /// Darkens; a no-op over black ink. For light pages.
+    Multiply,
+    /// Lightens; a no-op over white ink. For dark pages.
+    Screen,
+}
+
 /// A range to highlight: locator range plus fill color, painted per line
 /// under the text. Stored highlights and the transient selection are the
 /// same op — only the color differs.
+///
+/// kalam: and the blend. Stored highlights keep `Blend::Normal` (their
+/// colours were chosen as translucent fills); the live selection asks for
+/// the page's blend so its tint reads like a marker over the paper.
 #[derive(Debug, Clone, Copy)]
 pub struct Selection {
     pub start: u32,
     pub end: u32,
     pub color: Rgba,
+    pub blend: Blend,
 }
+
+/// kalam: corner radius of a selection band, CSS px — the old reader's
+/// `.kalam-selection-band { border-radius: 2px }`.
+pub const BAND_RADIUS: f32 = 2.0;
 
 /// Flatten a laid-out page into draw ops. `background` becomes the first op
 /// (a full-page fill), so themes (night mode) are a color choice here, not a
@@ -217,6 +250,11 @@ pub fn build_display_list(page: &Page, background: Rgba, selections: &[Selection
 
 /// The per-line selection highlight: the union of the selected glyphs'
 /// extents, painted before the line's own ops.
+///
+/// kalam: the fill is the line's *band* — glyph box plus 2 px, see
+/// `LineFragment::band_extent` — not the whole line box, with rounded
+/// corners and the selection's blend. `Page::rects_for_range` answers
+/// with the same rects, so geometry a shell reads matches what it sees.
 fn push_selection_rect(
     ops: &mut Vec<DisplayOp>,
     fragment: &crate::page::Fragment,
@@ -230,15 +268,21 @@ fn push_selection_rect(
     // a vector that is almost always one element long.
     let mut spans = Vec::new();
     line.selected_spans(sel.start, sel.end, &mut spans);
+    if spans.is_empty() {
+        return;
+    }
+    let (top, bottom) = line.band_extent(fragment.rect.size.h);
     for (from, to) in spans {
-        ops.push(DisplayOp::FillRect {
+        ops.push(DisplayOp::Band {
             rect: Rect::new(
                 fragment.rect.origin.x + from,
-                fragment.rect.origin.y,
+                fragment.rect.origin.y + top,
                 to - from,
-                fragment.rect.size.h,
+                bottom - top,
             ),
             color: sel.color,
+            radius: BAND_RADIUS,
+            blend: sel.blend,
         });
     }
 }

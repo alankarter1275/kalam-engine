@@ -2,7 +2,7 @@
 //! the display list a shell rasterizes.
 
 use chapbook_core::{Rect, Rgba};
-use chapbook_paint::{Frame, FrameIntent, Selection};
+use chapbook_paint::{Blend, Frame, FrameIntent, Selection};
 
 use crate::{Highlight, Session};
 
@@ -174,6 +174,7 @@ impl Session {
                 .as_deref()
                 .and_then(|hex| Rgba::from_hex(hex, highlight_color.a))
                 .unwrap_or(highlight_color),
+            blend: Blend::Normal,
         };
         let mut selections: Vec<Selection> =
             self.host_highlights(spine).iter().map(paint).collect();
@@ -182,6 +183,7 @@ impl Session {
                 start,
                 end,
                 color: self.settings.palette().selection,
+                blend: self.selection_blend(),
             });
         }
         let background = self.settings.palette().background;

@@ -46,6 +46,10 @@ use crate::style_to_attrs::{align_for, attrs_for, font_size_px, line_height_px, 
 struct ShapedLine {
     height: f32,
     baseline: f32,
+    /// kalam: the glyph box around the baseline (cosmic-text's
+    /// `max_ascent`/`max_descent` for the line), for the selection band.
+    ascent: f32,
+    descent: f32,
     width: f32,
     /// Alignment-induced left offset of the line box within its block.
     x_indent: f32,
@@ -722,6 +726,8 @@ impl<'f> Paginator<'f> {
             rect,
             kind: FragmentKind::Line(LineFragment {
                 baseline: math.ascent * scale,
+                ascent: math.ascent * scale,
+                descent: math.descent * scale,
                 runs,
                 decorations,
                 text: math.text.clone(),
@@ -1272,6 +1278,24 @@ impl<'f> Paginator<'f> {
             // Decorations: underline/strikethrough spans with font-derived
             // offsets and thickness (EM units scaled by the span font size).
             let baseline = run.line_y - run.line_top;
+            // kalam: the line's glyph box, from the `LayoutLine` this run
+            // was made from. A `LayoutRun` does not say which of its
+            // buffer line's layout lines it is, but its `glyphs` slice
+            // *is* that line's vector, so the line is found by identity.
+            let (ascent, descent) = buffer
+                .lines
+                .get(run.line_i)
+                .and_then(|line| line.layout_opt())
+                .and_then(|layout| {
+                    layout
+                        .iter()
+                        .find(|line| std::ptr::eq(line.glyphs.as_ptr(), run.glyphs.as_ptr()))
+                })
+                .map(|line| (line.max_ascent, line.max_descent))
+                // Cannot happen — the run came from that layout — but
+                // the band has a sane fallback: the baseline and the
+                // rest of the line.
+                .unwrap_or((baseline, run.line_height - baseline));
             let mut decorations = Vec::new();
             for span in run.decorations {
                 let span_glyphs = &run.glyphs[span.glyph_range.clone()];
@@ -1308,6 +1332,8 @@ impl<'f> Paginator<'f> {
             let mut line = ShapedLine {
                 height: run.line_height,
                 baseline,
+                ascent,
+                descent,
                 width: run.line_w,
                 x_indent: x_min,
                 runs: glyph_runs,
@@ -1491,6 +1517,8 @@ impl<'f> Paginator<'f> {
                 rect,
                 kind: FragmentKind::Line(LineFragment {
                     baseline: line.baseline,
+                    ascent: line.ascent,
+                    descent: line.descent,
                     runs: std::mem::take(&mut line.runs),
                     decorations: std::mem::take(&mut line.decorations),
                     text: std::mem::take(&mut line.text),
@@ -1926,6 +1954,8 @@ impl Paginator<'_> {
                         rect,
                         kind: FragmentKind::Line(LineFragment {
                             baseline: line.baseline,
+                            ascent: line.ascent,
+                            descent: line.descent,
                             runs: line.runs.clone(),
                             decorations: line.decorations.clone(),
                             text: line.text.clone(),

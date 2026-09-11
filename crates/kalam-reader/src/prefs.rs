@@ -103,6 +103,17 @@ impl KalamTheme {
         }
     }
 
+    /// Selection handle colour — deliberately not the selection's tint:
+    /// near black on the light themes, bright on the dark ones, so the
+    /// grips read against the paper. Kalam's `selection_style()` second
+    /// value.
+    pub fn handle(self) -> Rgba {
+        match self {
+            KalamTheme::Light | KalamTheme::Sepia => hex(0x0b0b0b),
+            KalamTheme::Dark | KalamTheme::Ink => hex(0xffd166),
+        }
+    }
+
     /// The engine flavour underneath: decides `prefers-color-scheme` and
     /// whether publisher colours are forced (night) or only defaulted.
     fn engine_theme(self) -> Theme {

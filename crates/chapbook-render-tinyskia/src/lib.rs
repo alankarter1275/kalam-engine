@@ -13,7 +13,7 @@ use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, PremultipliedColorU8};
 pub use tiny_skia;
 
 use chapbook_core::{Rect, Rgba};
-use chapbook_paint::{DisplayList, DisplayOp, ImageStore};
+use chapbook_paint::{Blend, DisplayList, DisplayOp, ImageStore};
 
 pub struct Renderer {
     swash: SwashCache,
@@ -53,6 +53,14 @@ impl Renderer {
             match op {
                 DisplayOp::FillRect { rect, color } => {
                     fill_rect(pixmap, rect, *color, scale);
+                }
+                DisplayOp::Band {
+                    rect,
+                    color,
+                    radius,
+                    blend,
+                } => {
+                    fill_band(pixmap, rect, *color, *radius, *blend, scale);
                 }
                 DisplayOp::GlyphRun {
                     font,
@@ -192,6 +200,74 @@ fn fill_rect(pixmap: &mut PixmapMut<'_>, rect: &Rect, color: Rgba, scale: f32) {
     let mut paint = tiny_skia::Paint::default();
     paint.set_color_rgba8(color.r, color.g, color.b, color.a);
     pixmap.fill_rect(r, &paint, tiny_skia::Transform::identity(), None);
+}
+
+/// kalam: a selection band — `fill_rect` with rounded corners and a blend
+/// mode. The corners are quarter circles of `radius`, capped at half the
+/// band's smaller side so a thin band stays a pill rather than folding.
+fn fill_band(
+    pixmap: &mut PixmapMut<'_>,
+    rect: &Rect,
+    color: Rgba,
+    radius: f32,
+    blend: Blend,
+    scale: f32,
+) {
+    if color.is_transparent() {
+        return;
+    }
+    let (x, y, w, h) = (
+        rect.origin.x * scale,
+        rect.origin.y * scale,
+        rect.size.w * scale,
+        rect.size.h * scale,
+    );
+    if !(w > 0.0 && h > 0.0) {
+        return;
+    }
+    let mut paint = tiny_skia::Paint::default();
+    paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+    paint.anti_alias = true;
+    paint.blend_mode = match blend {
+        Blend::Normal => tiny_skia::BlendMode::SourceOver,
+        Blend::Multiply => tiny_skia::BlendMode::Multiply,
+        Blend::Screen => tiny_skia::BlendMode::Screen,
+    };
+    let r = (radius * scale).min(w / 2.0).min(h / 2.0);
+    let Some(path) = rounded_rect(x, y, w, h, r) else {
+        return;
+    };
+    pixmap.fill_path(
+        &path,
+        &paint,
+        tiny_skia::FillRule::Winding,
+        tiny_skia::Transform::identity(),
+        None,
+    );
+}
+
+/// A rectangle with circular corners of radius `r` (`r == 0` is the
+/// plain rectangle), as a path.
+fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
+    // Bézier circle constant: a quarter circle as one cubic.
+    const K: f32 = 0.552_284_8;
+    let (x1, y1) = (x + w, y + h);
+    let mut pb = tiny_skia::PathBuilder::new();
+    if r <= 0.0 {
+        pb.push_rect(tiny_skia::Rect::from_xywh(x, y, w, h)?);
+        return pb.finish();
+    }
+    pb.move_to(x + r, y);
+    pb.line_to(x1 - r, y);
+    pb.cubic_to(x1 - r + K * r, y, x1, y + r - K * r, x1, y + r);
+    pb.line_to(x1, y1 - r);
+    pb.cubic_to(x1, y1 - r + K * r, x1 - r + K * r, y1, x1 - r, y1);
+    pb.line_to(x + r, y1);
+    pb.cubic_to(x + r - K * r, y1, x, y1 - r + K * r, x, y1 - r);
+    pb.line_to(x, y + r);
+    pb.cubic_to(x, y + r - K * r, x + r - K * r, y, x + r, y);
+    pb.close();
+    pb.finish()
 }
 
 fn draw_image(

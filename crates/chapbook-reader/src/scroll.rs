@@ -47,7 +47,7 @@
 //! not this round's problem — so these calls are for text books.
 
 use chapbook_core::{Locator, Point, Rect, Rgba};
-use chapbook_paint::{DisplayList, FragmentKind, FrameIntent, Page, Selection};
+use chapbook_paint::{Blend, DisplayList, FragmentKind, FrameIntent, Page, Selection};
 use chapbook_render_tinyskia::tiny_skia;
 
 use crate::{Highlight, Session};
@@ -157,6 +157,7 @@ impl Session {
                 .as_deref()
                 .and_then(|hex| Rgba::from_hex(hex, highlight_color.a))
                 .unwrap_or(highlight_color),
+            blend: Blend::Normal,
         };
         let mut selections: Vec<Selection> =
             self.host_highlights(spine).iter().map(paint).collect();
@@ -166,6 +167,7 @@ impl Session {
                     start,
                     end,
                     color: palette.selection,
+                    blend: self.selection_blend(),
                 });
             }
         }
