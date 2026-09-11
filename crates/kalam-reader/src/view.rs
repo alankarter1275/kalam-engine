@@ -210,6 +210,9 @@ struct Inner {
     /// The handles as last painted, widget coordinates — what the next
     /// press is tested against. `None` without a selection on screen.
     handles: Cell<Option<[Handle; 2]>>,
+    /// The named cursor the area shows, so motion events set it only
+    /// when it changes. `None` is the default arrow.
+    cursor: Cell<Option<&'static str>>,
     /// The text on the reading line at the end of the last scrolled
     /// draw: (chapter, locator offset of the line). What a relayout
     /// anchors to — a font change makes every page anew, but this line
@@ -316,6 +319,7 @@ impl ReaderView {
                 pending_jump: Cell::new(false),
                 dragging: Cell::new(false),
                 handles: Cell::new(None),
+                cursor: Cell::new(None),
                 reading_offset: Cell::new(None),
                 vadjustment: gtk::Adjustment::new(0.0, 0.0, 0.0, ARROW_STEP as f64, 0.0, 0.0),
                 syncing_adjustment: Cell::new(false),
@@ -411,6 +415,7 @@ impl ReaderView {
             self.inner.vadjustment.disconnect(id);
         }
         *self.inner.callbacks.borrow_mut() = Callbacks::default();
+        self.set_cursor(None);
         let mut s = self.inner.session.borrow_mut();
         // The loader task holds a clone of this view until the waker it
         // was given goes away; a fresh, empty waker ends it.
@@ -1433,6 +1438,7 @@ impl ReaderView {
                     drop(s);
                     grabbing.set(true);
                     view.inner.dragging.set(true);
+                    view.set_cursor(Some("grabbing"));
                     return;
                 }
                 // A press on a link follows it rather than starting a
@@ -1507,6 +1513,11 @@ impl ReaderView {
                     if view.inner.session.borrow().selected_range().is_some() {
                         view.notify_selection();
                     }
+                    if was_grab {
+                        // The handle came along, so the pointer is still
+                        // on it: an open hand until it moves away.
+                        view.set_cursor(Some("grab"));
+                    }
                     view.area.queue_draw();
                     return;
                 }
@@ -1566,6 +1577,37 @@ impl ReaderView {
         }
         self.keep_controller(&drag);
         self.area.add_controller(drag);
+
+        // The pointer over a handle is an open hand, and a closed one
+        // while it drags — the old reader's `cursor: grab` / `grabbing`.
+        let motion = gtk::EventControllerMotion::new();
+        {
+            let view = self.clone();
+            let grabbing = grabbing.clone();
+            motion.connect_motion(move |_, x, y| {
+                if grabbing.get() {
+                    return;
+                }
+                let over = view.inner.handles.get().is_some_and(|handles| {
+                    handles::handle_at(&handles, x as f32, y as f32).is_some()
+                });
+                view.set_cursor(over.then_some("grab"));
+            });
+        }
+        {
+            let view = self.clone();
+            motion.connect_leave(move |_| view.set_cursor(None));
+        }
+        self.keep_controller(&motion);
+        self.area.add_controller(motion);
+    }
+
+    /// Show a named cursor over the area (`None` for the default), once
+    /// per change rather than per motion event.
+    fn set_cursor(&self, name: Option<&'static str>) {
+        if self.inner.cursor.replace(name) != name {
+            self.area.set_cursor_from_name(name);
+        }
     }
 
     fn keep_controller(&self, controller: &impl IsA<gtk::EventController>) {

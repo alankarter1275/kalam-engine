@@ -809,8 +809,10 @@ at the press when a selection stood; documented in the code now).
   chip re-places itself); handles are painted after the page in paged
   mode and after the dividers in scrolled mode. `SelectedText` gains
   `start_rect`/`end_rect` (informational; Kalam reads `text`/`rect` by
-  field so nothing breaks). No cursor change (GTK `set_cursor` on the
-  drawing area would need a motion controller; deferred, WORKING §8).
+  field so nothing breaks). Cursor: a `gtk::EventControllerMotion` on
+  the area sets `set_cursor_from_name("grab")` over a handle's hit rect,
+  `"grabbing"` from the press until release, `None` off the handles or
+  on leave — set only on change (`Inner.cursor`).
 - Tests: `page.rs` unit tests for `band_extent`; pagination test that
   the band is glyph box + padding at line-height 2.2 and the painted op
   matches `rects_for_range`; `bidi.rs` reads `Band` ops; session tests
@@ -818,11 +820,10 @@ at the press when a selection stood; documented in the code now).
   `handles.rs` tests for placement, hit areas, overlap preference, and
   painted pixels; `view.rs` test for `ends()`.
 
-**Not done / to watch.** Grab cursor; handle grips in a strip when the
-selection's first or last line is scrolled off screen (the handle is
-simply not painted — `ends()` sees only visible bands); a selection
-across two bands of the same chapter works (rects come from every
-visible band).
+**To watch.** Handle grips in a strip when the selection's first or
+last line is scrolled off screen (the handle is simply not painted —
+`ends()` sees only visible bands); a selection across two bands of the
+same chapter works (rects come from every visible band).
 
 ## R13. Tooling facts verified along the way
 
