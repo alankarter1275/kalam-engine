@@ -728,6 +728,16 @@ falls through to the tap zones when no word handler is connected
 (next widget change; bundle regeneration then). (4) WORKING.md gains
 the lesson: overlay UI is a redesign, plan for screenshot rounds.
 
+## R12i. Widget: a tap on text is a word only when someone is listening (2026-09-11)
+
+**Change.** `ReaderView`'s `drag_end` (`view.rs` ~:1447) now asks
+whether a word callback is connected before treating a tap on text as
+a word; with none, the tap falls through to the page-turn zones as if
+it had landed on margin. Behaviour for the demo (which connects one)
+is unchanged; for Kalam, which will not connect one, a tap on a word
+turns the page, matching `main`. INTEGRATION.md 3e and step-4 item 6
+corrected. No API change; `connect_word` keeps its signature.
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,

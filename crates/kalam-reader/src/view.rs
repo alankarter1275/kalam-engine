@@ -417,7 +417,9 @@ impl ReaderView {
     }
 
     /// Called when the reader taps a word (press and release without
-    /// moving, on text). Kalam opens its dictionary popover.
+    /// moving, on text). Connecting this makes a tap on text a word
+    /// event instead of a page turn; a host that has no tap-to-look-up
+    /// (Kalam, since it removed the feature) simply never connects it.
     pub fn connect_word(&self, f: impl Fn(&TappedWord) + 'static) {
         self.inner.callbacks.borrow_mut().word = Some(Box::new(f));
     }
@@ -1437,10 +1439,14 @@ impl ReaderView {
                 // The press anchored an empty selection; drop it before
                 // anything else, so the anchor does not outlive the page.
                 s.selection_clear();
-                // A tap on a word is a dictionary lookup — Kalam's
-                // tap-to-look-up — and takes precedence over the page-turn
-                // zones, so a word near the edge is still a word.
+                // A tap on a word is a dictionary lookup only for a host
+                // that asked for one (`connect_word`); then it takes
+                // precedence over the page-turn zones, so a word near the
+                // edge is still a word. With no word handler a tap on text
+                // is just a tap, and the zones decide what it does.
+                let wants_words = view.inner.callbacks.borrow().word.is_some();
                 let word = match view.band_at(y) {
+                    _ if !wants_words => None,
                     Some((band, py)) => {
                         word_at(&mut s, band.spine, band.page, x, py).map(|mut word| {
                             word.rect = view.to_widget_rect(&band, word.rect);

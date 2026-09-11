@@ -431,7 +431,7 @@ Then, arm by arm (only the changed lines shown):
 * **`QuoteSelection`** (new) — same shape with kind `"quote"`, colour `"yellow"`, and no `show_highlight`; `crate::notify::compact("Quote saved", "")`. Call `view.clear_selection()` after reading `view.selected_text()`.
 * **`CopySelection`** (new) — `if let Some(text) = view.selected_text() { view.widget().clipboard().set_text(&text); view.clear_selection(); }`.
 * **`LookUpSelection`** (new) — `let word = view.selected_text(); view.clear_selection();` then fall into the same code as `EngineWord` with `sentence = None` and the chip's rect as anchor (keep the rect from the last `EngineSelection` in `self.dict_anchor`).
-* **`EngineWord { word, sentence, rect, highlight }`** (new) — the old `"dict-lookup"` bridge message. If `highlight` is `Some(id)`, the tap landed on an existing highlight: open the Highlights sidebar on it (`sender.input(ReaderMsg::ToggleAnnotation(id))`) and return. Otherwise it is the body of the old `"dict-lookup"` arm verbatim (lookup_entry, saved_word_exists, sense hint, log_dict_lookup) ending in `self.show_dict(&data, saved, hint_index, rect, &sender)` (3f) instead of `show_dict_in_webview`. Set `self.dict_context = Some(sentence)`.
+* **`EngineWord { word, sentence, rect, highlight }`** — **do not wire this for Kalam.** Kalam's `main` had removed tap-to-look-up (the JS `fireTapLookup` has no caller), and a connected word handler makes a tap on text a lookup instead of a page turn. Leave `connect_word` unconnected; the chip's Look up is the only entry. The rest of this bullet is kept for a host that wants the feature: the old `"dict-lookup"` bridge message. If `highlight` is `Some(id)`, the tap landed on an existing highlight: open the Highlights sidebar on it (`sender.input(ReaderMsg::ToggleAnnotation(id))`) and return. Otherwise it is the body of the old `"dict-lookup"` arm verbatim (lookup_entry, saved_word_exists, sense hint, log_dict_lookup) ending in `self.show_dict(&data, saved, hint_index, rect, &sender)` (3f) instead of `show_dict_in_webview`. Set `self.dict_context = Some(sentence)`.
 * **`DictSearchSelect(word)`** — replace `self.show_dict_in_webview(&word, None, None)` with `self.show_dict(..)` anchored at `self.dict_anchor` (or the widget's centre if `None`).
 * **`ClearDict`** — replace the `eval_js` with `engine::dismiss(self.dict_popover.take());`.
 * **`SaveCurrentWord`** — unchanged; after a save, rebuild the popover so the button reads "Saved ✓" (call `show_dict` again), or simply dismiss it.
@@ -590,7 +590,10 @@ Open a long novel and check, in this order:
 5. Drag-select text → chip; pick a colour → highlight painted, listed
    in the Highlights sidebar; change font size → highlight still on the
    same words; reopen the book → still there.
-6. Tap a word → dictionary popover; Save word → Words sidebar.
+6. Select a word → chip → Look up → dictionary popover; Save word →
+   Words sidebar. (A plain tap on a word turns the page by zone: Kalam
+   removed tap-to-look-up before the swap, so do not call
+   `connect_word`.)
 7. Click a footnote link → follows in place; click a web link → browser.
 8. Memory: `ps -o rss= -p $(pidof kalam)` while reading; the target is
    under 100 MB more than the library page alone.
