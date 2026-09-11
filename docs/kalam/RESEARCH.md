@@ -517,6 +517,67 @@ step 4 on Kalam's branch (`-j 1`). Visual faults (colour, spacing,
 blank areas, stuck frames) are engine-side reports even when no message
 names `kalam_reader`.
 
+## R12e. First step-4 numbers, and the TOC question (2026-09-11)
+
+**Owner's run** (Kalam branch `arena/01a08cfb-calibre-alt`, `KALAM_TIMING=1`,
+Arch, 4 GB, HDD, real library of ~150 books):
+- `startup_db_open` 2 111.8 ms, `startup_first_page` 402.7 ms,
+  `window_shown` 5 664 ms — Kalam's own start-up (SQLite on the HDD +
+  GTK), unchanged by the swap.
+- `book_open` **63.5 / 101.5 / 41.4 / 106.7 ms** on first opens of four
+  books, **2.7–6.1 ms** on re-opens. The PLAN §10 "first page well under
+  a second" criterion is met inside Kalam, not just in the demo.
+- RSS: library page 216–218 MB; reading 309–345 MB (peak 345) →
+  ≈100–127 MB over the library page against the <100 MB target. The
+  engine's own cache is ~2 MB (R10); the rest is GTK texture memory
+  for the page, fonts, and Kalam's sidebar data. Borderline; not a
+  blocker. `view.close()` is wired in Kalam's `shutdown`
+  (`src/pages/reader/mod.rs:1478`), so it does not grow per book.
+- `Gtk-CRITICAL: Unable to connect to the accessibility bus` — no
+  AT-SPI bus in the owner's session; Kalam's CI prints the same line.
+  Environmental; `GTK_A11Y=none` silences it.
+
+**TOC.** `chapbook toc` on the owner's novel (a Calibre Kindle→EPUB
+conversion; files `CR%21…_split_NNN.html`, `#fileposNNNNN` anchors)
+prints 29 entries one-per-file at split_008..036 whose labels are
+"Acknowledgements", "The Shiva Trilogy", "Chapter", "2 :" … "26 :",
+"Glossary", followed by 21 real chapter names that ALL point into
+split_007 at anchors ~250 bytes apart — i.e. at the lines of the
+book's own printed contents page, not at the chapters. Nesting is
+unknown (the chat strips the two-space indentation). The owner reports
+(d): wrong entries + wrong targets + garbled names, which is exactly
+what a sidebar built from that list looks like.
+
+Parser comparison, by reading:
+- Old Kalam `parse_nav_or_ncx` (epub_book.rs, deleted at 73ed7cf): nav
+  first if it yields anything (scans every `href=…</a>` after the first
+  `<nav`, label = `strip_tags` of the inner HTML), else NCX (roxmltree,
+  every `navPoint` flattened DFS, label = first `<text>` descendant);
+  spine match lenient (`ends_with` / file-name equality).
+- Engine (rbook 0.7.10): `toc().contents()` = the `epub:type="toc"` nav
+  if present, else NCX `navMap`; labels = all text inside `<a>` /
+  `<navLabel>` (`XmlReader::get_element_text` collects nested text);
+  a tree; `convert_toc` matches `Href::path()` against `SpineItem.href`
+  exactly — safe, because both come through rbook's `require_href` →
+  `uri::encode` (`!` → `%21` on both sides).
+- No content difference found. If the file's NCX says `<text>2 :</text>`,
+  both readers showed "2 :". Old Kalam's spine-title rule was
+  *last* TOC label wins; the engine's `chapter_titles` is *first* wins
+  (matters only for split_007 here).
+- Kalam-side inconsistency in the new `rebuild_toc`
+  (`src/pages/reader/lists.rs:199`): rows are built from top-level
+  entries only, while `toc_spine_indices` (active row, scroll centring)
+  recurses. The old sidebar walked a flat list, so a nested TOC
+  (parts → chapters) now loses its chapter rows. Harmless for flat
+  TOCs; needs a recursive walk with depth → indent. Kalam jumps by
+  `TocSelect(spine_index)` → `goto_chapter(idx, 0.0)`; fragments are
+  ignored as before. `ReaderView::goto_toc(&entry)` honours fragments
+  and is unused by Kalam.
+
+**Open.** The NCX as written (owner to dump), whether it nests, and
+how the old reader showed this book. **Decision.** No engine change
+until the dump is read. Dictionary-card styling is the round after.
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,
