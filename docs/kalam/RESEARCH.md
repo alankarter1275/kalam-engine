@@ -578,6 +578,70 @@ Parser comparison, by reading:
 how the old reader showed this book. **Decision.** No engine change
 until the dump is read. Dictionary-card styling is the round after.
 
+## R12f. TOC verdict, and the dictionary card's design debt (2026-09-11)
+
+**TOC — closed, parity.** The owner dumped `toc.ncx`: calibre 0.8.29,
+`dtb:depth` 2, flat `navMap`, labels literally `<text>Chapter</text>`,
+`<text>2 :</text>` … `<text>26 :</text>` (the chapter *names* were in a
+second element calibre's converter dropped) plus the printed contents
+page as 21 `#filepos` entries into `split_007`. The old WebKit reader
+showed the same list ("it also shows the same thing"). Nothing for
+either side to fix; a "repair a calibre-mangled NCX" heuristic is out
+of scope. The Kalam-side nesting bug in `rebuild_toc` (R12e) stands as
+a separate, real defect for nested TOCs.
+
+**Dictionary card — why it "looks completely off".** The recipe's
+`build_dict_popover` was written as a *functional* stand-in: plain
+`gtk::Box`es, six 0.9 rem CSS rules, "Save word"/"Close" text buttons.
+The old popup (`inject_reading_shell`, dump :13307–13552 JS and
+:14648–14925 CSS) was a designed component. Its spec, for the rebuild:
+- Frame: 320 px wide (max 80 % of the window), radius 18, 1 px
+  `@kalam_border`, background `@kalam_surface`, large drop shadow.
+  Anchored below the word when there is room, above otherwise, never
+  covering it.
+- Header (padding 14/16/10/16, 1 px bottom border, slight shadow):
+  left — word in **serif 22 px 600** (Georgia/DejaVu Serif), then
+  pronunciation in **monospace 10 px** dim (hidden when absent; value
+  is `/{ipa}` with no trailing slash — an old quirk, keep it), then a
+  POS pill (10 px italic, accent text on 14 % accent, radius 999) only
+  when the entry has fewer than two POS groups; right — three **26 px
+  round icon buttons** on `@kalam_surface_2` with a border: ☆/✓ save
+  (saved = accent border + 14 % accent fill), a magnifier "Find in
+  chapter", ⧉ copy (word + numbered definitions to clipboard, glyph
+  flips to ✓ for 900 ms).
+- Body: max-height 300, scrolls with hidden scrollbar, 40 px bottom
+  fade; padding 4/16/40/16. Section labels **9 px 700 uppercase,
+  letter-spacing 0.08 em, dim** ("Definitions", "Synonyms", "Antonyms",
+  "Idioms", "Did you mean" / "Words in this phrase").
+- Senses: number in monospace 10 px accent, 16 px min width; text
+  13 px / 1.55; example serif italic 12 px dim; hinted sense carries a
+  "LIKELY HERE" pill (9 px 700 uppercase accent). First 3 shown, rest
+  behind "Show N more" (11.5 px accent, toggles to "Show less").
+  Senses grouped by POS with an uppercase divider row (noun, verb,
+  adjective, adverb first, then first-seen order; unlabelled last, no
+  divider) — the flat sense index is preserved for the hint.
+- Chips (synonyms / antonyms / suggestions): radius 999, padding 3/11,
+  11.5 px, 1 px border; synonyms accent-tinted, antonyms `#e06c75`
+  tinted; click = lookup that word.
+- Idioms: cards on `@kalam_surface_2`, radius 9, padding 8/11; phrase
+  serif italic 12.5 px, definition 12 px / 1.5.
+- Empty: "No entry for 'word'." 13 px dim, padding 18/4.
+- Colours are the app tokens (`@kalam_surface`, `_surface_2`,
+  `_border`, `_text`, `_text_dim`, `_accent`), so the card follows the
+  app theme, not the reading theme.
+- Behaviours the GTK card dropped: the header cross-fade on chip
+  re-lookups, ↑/↓ sense focus + Enter-to-save, "Find in chapter"
+  (needs a search the widget does not expose — `Session::search`
+  exists but `ReaderView` has no `search()`; deferred), unsave toggle
+  (R12c, deferred).
+
+**Decision.** The card is Kalam UI, drawn with Kalam's CSS tokens —
+its rebuild is the Kalam agent's work, spec above, with the engine's
+`patch/engine.rs` updated to match once it lands (the patch is the
+recipe's copy of Kalam's file, not the other way round). Engine
+follow-up if the owner wants "Find in chapter": expose search on
+`ReaderView` (WORKING.md §8).
+
 ## R13. Tooling facts verified along the way
 
 - **docs.rs cosmic-text 0.19.0:** `Buffer::new(&mut FontSystem, Metrics)`,

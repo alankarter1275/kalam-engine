@@ -227,6 +227,9 @@ real tree in RESEARCH.md (R14 open questions first).
 
 ## 8. Deferred (known, not done, in no particular order)
 
+- `ReaderView::search(&str)` — `chapbook_reader::Session::search`
+  exists (R13) but the widget does not expose it. The old dictionary
+  popup's "Find in chapter" button needs it (R12f).
 - "Unsave" from the dictionary card. The old popup's bookmark toggle
   could forget a saved word; the new card only saves ("Saved ✓" is
   disabled afterwards) and unsaving lives on the Words page. Kalam's
