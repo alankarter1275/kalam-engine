@@ -97,9 +97,10 @@ stays that way.
     and `DomNode<'a>` is a `&'a Node` newtype. Documents are static after
     parse: no incremental restyle, no snapshots, no shadow DOM, no
     animations, no scripting — which deletes most of stylo's invalidation
-    surface. Parsing is lenient html5ever by default (real EPUBs contain
-    HTML-isms); a `strict-xml` feature runs xml5ever on the same tree
-    builder.
+    surface. Parsing is XML first (xml5ever; EPUB content documents are
+    XML and the HTML algorithm has no `<a id="x"/>` shorthand — such a tag
+    swallows the rest of the chapter), falling back to lenient html5ever
+    for files that are not well-formed, on the same tree builder.
   - `cascade` — owns the `Stylist` + media `Device` ("screen"), embeds the
     UA stylesheet (`ua.css` — the profile boundary: what is not in the EPUB
     3 CSS profile gets no UA support), registers author sheets from the

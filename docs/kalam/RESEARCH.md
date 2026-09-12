@@ -852,6 +852,90 @@ same chapter works (rects come from every visible band).
   returns per-file `patch` text — enough to review small upstream
   changes without cloning.
 
+## R15. Why a whole chapter rendered as one paragraph (2026-09-12)
+
+The user compared the same book (Nyxia, Penguin Random House, EPUB 3) in
+Kalam-with-engine and in the old WebKit reader (`docs/files/kalam-engine.png`,
+`docs/files/webkit gtk.png`, `docs/files/Nyxia (Reintgen Scott).epub`).
+In the engine the chapter heading, subtitle and every paragraph ran
+together in one flush-left block with no indents; WebKit showed the
+book's design (sans heading, bold grey subtitle, 1em indents, justified).
+Two independent causes, both confirmed by reading the file.
+
+**Cause 1 — the parser.** The chapter opens
+`<body><a id="d1-d2s3d3s3"/><div class="page_top_padding"><span
+epub:type="pagebreak" id="page3" title="3"/>`. EPUB content documents are
+XML, and `<a …/>` is an empty element there. `parse_xhtml` used only
+html5ever, the *HTML* parsing algorithm, in which `/>` on a non-void
+element is ignored: the `<a>` opens and never closes, the `<div>` and
+every `<p>` become its descendants, and since `<a>` is inline,
+`build_block` sees no block child and `collect_inline` flattens the
+whole chapter into a single inline run (`boxtree.rs`: "block-in-inline
+… v1 flattens it into the surrounding inline flow"). WebKit picks its
+parser by media type (`application/xhtml+xml` → XML) and never saw the
+problem. Every PRH title uses this pattern (the `<a id>` is the
+Adept/DRM anchor; the `<span epub:type="pagebreak"/>` is the print page
+marker), and so do many other publishers, so this was not one book.
+
+Fix: `parse_xhtml` runs xml5ever first over the same `TreeSink`, and
+falls back to html5ever when the XML pass reported *any* parse error
+(one recovered error means the tree may already be shaped by recovery
+rules) or when the root is not an XHTML `<html>` (an XML parse of a
+namespace-less document leaves every element in no namespace, where the
+UA sheet and `is_html_element` cannot see them; the HTML tree builder
+puts them in XHTML). The `strict-xml` feature that upstream documented
+was never wired to anything — the crate had the dependency declared
+optional and no `cfg` read it.
+
+xml5ever facts that matter (crate source read, 0.39/0.40): namespaces
+are bound properly (`process_namespaces` → `bind_qname`), so
+`xmlns="http://www.w3.org/1999/xhtml"` puts elements in `ns!(html)`,
+inline `<svg>`/`<math>` land in their own namespaces exactly as
+html5ever's foreign-content rules did, and `xlink:href` keeps
+`ns!(xlink)` (the SVG re-serializer relied on that). `epub:type`
+attributes bind to the epub namespace, which `ElementData::attr()`
+(empty-namespace lookup) simply does not see — same as before. Named
+entities: xml5ever's `NAMED_ENTITIES` is markup5ever's full HTML table,
+so `&nbsp;` does *not* error in the XML pass (the "named entity XML does
+not define" case in the fallback test still falls back because of the
+unclosed `<p>` and bare `&`). The tree builder drops whitespace-only
+character tokens only at document level (before the root and after it);
+whitespace between `<html>` and `<head>` is a real text node.
+
+**Consequence — `LOCATOR_VERSION` 2 → 3.** That `<html>`–`<head>`
+whitespace node is exactly what html5ever discards ("before head"
+insertion mode drops whitespace), so the locator text of every
+well-formed chapter gained a `\n` at the front: all seven golden anchors
+in `locator_text.rs` moved by +1, and the three CLI layout snapshots'
+`loc=` columns with them. For mis-nested files the shift is arbitrary
+(the tree itself changes). Per `docs/LOCATORS.md` the version bumps and
+old offsets take the quote path; Kalam's stored positions from the
+engine builds so far (all pre-release) heal on first open.
+
+**Cause 2 — the adapter's settings.** `KalamPrefs::reading_settings()`
+hard-codes `publisher_styles: false`, `justify: false` and
+`font_family: Some(BODY_FONT)`. `publisher_styles: false` makes
+`chapbook-reader/src/layout.rs` pass no author sheets to the cascade,
+so the book's margins, `text-indent`, `text-align`, font sizes and the
+`.sans` heading family were all thrown away, and the flat block became
+a *flush-left* flat block at one size. The old WebKit reader
+(`epub_book.rs:3025–3070` on calibre-alt `main`) never did that: its
+injected sheet overrides, with `!important`, only colours, `font-size`
+and `line-height` on `html, body` and the block elements, `font-family`
+on `body` only, heading `font-weight: 650; line-height: 1.25;
+margin-top: 1.4em`, link decoration, and `img { max-width: 100% }`. The
+book's own stylesheet stayed in force for everything else. So "Kalam's
+theme wins over the publisher's" (PLAN §10) meant *colours and reading
+typography*, not layout. This is round 2 of the fix (next entry).
+
+What WebKit's screenshot shows that the engine must reproduce for this
+book, for reference: `p.para-p { text-indent: 1em; text-align:
+justify; margin-bottom: 0.2em }`, `p.para-pf` (first paragraph) no
+indent, `.para-cda-alt-chap-pg { font-size: 1.57em }` + `.sans`
+(Helvetica stack) for "DAY 1, 8:47 A.M.", `.para-cda1 { font-weight:
+bold; font-size: 1.06em; color: #616265; margin-bottom: 3.91em }` for
+"Aboard *Genesis 11*", `div.page_top_padding { margin-top: 10% }`.
+
 ## R14. Open questions (not researched yet)
 
 - Does Kalam's `lists.rs::rebuild_toc` walk `OpenBook.spine` titles or a

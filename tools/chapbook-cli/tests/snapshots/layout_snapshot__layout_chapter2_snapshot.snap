@@ -5,15 +5,15 @@ expression: "commands::layout(&fixture(), 1).unwrap()"
 pages: 2
 anchor #ch2 -> page 0
 anchor #part2 -> page 0
--- page 0 (locator start 9)
-  [   69.9,   40.0  460.1x 54.0] base= 37.8 loc=9     "Chapter Two: A Continuation"
-  [   61.6,  118.1  476.5x 27.0] base= 18.9 loc=41    "This chapter exists so the spine has more than one entry, so locators"
-  [   40.0,  145.1  441.4x 27.0] base= 18.9 loc=115   "can point past spine index zero, and so forced page breaks have"
-  [   40.0,  172.1  137.7x 27.0] base= 18.9 loc=179   "somewhere to land."
-  [   40.0,  221.5  179.3x 40.5] base= 28.3 loc=206   "Part the Second"
-  [   61.6,  284.5  491.4x 27.0] base= 18.9 loc=226   "An anchor above should appear in the anchors map when layout runs."
-  [   40.0,  311.5  518.2x 27.0] base= 18.9 loc=297   "Unicode coverage: naïve café — em-dash, “curly quotes”, and the ligature-"
-  [   40.0,  338.5  167.8x 27.0] base= 18.9 loc=374   "friendly word affluence."
--- page 1 (locator start 403)
-  [   61.6,   40.0  488.5x 27.0] base= 18.9 loc=403   "This paragraph requests a page break before itself via the legacy page-"
-  [   40.0,   67.0  159.0x 27.0] base= 18.9 loc=478   "break-before property."
+-- page 0 (locator start 10)
+  [   69.9,   40.0  460.1x 54.0] base= 37.8 loc=10    "Chapter Two: A Continuation"
+  [   61.6,  118.1  476.5x 27.0] base= 18.9 loc=42    "This chapter exists so the spine has more than one entry, so locators"
+  [   40.0,  145.1  441.4x 27.0] base= 18.9 loc=116   "can point past spine index zero, and so forced page breaks have"
+  [   40.0,  172.1  137.7x 27.0] base= 18.9 loc=180   "somewhere to land."
+  [   40.0,  221.5  179.3x 40.5] base= 28.3 loc=207   "Part the Second"
+  [   61.6,  284.5  491.4x 27.0] base= 18.9 loc=227   "An anchor above should appear in the anchors map when layout runs."
+  [   40.0,  311.5  518.2x 27.0] base= 18.9 loc=298   "Unicode coverage: naïve café — em-dash, “curly quotes”, and the ligature-"
+  [   40.0,  338.5  167.8x 27.0] base= 18.9 loc=375   "friendly word affluence."
+-- page 1 (locator start 404)
+  [   61.6,   40.0  488.5x 27.0] base= 18.9 loc=404   "This paragraph requests a page break before itself via the legacy page-"
+  [   40.0,   67.0  159.0x 27.0] base= 18.9 loc=479   "break-before property."

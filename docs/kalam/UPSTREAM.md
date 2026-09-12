@@ -160,6 +160,10 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-reader/src/zoom.rs` | `apply_view` scales `Band` like `FillRect` | New op |
 | `crates/chapbook-render-tinyskia/src/lib.rs` | `Band` → `fill_band`: rounded `PathBuilder` path, `Paint.blend_mode` | New op |
 | `crates/chapbook-layout/tests/pagination.rs`, `crates/chapbook-reader/tests/{bidi,session}.rs` | Selection fills matched as `Band`; tests for the band geometry, `selection_grab_end`, `selection_blend` | Covers the feature |
+| `crates/chapbook-layout/src/dom/parse.rs` | `parse_xhtml` parses as XML first (xml5ever, `parse_as_xml`) and falls back to the HTML algorithm (`parse_as_html`) when the XML parser reported any error or the root is not an XHTML `<html>`; `Sink` counts `parse_error`s and `finish()` returns them; the shared post-parse passes moved to `finish()` | R15: the HTML algorithm has no `<a id="x"/>` shorthand, so a self-closed anchor swallowed the rest of a Penguin Random House chapter and every paragraph flattened into one. Browsers read `.xhtml` as XML; so does the engine now |
+| `crates/chapbook-layout/Cargo.toml`, `src/dom/mod.rs`, `docs/ARCHITECTURE.md` | `xml5ever` is a plain dependency; the `strict-xml` feature (which no code ever read) is gone | Same |
+| `crates/chapbook-core/src/locator.rs` | `LOCATOR_VERSION` 2 → 3 | The XML tree keeps the whitespace text node between `<html>` and `<head>` that the HTML parser drops, so offsets of well-formed chapters shift; stored version-2 offsets heal through the quote path |
+| `crates/chapbook-layout/tests/parse_extract.rs`, `tests/snapshots/locator_text__golden_offset_map_chapter1.snap`, `tools/chapbook-cli/tests/snapshots/layout_snapshot__*.snap` | Five parse tests appended (the PRH shape, fallback cases, XML prologue); goldens re-baselined at +1 | Covers the feature |
 
 New files inside inherited crates (no conflict risk, listed for completeness):
 

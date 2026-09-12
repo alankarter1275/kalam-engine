@@ -67,3 +67,13 @@ redesign:
 
 Schema hygiene for the same reason: stable ids, updated-at timestamps, and
 soft deletes on positions/annotations, even while everything is single-device.
+
+## Version history
+
+- 1 → 2: the MathML altimg/alttext fallback rewrite runs before extraction.
+- 2 → 3 (kalam): content documents are parsed as XML first, HTML as the
+  fallback (`chapbook-layout/src/dom/parse.rs`). The XML tree keeps the
+  whitespace text node between `<html>` and `<head>` that the HTML parser
+  discards, and nests self-closed empty elements (`<a id="x"/>`) correctly,
+  so offsets shift for every well-formed chapter. See
+  `docs/kalam/RESEARCH.md` R15.

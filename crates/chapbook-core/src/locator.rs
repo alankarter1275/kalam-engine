@@ -77,8 +77,14 @@
 /// constitutes a version bump.
 ///
 /// History: 1 → 2 added the MathML altimg/alttext fallback rewrite to the
-/// post-parse tree.
-pub const LOCATOR_VERSION: u32 = 2;
+/// post-parse tree. 2 → 3 (kalam): content documents are parsed as XML
+/// first, HTML as the fallback. The XML tree keeps the whitespace text
+/// node between `<html>` and `<head>` that the HTML parser discards, and
+/// nests self-closed `<a …/>`/`<span …/>` correctly, so the locator text
+/// of a well-formed chapter shifts by a few characters at the front and
+/// the tree behind every offset can differ. Stored offsets at version 2
+/// take the quote path (resolve chain step 2) and heal themselves.
+pub const LOCATOR_VERSION: u32 = 3;
 
 /// Number of context characters captured on each side of a position for the
 /// [`Quote`] layer.

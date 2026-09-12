@@ -22,6 +22,7 @@ unicode-script = { workspace = true }
 sys-locale = { workspace = true }
 hyphenation = { workspace = true }
 html5ever = { workspace = true }
+xml5ever = { workspace = true }
 markup5ever = { workspace = true }
 slotmap = { workspace = true }
 euclid = { workspace = true }
@@ -46,9 +47,9 @@ chapbook-epub = { workspace = true }
 
 [features]
 default = ["svg", "mathml"]
-# Strict well-formed-XML parsing of content documents via xml5ever on the same
-# tree builder; the default html5ever path is lenient about real-world EPUBs.
-strict-xml = ["dep:xml5ever"]
+# kalam: `strict-xml` is gone. Content documents are always parsed as XML
+# first (xml5ever), with the lenient html5ever parse as the fallback for
+# files that are not well-formed; see `dom::parse`.
 # SVG images (`<img src="*.svg">` and inline `<svg>`), rasterized into the
 # ImageStore by resvg. Off, SVGs degrade exactly as before the feature
 # existed: undecodable `<img>` vanishes, inline `<svg>` flattens to its text.
@@ -59,10 +60,6 @@ svg = ["dep:resvg", "dep:fontdb"]
 # ~820 KB of font in the binary — the stripped e-ink profile's reason to
 # say no.
 mathml = ["dep:formulary"]
-
-[dependencies.xml5ever]
-workspace = true
-optional = true
 
 [dependencies.resvg]
 workspace = true

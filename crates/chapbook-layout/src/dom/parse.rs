@@ -1,13 +1,14 @@
-//! html5ever tree building into the arena [`Document`].
+//! xml5ever / html5ever tree building into the arena [`Document`].
 //!
-//! html5ever's `TreeSink` methods take `&self`, so construction goes through
-//! interior mutability; the finished `Document` is extracted at `finish()`.
+//! Both parsers drive the same `TreeSink`; its methods take `&self`, so
+//! construction goes through interior mutability and the finished
+//! `Document` is extracted at `finish()`.
 
 use std::borrow::Cow;
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 
 use html5ever::tendril::TendrilSink;
-use html5ever::{parse_document, Attribute, ParseOpts, QualName};
+use html5ever::{Attribute, ParseOpts, QualName};
 use markup5ever::interface::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use markup5ever::local_name;
 
@@ -18,17 +19,65 @@ use super::tree::{Document, ElementData, Node, NodeData, NodeId};
 /// Parse the bytes of an XHTML content document.
 ///
 /// `base_path` is the document's own container-root path within its EPUB,
-/// kept for resolving relative hrefs later. Parsing is lenient (HTML parsing
-/// algorithm): real-world EPUBs contain named entities, unclosed tags, and
-/// other HTML-isms that a strict XML parse would reject. Bytes are decoded as
-/// UTF-8 (lossily); non-UTF-8 EPUBs are rare enough to punt on.
+/// kept for resolving relative hrefs later. Bytes are decoded as UTF-8
+/// (lossily); non-UTF-8 EPUBs are rare enough to punt on.
+///
+/// kalam: XML first, HTML as the fallback. EPUB content documents are XML
+/// by specification, and mainstream publishers write them that way —
+/// `<a id="x"/>`, `<span epub:type="pagebreak"/>` — and the HTML parsing
+/// algorithm has no self-closing syntax for those elements: `<a …/>` opens
+/// an `<a>` that never closes, the rest of the chapter lands inside it,
+/// and every paragraph flattens into one inline run (seen on a Penguin
+/// Random House title, chapter-as-one-paragraph). A browser picks its
+/// parser by media type and reads `.xhtml` as XML; this does the same,
+/// keeping the lenient HTML parse for files that are not well-formed
+/// (named entities, unclosed tags), which the XML parse reports as errors.
 pub fn parse_xhtml(bytes: &[u8], base_path: &str) -> Result<Document> {
+    if let Some(document) = parse_as_xml(bytes, base_path) {
+        return finish(document);
+    }
+    parse_as_html(bytes, base_path)
+}
+
+/// The strict pass. `None` when the XML parser reported anything at all —
+/// one recovered error means the tree may be shaped by recovery rules
+/// (the same failure class the fallback exists for), so the whole
+/// document goes to the HTML parser instead of trusting a partial tree.
+/// Also `None` when the result has no XHTML `<html>` root: an entity-only
+/// or namespace-less document is better served by the HTML tree builder,
+/// which puts every element in the XHTML namespace where the UA sheet and
+/// the box tree look for it.
+fn parse_as_xml(bytes: &[u8], base_path: &str) -> Option<Document> {
     let sink = Sink {
         doc: RefCell::new(Document::new(base_path.to_string())),
+        errors: Cell::new(0),
     };
-    let mut document = parse_document(sink, ParseOpts::default())
+    let parser = xml5ever::driver::parse_document(sink, xml5ever::driver::XmlParseOpts::default());
+    let (document, errors) = parser.from_utf8().one(bytes);
+    if errors > 0 {
+        return None;
+    }
+    let root = document.document_element()?;
+    document
+        .is_html_element(root, &local_name!("html"))
+        .then_some(document)
+}
+
+/// The lenient pass: the HTML parsing algorithm, which copes with named
+/// entities, unclosed tags, and the other HTML-isms of real-world EPUBs.
+fn parse_as_html(bytes: &[u8], base_path: &str) -> Result<Document> {
+    let sink = Sink {
+        doc: RefCell::new(Document::new(base_path.to_string())),
+        errors: Cell::new(0),
+    };
+    let (document, _errors) = html5ever::parse_document(sink, ParseOpts::default())
         .from_utf8()
         .one(bytes);
+    finish(document)
+}
+
+/// The post-parse passes both parsers share.
+fn finish(mut document: Document) -> Result<Document> {
     // MathML gets no layout from stylo; capture each <math> source for the
     // native renderer, then rewrite the subtree into its EPUB altimg/alttext
     // fallback before anything walks the tree — the fallback tree is the
@@ -46,6 +95,9 @@ pub fn parse_xhtml(bytes: &[u8], base_path: &str) -> Result<Document> {
 
 struct Sink {
     doc: RefCell<Document>,
+    /// Parse errors reported so far. Only the XML pass reads it: any error
+    /// there sends the document to the HTML parser.
+    errors: Cell<u32>,
 }
 
 impl Sink {
@@ -86,14 +138,16 @@ impl Sink {
 
 impl TreeSink for Sink {
     type Handle = NodeId;
-    type Output = Document;
+    type Output = (Document, u32);
     type ElemName<'a> = Ref<'a, QualName>;
 
-    fn finish(self) -> Document {
-        self.doc.into_inner()
+    fn finish(self) -> (Document, u32) {
+        (self.doc.into_inner(), self.errors.get())
     }
 
-    fn parse_error(&self, _msg: Cow<'static, str>) {}
+    fn parse_error(&self, _msg: Cow<'static, str>) {
+        self.errors.set(self.errors.get().saturating_add(1));
+    }
 
     fn get_document(&self) -> NodeId {
         self.doc.borrow().root

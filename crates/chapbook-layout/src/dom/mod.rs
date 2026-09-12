@@ -11,9 +11,10 @@
 //! invalidation surface and keeps the binding small. The structure of the
 //! trait impls follows blitz-dom's proven `stylo.rs` binding.
 //!
-//! Parsing is lenient html5ever by default — real-world EPUBs contain
-//! HTML-isms that strict XML parsing rejects. A `strict-xml` feature runs
-//! xml5ever over the same tree builder.
+//! Parsing is XML first (xml5ever — EPUB content documents are XML, and
+//! the HTML algorithm mis-nests their `<a id="x"/>` shorthand), falling
+//! back to lenient html5ever for files that are not well-formed. Both run
+//! over the same tree builder; see `parse`.
 
 mod cfi;
 mod foreign;
