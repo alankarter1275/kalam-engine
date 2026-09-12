@@ -152,7 +152,10 @@ mod tests {
         assert!(noise("html5ever::tree_builder", FOSTER));
         // Anything else those crates say is still a record, and the same
         // words from an engine crate are too.
-        assert!(!noise("xml5ever::tree_builder", "Current node doesn't match tag"));
+        assert!(!noise(
+            "xml5ever::tree_builder",
+            "Current node doesn't match tag"
+        ));
         assert!(!noise("chapbook_reader::loader", FOSTER));
     }
 

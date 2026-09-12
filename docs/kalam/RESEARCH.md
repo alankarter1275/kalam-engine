@@ -1076,9 +1076,13 @@ the `\n` after `</html>` (outside the root), which html5ever's "after
 after body" mode appends to `<body>`. So: every offset +1, same length.
 The snapshot files committed in ff3f24f already hold these numbers; the
 three CLI layout snapshots' `loc=`/`locator start` columns are +1 too and
-nothing else in them moves. `render_golden` PNGs are expected unchanged
-(a whitespace-only text node under `<html>` collapses to nothing). If CI
-disagrees with any of this, take CI's numbers — never reason them out.
+nothing else in them moves except the `Image { resource }` ids in the
+illustrated snapshot, which are arena slot keys (`node_tag`) and rose by
+one because the XML tree holds that one extra text node before `<head>`
+(CI on a9d1226: 4294967324 → 4294967325, 4294967350 → 4294967351; taken
+verbatim). `render_golden` PNGs did not change (a whitespace-only text
+node under `<html>` collapses to nothing). If CI ever disagrees with a
+number here, take CI's — never reason them out.
 
 **Lesson for agents.** A fallback that silently succeeds is a fallback
 that hides its own trigger. When a parser has a "strict or lenient" switch,
