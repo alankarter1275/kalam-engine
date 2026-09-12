@@ -46,17 +46,7 @@ impl log::Log for Stderr {
     }
 
     fn log(&self, record: &log::Record<'_>) {
-        if !self.enabled(record.metadata()) {
-            return;
-        }
-        // kalam: html5ever's tree builder logs this on every table with
-        // stray text between its rows (a common publisher error), then
-        // goes on to foster-parent the text anyway — the message is
-        // stale, not a lost feature. One real book printed it dozens of
-        // times; hide this one line rather than lower html5ever's level.
-        if record.target().starts_with("html5ever")
-            && record.args().to_string() == "foster parenting not implemented"
-        {
+        if !self.enabled(record.metadata()) || is_dependency_noise(record) {
             return;
         }
         // One line, prefixed by the crate that emitted it. Locking once
@@ -75,6 +65,33 @@ impl log::Log for Stderr {
     fn flush(&self) {
         let _ = std::io::stderr().flush();
     }
+}
+
+/// kalam: is this record one of the parsers' stale warnings?
+///
+/// Two lines the markup parsers log are messages left over from when a
+/// feature was missing, not reports of anything that happened, and `log`
+/// offers no way to drop one line of a dependency short of silencing its
+/// whole target. [`log_to_stderr`] drops them with this; a shell with its
+/// own backend can ask the same question.
+///
+/// - html5ever: "foster parenting not implemented", on every table with
+///   stray text between its rows (a common publisher error) — it then
+///   foster-parents the text anyway. One real book printed it dozens of
+///   times.
+/// - xml5ever: "stop_parsing for XML5 not implemented, full speed ahead!",
+///   at the end of every document it finishes — stopping is the last step
+///   of a *successful* parse. Once per chapter, forever.
+pub fn is_dependency_noise(record: &log::Record<'_>) -> bool {
+    let target = record.target();
+    let stale = if target.starts_with("html5ever") {
+        "foster parenting not implemented"
+    } else if target.starts_with("xml5ever") {
+        "stop_parsing for XML5 not implemented, full speed ahead!"
+    } else {
+        return false;
+    };
+    record.args().to_string() == stale
 }
 
 /// Send the engine's diagnostics to stderr at `warn` and above.
@@ -113,6 +130,30 @@ mod tests {
             target.split("::").next().unwrap().replace('_', "-"),
             "chapbook-reader"
         );
+    }
+
+    /// A record as a parser would emit it, asked the one question.
+    fn noise(target: &str, message: &str) -> bool {
+        is_dependency_noise(
+            &log::Record::builder()
+                .target(target)
+                .level(log::Level::Warn)
+                .args(format_args!("{message}"))
+                .build(),
+        )
+    }
+
+    #[test]
+    fn the_parsers_stale_warnings_are_named() {
+        // kalam: the two lines a reader would otherwise see per chapter.
+        const STOP: &str = "stop_parsing for XML5 not implemented, full speed ahead!";
+        const FOSTER: &str = "foster parenting not implemented";
+        assert!(noise("xml5ever::tree_builder", STOP));
+        assert!(noise("html5ever::tree_builder", FOSTER));
+        // Anything else those crates say is still a record, and the same
+        // words from an engine crate are too.
+        assert!(!noise("xml5ever::tree_builder", "Current node doesn't match tag"));
+        assert!(!noise("chapbook_reader::loader", FOSTER));
     }
 
     #[test]

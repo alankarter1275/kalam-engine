@@ -74,6 +74,7 @@ soft deletes on positions/annotations, even while everything is single-device.
 - 2 → 3 (kalam): content documents are parsed as XML first, HTML as the
   fallback (`chapbook-layout/src/dom/parse.rs`). The XML tree keeps the
   whitespace text node between `<html>` and `<head>` that the HTML parser
-  discards, and nests self-closed empty elements (`<a id="x"/>`) correctly,
-  so offsets shift for every well-formed chapter. See
-  `docs/kalam/RESEARCH.md` R15.
+  discards (typically one `\n` at the front), and nests self-closed empty
+  elements (`<a id="x"/>`) correctly where the HTML algorithm left them
+  open, so offsets shift for well-formed chapters. See
+  `docs/kalam/RESEARCH.md` R15 and R17.

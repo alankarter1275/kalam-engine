@@ -97,11 +97,7 @@ pub fn family_for(style: &ComputedValues, mut known: impl FnMut(&str) -> bool) -
 /// cosmic-text `Attrs` for a styled inline run. `metadata` is the span index
 /// the layout uses to map glyphs back to their source run; `family` is the
 /// run's resolved typeface, from [`family_for`].
-pub fn attrs_for<'s>(
-    style: &'s ComputedValues,
-    metadata: usize,
-    family: Family<'s>,
-) -> Attrs<'s> {
+pub fn attrs_for<'s>(style: &'s ComputedValues, metadata: usize, family: Family<'s>) -> Attrs<'s> {
     let font = style.get_font();
 
     let weight = Weight(font.font_weight.value().round() as u16);

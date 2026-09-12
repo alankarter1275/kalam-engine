@@ -84,7 +84,10 @@ fn arbitrary_bytes_do_not_panic() {
 // Random House EPUB whose every chapter rendered as one paragraph.
 
 /// Element children of `id`, by local name, in order.
-fn child_tags(doc: &chapbook_layout::dom::Document, id: chapbook_layout::dom::NodeId) -> Vec<String> {
+fn child_tags(
+    doc: &chapbook_layout::dom::Document,
+    id: chapbook_layout::dom::NodeId,
+) -> Vec<String> {
     doc.node(id)
         .children
         .iter()
@@ -137,6 +140,23 @@ fn self_closed_anchor_does_not_swallow_the_chapter() {
         extract_text(&doc),
         "DAY 1, 8:47 A.M.\nAboard Genesis 11\n“You all know why you’re here.”\nThere are ten of us at the table.\n"
     );
+}
+
+#[test]
+fn xml_lang_beside_lang_does_not_demote_a_document_to_html() {
+    // `xml:lang="en" lang="en"` on <html> is what the EPUB samples, calibre
+    // and InDesign write. xml5ever 0.39 compares attribute names by local
+    // name only and reports the pair as a duplicate; if that report sent
+    // the document to the HTML parser, the self-closed anchor would
+    // swallow the paragraph again — and it would for most books.
+    let xhtml = concat!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">"#,
+        r#"<body><a id="top"/><p>after the anchor</p></body></html>"#,
+    );
+    let doc = parse_xhtml(xhtml.as_bytes(), "ch.xhtml").unwrap();
+    let body = body_of(&doc);
+    assert_eq!(child_tags(&doc, body), vec!["a", "p"]);
+    assert_eq!(extract_text(&doc), "after the anchor\n");
 }
 
 #[test]

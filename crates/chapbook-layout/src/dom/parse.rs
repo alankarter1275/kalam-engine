@@ -43,6 +43,7 @@ pub fn parse_xhtml(bytes: &[u8], base_path: &str) -> Result<Document> {
 /// one recovered error means the tree may be shaped by recovery rules
 /// (the same failure class the fallback exists for), so the whole
 /// document goes to the HTML parser instead of trusting a partial tree.
+/// (One report is disregarded; see `Sink::parse_error`.)
 /// Also `None` when the result has no XHTML `<html>` root: an entity-only
 /// or namespace-less document is better served by the HTML tree builder,
 /// which puts every element in the XHTML namespace where the UA sheet and
@@ -145,7 +146,20 @@ impl TreeSink for Sink {
         (self.doc.into_inner(), self.errors.get())
     }
 
-    fn parse_error(&self, _msg: Cow<'static, str>) {
+    fn parse_error(&self, msg: Cow<'static, str>) {
+        // kalam: xml5ever 0.39 looks for duplicate attributes by local
+        // name alone, so `xml:lang="en" lang="en"` — the pair on the
+        // <html> of nearly every EPUB that calibre, InDesign or the spec's
+        // own samples produced — is reported as a duplicate, and the bare
+        // `lang` is dropped. That report must not demote a well-formed
+        // document to the HTML parser (which would re-open the
+        // self-closed-anchor bug for most books). A real duplicate loses
+        // its later copy, which is what the HTML algorithm does with one
+        // too. Fixed in xml5ever 0.40 (servo/html5ever#780); this line
+        // becomes dead once the dependency moves.
+        if msg == "Duplicate attribute" {
+            return;
+        }
         self.errors.set(self.errors.get().saturating_add(1));
     }
 

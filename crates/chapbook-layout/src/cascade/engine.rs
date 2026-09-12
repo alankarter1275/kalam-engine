@@ -101,7 +101,11 @@ impl StyleEngine {
         }
         // kalam: the shell's skin last, so among equal user-origin
         // declarations it is the one that wins.
-        if let Some(css) = settings.user_css.as_deref().filter(|c| !c.trim().is_empty()) {
+        if let Some(css) = settings
+            .user_css
+            .as_deref()
+            .filter(|c| !c.trim().is_empty())
+        {
             engine.append_sheet(css, Origin::User);
         }
         engine

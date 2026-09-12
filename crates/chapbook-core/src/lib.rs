@@ -25,7 +25,7 @@ pub use credential::{
     basic_authorization, Credential, CredentialKey, CredentialLookup, CredentialStore,
     EnvCredentials, Freshness, MemoryCredentials, NoCredentials,
 };
-pub use diagnostics::{log_to_stderr, log_to_stderr_at};
+pub use diagnostics::{is_dependency_noise, log_to_stderr, log_to_stderr_at};
 pub use error::ChapbookError;
 pub use font::{
     Faces, FallbackFamilies, Fallbacks, FontReport, FontSource, GenericFamilies, Generics,

@@ -26,6 +26,12 @@ impl log::Log for Capture {
         true
     }
     fn log(&self, record: &log::Record<'_>) {
+        // kalam: a host backend drops the parsers' stale warnings the way
+        // the stderr logger does (xml5ever warns at the end of every
+        // document it finishes); see `chapbook_core::is_dependency_noise`.
+        if chapbook_core::is_dependency_noise(record) {
+            return;
+        }
         records().lock().unwrap().push((
             record.level(),
             record.args().to_string(),

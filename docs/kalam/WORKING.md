@@ -262,4 +262,8 @@ sources: calibre-alt `docs/files/*.html` (R12h).
   DOM-path → text-offset mapper; probably never worth it.
 - Remote-source placeholder chapters in Kalam (fetch-on-demand HTML):
   the engine reads the file, so those must be fetched at import time.
+- Move `html5ever`/`markup5ever`/`xml5ever` to 0.40 (a lockstep bump with
+  `web_atoms` 0.3; MSRV 1.85) and delete the `"Duplicate attribute"`
+  exemption in `dom/parse.rs` — xml5ever 0.39 reports `xml:lang` + `lang`
+  as a duplicate (R17). Needs a machine with cargo for the lock file.
 - Monthly upstream review (`UPSTREAM.md`); last done 2026-09-10.

@@ -376,7 +376,11 @@ emitting crate as their target, so `chapbook_reader` and `chapbook_library`
 filter apart. `error` means something the reader asked for did not happen or
 state was lost; `warn` means degraded but nothing lost; `info` is worth
 knowing and not a problem. A session at rest is silent — nothing is logged
-per frame or per page turn.
+per frame or per page turn. Two dependency lines are noise, not reports —
+html5ever's "foster parenting not implemented" and xml5ever's "stop_parsing
+for XML5 not implemented" (the latter fires at the end of every document it
+finishes); `log_to_stderr` drops them, and a backend of your own can with
+`chapbook_core::is_dependency_noise(&record)`.
 
 **Lifecycle.** `session.release_caches()` gives back everything but the page
 on screen — call it when the platform warns about memory. `session.suspend()`

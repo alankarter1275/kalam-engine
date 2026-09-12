@@ -904,13 +904,16 @@ whitespace between `<html>` and `<head>` is a real text node.
 
 **Consequence — `LOCATOR_VERSION` 2 → 3.** That `<html>`–`<head>`
 whitespace node is exactly what html5ever discards ("before head"
-insertion mode drops whitespace), so the locator text of every
-well-formed chapter gained a `\n` at the front: all seven golden anchors
-in `locator_text.rs` moved by +1, and the three CLI layout snapshots'
+insertion mode drops whitespace), so the locator text of a typical
+well-formed chapter gains a `\n` at the front: all seven golden anchors
+in `locator_text.rs` move by +1, and the three CLI layout snapshots'
 `loc=` columns with them. For mis-nested files the shift is arbitrary
 (the tree itself changes). Per `docs/LOCATORS.md` the version bumps and
 old offsets take the quote path; Kalam's stored positions from the
-engine builds so far (all pre-release) heal on first open.
+engine builds so far (all pre-release) heal on first open. *(Correction,
+R17: the first CI run of this commit showed the goldens unchanged — not
+because the reasoning above was wrong but because the fixtures were
+still being parsed by html5ever. See R17 before trusting any "+1" here.)*
 
 **Cause 2 — the adapter's settings.** `KalamPrefs::reading_settings()`
 hard-codes `publisher_styles: false`, `justify: false` and
@@ -1019,6 +1022,69 @@ reader did the same, and the user asked for the old reader. (2)
 `justify: false` means Kalam no longer offers justification of its
 own; books that justify still do (Nyxia does). (3) The `.sans` heading
 needs Noto Sans to be *known* — it is bundled, so it always is.
+
+## R17. The XML pass was silently off for most books (2026-09-12)
+
+**Symptom.** CI on befb91e (steps 1+2) failed with the offset goldens
+*unchanged* — `locator start 9`, anchors 9/38/…/582 — where R15 had
+predicted +1, plus `a_book_that_opens_cleanly_says_nothing_alarming`
+failing on two `warn` records from `xml5ever::tree_builder`.
+
+**Cause.** xml5ever 0.39.0's tokenizer (`finish_attribute`, `src/tokenizer/mod.rs`)
+detects duplicate attributes by comparing the *raw* name of the attribute
+being finished against the *local* names of those already collected. The
+fixture chapters (and the EPUB 3 samples, calibre's output, InDesign's)
+open with `<html xmlns="…" xml:lang="en" lang="en">`: `lang` matches the
+local part of `xml:lang`, the tokenizer emits `ParseError("Duplicate
+attribute")` and drops the bare `lang`. `parse_as_xml` treats any error as
+"not well-formed" → html5ever → offsets identical to v2, and the
+self-closed-anchor bug of R15 back for every such book. Nyxia's 51
+documents carry no `xml:lang`/`lang` pair (and all parse clean under
+expat), which is why the owner's screenshots improved while the fixtures
+did not. Fixed upstream in servo/html5ever#780 ("Compare prefix and local
+name when looking for duplicate attributes", 2026-09-08), released in
+xml5ever 0.40.0 (2026-09-11, MSRV 1.85, markup5ever 0.40 / web_atoms 0.3 —
+a lockstep bump of html5ever+markup5ever+xml5ever that this sandbox cannot
+hand-edit into `Cargo.lock` reliably; deferred).
+
+**Fix (this commit).** `Sink::parse_error` ignores the message
+`"Duplicate attribute"`. Consequence for a *real* duplicate (`<p class="a"
+class="b">`): the second copy is dropped, which is exactly what the HTML
+algorithm does with it, so nothing is lost by staying on the XML path.
+A test (`xml_lang_beside_lang_does_not_demote_a_document_to_html`) pins
+the pair + a self-closed anchor. Remove the exemption when xml5ever ≥ 0.40
+lands.
+
+**The second warning.** `XmlTreeBuilder::stop_parsing` is
+`warn!("stop_parsing for XML5 not implemented, full speed ahead!")`, and
+it is called from the End phase on EOF — i.e. at the end of every
+document the XML parser finishes successfully. Once per chapter, forever.
+Same class as html5ever's "foster parenting not implemented" (R2/379d47e):
+a message left over from a missing feature, not a report. Both now live
+behind one predicate, `chapbook_core::is_dependency_noise(&Record)`,
+used by the stderr logger and exported so a host with its own `log`
+backend (Kalam, if it ever installs one) can drop the same two lines. The
+reader's capturing test logger applies it too.
+
+**Goldens.** With the XML path actually taken, the +1 of R15 is real.
+Checked against expat as an oracle (Python `xml.etree`, same exclusion
+rules as `locator_text`): chapter1 anchors 10/39/606/208/372/419/583,
+`total_chars` 631. The total is *unchanged* from v2 because the two trees
+differ by one whitespace node at each end: XML keeps the `\n` between
+`<html>` and `<head>` (html5ever's "before head" mode drops it) and drops
+the `\n` after `</html>` (outside the root), which html5ever's "after
+after body" mode appends to `<body>`. So: every offset +1, same length.
+The snapshot files committed in ff3f24f already hold these numbers; the
+three CLI layout snapshots' `loc=`/`locator start` columns are +1 too and
+nothing else in them moves. `render_golden` PNGs are expected unchanged
+(a whitespace-only text node under `<html>` collapses to nothing). If CI
+disagrees with any of this, take CI's numbers — never reason them out.
+
+**Lesson for agents.** A fallback that silently succeeds is a fallback
+that hides its own trigger. When a parser has a "strict or lenient" switch,
+add a test that proves the strict path was taken for the *ordinary* input,
+not just for the pathological one — the R15 tests only covered documents
+without a `lang` attribute.
 
 ## R14. Open questions (not researched yet)
 

@@ -331,7 +331,10 @@ fn a_plain_user_css_declaration_is_a_default_the_publisher_can_override() {
     );
     let dump = dump_of(&doc);
     assert!(line_for(&dump, "<p>").contains("margin-top: 7px"), "{dump}");
-    assert!(line_for(&dump, "<p>.x").contains("margin-top: 3px"), "{dump}");
+    assert!(
+        line_for(&dump, "<p>.x").contains("margin-top: 3px"),
+        "{dump}"
+    );
 }
 
 /// An `!important` declaration in the shell's sheet beats the publisher,
@@ -350,7 +353,10 @@ fn an_important_user_css_declaration_beats_the_publisher() {
     );
     let dump = dump_of(&doc);
     // The default base size is 18px; 2 × 18 = 36px.
-    assert!(line_for(&dump, "<p>").contains("line-height: 36px"), "{dump}");
+    assert!(
+        line_for(&dump, "<p>").contains("line-height: 36px"),
+        "{dump}"
+    );
 }
 
 /// `None` and blank are the same thing: nothing added, so the cascade is
@@ -390,5 +396,8 @@ fn user_css_is_appended_after_the_typeface_sheet() {
     let dump = dump_of(&doc);
     let p = line_for(&dump, "<p>");
     assert!(p.contains("Shell Body"), "{p}");
-    assert!(!p.contains("Chosen Serif") && !p.contains("Publisher Sans"), "{p}");
+    assert!(
+        !p.contains("Chosen Serif") && !p.contains("Publisher Sans"),
+        "{p}"
+    );
 }
