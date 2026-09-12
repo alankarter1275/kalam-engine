@@ -1,0 +1,7 @@
+---
+source: tools/chapbook-cli/tests/snapshots.rs
+expression: "commands::toc(&fixture()).unwrap()"
+---
+Chapter One: A Beginning  [OEBPS/chapter1.xhtml]
+Chapter Two: A Continuation  [OEBPS/chapter2.xhtml]
+  Part the Second  [OEBPS/chapter2.xhtml#part2]

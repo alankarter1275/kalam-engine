@@ -1,0 +1,18 @@
+[package]
+name = "chapbook-core"
+description = "Shared primitives for the chapbook ereader components: geometry, page metrics, locators, errors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+log = { workspace = true }
+# The panel vocabulary, re-exported below so the rule that model types come
+# from this crate keeps holding. Costs nothing: with its defaults off this
+# is a leaf crate with no dependencies of its own — the backends and their
+# `libc` live behind features a shell turns on, not this one.
+mezzotint = { workspace = true }

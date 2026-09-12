@@ -1,0 +1,13 @@
+---
+source: crates/chapbook-layout/tests/locator_text.rs
+expression: "lines.join(\"\\n\")"
+---
+locator_version: 3
+total_chars: 631
+   10  Chapter One: A Beginning
+   39  It was a truth universally
+  606  nested emphasis
+  208  the next chapter
+  372  annotated span
+  419  Block quotations
+  583  Second list item

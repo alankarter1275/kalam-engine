@@ -1,23 +1,199 @@
-[package]
-name = "kalam-engine"
+[workspace]
+resolver = "2"
+members = [
+    "crates/chapbook-core",
+    "crates/chapbook-epub",
+    "crates/chapbook-layout",
+    "crates/chapbook-paint",
+    "crates/chapbook-render-tinyskia",
+    "crates/chapbook-reader",
+    "crates/chapbook-viewer-gtk",
+    "tools/chapbook-cli",
+    # Kalam's own: the widget Kalam embeds, and a bare window around it.
+    "crates/kalam-reader",
+    "tools/kalam-reader-demo",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Kalam Team"]
-description = "Pure-Rust, high-performance text rendering & pagination engine for Kalam / calibre-alt."
-license = "GPL-3.0-or-later"
+rust-version = "1.92" # floor: kept where upstream set it (stylo needs 1.89)
+license = "MIT OR Apache-2.0"
+authors = ["Jeffrey T. Peckham <abic@ophymx.com>"]
+repository = "https://github.com/ophymx/chapbook"
+readme = "README.md"
 
-[dependencies]
-gtk4 = { version = "0.9", features = ["v4_12"] }
-cosmic-text = "0.12"
-lol_html = "2.1"
-tiny-skia = "0.11"
-zip = "2.2"
-quick-xml = "0.36"
-anyhow = "1.0"
-thiserror = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+[workspace.dependencies]
+# Internal crates
+chapbook-core = { path = "crates/chapbook-core" }
+chapbook-epub = { path = "crates/chapbook-epub" }
+# `default-features = false` so that chapbook-reader's own
+# `default-features = false` (which makes its `svg`/`mathml` passthroughs
+# real choices) is not silently ignored.
+# Members that want the defaults name them (chapbook-cli does).
+chapbook-layout = { path = "crates/chapbook-layout", default-features = false }
+chapbook-paint = { path = "crates/chapbook-paint" }
+chapbook-render-tinyskia = { path = "crates/chapbook-render-tinyskia" }
+# No defaults here: each shell names the formats it means to open, so a
+# device build's surface is visible in its own manifest rather than
+# inherited. External consumers get the full default set as usual.
+chapbook-reader = { path = "crates/chapbook-reader", default-features = false }
 
-[[example]]
-name = "demo"
-path = "examples/demo.rs"
+# The panel seam: update classes, the driver that holds the refresh rules,
+# and the backends underneath. It was chapbook's own module until it turned
+# out to have nothing to do with books, so it is somebody else's crate now
+# and chapbook is an ordinary consumer.
+#
+# Defaults off because they include `fbdev`, and which backend a build talks
+# to is a shell's decision — chapbook-core wants the vocabulary and nothing
+# else. A shell that means to open /dev/fb0 asks for `mezzotint/fbdev`
+# itself; `std` is here because every consumer in this workspace has one.
+mezzotint = { version = "0.1", default-features = false, features = ["std"] }
+
+# Stylo lockstep set — these release together and break together; pin exact
+# versions and upgrade all of them in one deliberate pass (use Blitz's diff
+# as the migration guide).
+style = { version = "=0.20.0", package = "stylo" }
+style_traits = { version = "=0.20.0", package = "stylo_traits" }
+style_atoms = { version = "=0.20.0", package = "stylo_atoms" }
+style_config = { version = "=0.20.0", package = "stylo_static_prefs" }
+style_dom = { version = "=0.20.0", package = "stylo_dom" }
+selectors = "=0.40.0"
+cssparser = "=0.37.0"
+# Version-locked to what stylo 0.20 itself uses (types appear in its API)
+euclid = "0.22"
+app_units = "0.7"
+html5ever = "0.39"
+markup5ever = "0.39"
+xml5ever = "0.39"
+
+# Text shaping/layout and CPU rasterization
+# `fontconfig` is one of its defaults and is turned back on per target by
+# chapbook-layout, which is the crate that builds the font system. It reads
+# `/etc/fonts/fonts.conf` to correct the five CSS generics, which is real
+# work on a Linux desktop and impossible anywhere the file cannot exist.
+# fontdb already excludes it on Android and macOS; iOS is the one that
+# slipped through, being unix and neither, so it took the Linux branch and
+# carried a config parser it could never read a config with.
+cosmic-text = { version = "0.19", default-features = false, features = [
+    "std",
+    "swash",
+] }
+# Both are cosmic-text's own dependencies, named here because chapbook-layout
+# builds the font system itself rather than calling `FontSystem::new()`:
+# `unicode-script` is the script type its `Fallback` trait speaks, so the
+# version must match cosmic-text's, and `sys-locale` is how it resolves the
+# host locale.
+unicode-script = "0.5"
+# UAX #29 word boundaries for the text surface (TTS word timing,
+# dictionary word-at-tap). Already in the tree via cosmic-text.
+unicode-segmentation = "1.12"
+sys-locale = "0.3"
+hyphenation = { version = "0.8", features = ["embed_en-us"] }
+tiny-skia = "0.12"
+# Decode only, and only the formats EPUB 3 and comic archives actually
+# carry. `rayon` is deliberately absent: image gates only its opt-in
+# parallel ImageBuffer iterators and the avif/exr *encoders* on it, none of
+# which we use, so it bought a thread pool and nothing else.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+] }
+# SVG rasterization (CPU, over the tiny-skia already in the graph). `text`
+# because book diagrams carry labels — usvg gets a fontdb copied from the
+# session's own FontSystem, never the host's, so goldens stay deterministic;
+# `raster-images` because EPUB cover SVGs wrap a JPEG `<image>`. No
+# `system-fonts`: font policy belongs to `FontSource`, nothing else.
+resvg = { version = "0.48", default-features = false, features = [
+    "text",
+    "raster-images",
+] }
+# usvg's fontdb (0.24 — a second build beside cosmic-text's 0.23), named
+# only to enable `fs`: file-backed session faces then load into usvg by
+# path (metadata parse, bytes read on demand) instead of by bulk copy.
+# The types still come via `resvg::usvg::fontdb`; resvg's own feature for
+# this is `system-fonts`, which also drags in fontconfig policy we refuse.
+fontdb = { version = "0.24", default-features = false, features = [
+    "std",
+    "fs",
+] }
+# MathML Core layout: OpenType MATH metrics in, glyphs-and-rules out. Its
+# `svg` feature is a debugging emitter we have no use for. 0.2 carries
+# glyph advances in the display list and probes MATH tables itself, so no
+# font parser rides along anymore.
+formulary = { version = "0.2", default-features = false, features = [
+    "shaping",
+] }
+
+# EPUB. We only ever read: `write` is rbook's EPUB *authoring* half.
+rbook = { version = "0.7", default-features = false, features = [
+    "threadsafe",
+    "prelude",
+] }
+sha1 = "0.10" # IDPF font de-obfuscation key derivation
+
+# EPUB package/OPF parsing where rbook leaves gaps; URL resolution for
+# relative hrefs.
+quick-xml = "0.42"
+url = "2"
+
+# The GTK shell's cross-thread wakeup. Both arrive in the graph under glib
+# regardless — naming them here adds no crate, it only lets the shell say
+# what it is using. Default features off: the executor, the io-compat
+# layer and the thread pool are all things glib's main context already is.
+futures-channel = { version = "0.3", default-features = false, features = [
+    "std",
+] }
+futures-util = { version = "0.3", default-features = false, features = [
+    "std",
+] }
+# Misc
+slotmap = "1"
+thiserror = "2"
+# Diagnostics. Already in the graph via cosmic-text and fontdb, so the
+# engine gaining a voice costs no new dependency — and every host has a
+# backend already: android_logger, oslog, console_log, env_logger.
+log = "0.4"
+clap = { version = "4", features = ["derive"] }
+
+# Dev
+insta = { version = "1", features = ["glob"] }
+proptest = "1"
+
+[profile.dev]
+# stylo is slow in unoptimized builds; keep debug-friendly but usable
+opt-level = 1
+# Line tables, not the full DWARF. Measured on chapbook-viewer: the debug
+# binary was 739 MB, of which 682 MB was debug info, and it is written to
+# disk again on every relink. With this and the dependency override below
+# it is 73 MB with 19 MB of debug info — a tenth of the bytes through the
+# filesystem each build.
+#
+# What survives is what gets used: `.debug_line` still resolves a
+# backtrace frame to `crates/…/foo.rs:214`, so panics, `#[should_panic]`
+# and RUST_BACKTRACE read exactly as before. What goes is variable and
+# type DWARF — stepping in a debugger and printing locals. If you are
+# reaching for gdb on chapbook's own code, build that crate with
+# `--config 'profile.dev.debug=2'`.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+# Dependencies get none at all. Nobody steps into stylo, icu or wgpu from
+# here, and their debug info is the overwhelming majority of it — this is
+# the half of the saving that costs nothing anyone would notice. Frames
+# through a dependency still carry symbol names, only not file and line.
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# Cargo already drops debuginfo here; this drops the symbol table too,
+# which is a sixth of the binary and pure weight on a device whose whole
+# rootfs is measured in tens of megabytes. Panics still name the crate and
+# message, only the backtrace frames go — and a backtrace off a device is
+# not how any of this gets debugged anyway. Build with
+# `--config profile.release.strip=false` when you do want one.
+strip = "symbols"

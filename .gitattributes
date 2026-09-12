@@ -1,0 +1,11 @@
+# The fixtures and the render goldens are bytes, not text. Git's content
+# heuristic gets this right today, but a fixture it guessed wrong about
+# would be silently corrupted on checkout and the failure would read as a
+# decoder bug in whichever crate opened it — so say it rather than rely on
+# the guess.
+*.png binary
+*.pdf binary
+*.epub binary
+*.cbz binary
+*.ttf binary
+*.otf binary
