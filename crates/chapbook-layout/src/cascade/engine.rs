@@ -99,6 +99,11 @@ impl StyleEngine {
         if let Some(css) = font_family_css(settings) {
             engine.append_sheet(&css, Origin::User);
         }
+        // kalam: the shell's skin last, so among equal user-origin
+        // declarations it is the one that wins.
+        if let Some(css) = settings.user_css.as_deref().filter(|c| !c.trim().is_empty()) {
+            engine.append_sheet(css, Origin::User);
+        }
         engine
     }
 
@@ -249,20 +254,23 @@ fn settings_css(settings: &ReadingSettings) -> String {
 /// the setting. This is the same instrument [`theme_css`] uses for Dark
 /// and for the same reason.
 ///
-/// `*` and not `:root`, which is the trap. `!important` at user origin
-/// beats an author declaration *for the same element and property* — it
-/// does not stop the author styling a different element further down. A
-/// rule on `:root` sets `html`, and then `body { font-family }` — which is
-/// where publishers actually put it — wins on `body` and inherits from
-/// there, so the reader's choice would lose on almost every real book
-/// while passing any test whose fixture styled `html`. Same instrument
-/// [`theme_css`] reaches for, and the same reason.
+/// kalam: `html, body`, where upstream wrote `*`. Upstream's rule reached
+/// every element, so a publisher's sans-serif chapter heading, a
+/// letter set in a script face or a table's own family all came out in
+/// the reader's body font — the old WebKit reader forced the family on
+/// `body` alone, and that is the behaviour Kalam asks for: the *body*
+/// text is the reader's, an element the publisher styled on purpose
+/// stays the publisher's. `:root` alone would still be the trap the
+/// upstream comment warned about (`body { font-family }` is where
+/// publishers put it, and it would win on `body` and inherit from
+/// there), so both `html` and `body` carry the rule.
 ///
 /// Monospace is exempt, descendants included: `pre *` and friends carry
 /// one type selector where `*` carries none, so they win on specificity
-/// whatever the order. Without the descendant half, a `<span>` inside a
-/// `<pre>` would take the reader's serif and the listing would come apart
-/// mid-line.
+/// whatever the order. The exemption stays although the rule no longer
+/// reaches those elements directly — a `<pre>` inside a chapter whose
+/// stylesheet never mentions it inherits the body font otherwise, and
+/// a code listing in a serif is still a bug people report.
 fn font_family_css(settings: &ReadingSettings) -> Option<String> {
     let family = settings.font_family.as_deref()?.trim();
     if family.is_empty() {
@@ -274,7 +282,7 @@ fn font_family_css(settings: &ReadingSettings) -> Option<String> {
     // keeps it one value.
     let quoted = format!("\"{}\"", family.replace('\\', "\\\\").replace('"', "\\\""));
     Some(format!(
-        "* {{ font-family: {quoted} !important; }}\n\
+        "html, body {{ font-family: {quoted} !important; }}\n\
          pre, pre *, code, code *, kbd, kbd *, samp, samp *, tt, tt * \
          {{ font-family: monospace !important; }}\n"
     ))

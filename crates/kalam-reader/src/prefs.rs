@@ -231,21 +231,72 @@ impl KalamPrefs {
         }
     }
 
-    /// The engine settings these preferences mean. The two permanent
-    /// overrides live here: publisher stylesheets off and the reader's
-    /// typeface forced, which is Kalam's "my theme wins" rule made
-    /// literal.
+    /// The engine settings these preferences mean.
+    ///
+    /// The book's stylesheet stands (`publisher_styles: true`): its
+    /// indents, alignment, margins, relative sizes and any typeface it
+    /// names for a particular element are the publisher's design, and the
+    /// old WebKit reader respected them. Kalam claims exactly what that
+    /// reader claimed — the colours, the body typeface, the base size and
+    /// the line spacing — and does so with the same instrument: a sheet of
+    /// `!important` rules appended after the book's ([`Self::skin_css`]),
+    /// plus the engine's own typeface rule for `html, body`.
     pub fn reading_settings(&self) -> ReadingSettings {
         let prefs = self.clamped();
         ReadingSettings {
             base_font_px: prefs.font_px,
             line_height: prefs.line_height,
+            // The book decides; a publisher's ragged-right poem stays so.
             justify: false,
-            publisher_styles: false,
+            publisher_styles: true,
             font_family: Some(BODY_FONT.to_string()),
             theme: prefs.theme.engine_theme(),
             palette: Some(prefs.theme.palette()),
+            user_css: Some(prefs.skin_css()),
         }
+    }
+
+    /// Kalam's reading skin: the rules the old WebKit reader injected
+    /// after the book's stylesheets (`epub_book.rs`, `reading_css()` on
+    /// calibre-alt), reduced to what the engine's cascade needs to hear.
+    ///
+    /// Everything here is `!important` on purpose. A user-origin rule
+    /// without it is a *default* the publisher overrides, and every real
+    /// publisher stylesheet sets `line-height` on `body` and `p`; the
+    /// reading preference would otherwise show on no book at all.
+    ///
+    /// * Colours: the ink on everything, and no backgrounds, in every
+    ///   theme — the engine's own themes force colours only at night and
+    ///   let a publisher's grey subtitle through by day; the old reader
+    ///   did not, and "Kalam's colours" means Kalam's.
+    /// * Size: forced on the roots only, so the book's `1.57em` heading is
+    ///   still 1.57 times the reader's size.
+    /// * Line height: forced on the text blocks too, because a publisher's
+    ///   `p { line-height: 1.2 }` on a page the reader set to 1.8 is
+    ///   exactly the complaint the preference exists to answer. Headings
+    ///   keep the old reader's tighter 1.25.
+    /// * Page geometry is Kalam's (column width, page margins), so the
+    ///   body's own margins and padding go, as they did before.
+    /// * Links read as text: no underline (their colour is the ink
+    ///   already, via the palette). The book's other decorations stay.
+    ///
+    /// Images need no rule: the engine fits them to the measure.
+    fn skin_css(&self) -> String {
+        let prefs = self.clamped();
+        let ink = prefs.theme.foreground();
+        let ink = format!("#{:02x}{:02x}{:02x}", ink.r, ink.g, ink.b);
+        let size = prefs.font_px;
+        let lh = prefs.line_height;
+        format!(
+            "* {{ color: {ink} !important; background-color: transparent !important; }}\n\
+             html, body {{ font-size: {size}px !important; line-height: {lh} !important; \
+             margin: 0 !important; padding: 0 !important; }}\n\
+             p, div, li, dd, dt, td, th, blockquote, section, article, aside, header, footer, \
+             main, figcaption {{ line-height: {lh} !important; }}\n\
+             h1, h2, h3, h4, h5, h6 {{ font-weight: bold !important; \
+             line-height: 1.25 !important; margin-top: 1.4em !important; }}\n\
+             a {{ text-decoration: none !important; }}\n"
+        )
     }
 }
 
@@ -300,8 +351,17 @@ mod tests {
     #[test]
     fn settings_carry_the_permanent_overrides() {
         let settings = KalamPrefs::default().reading_settings();
-        assert!(!settings.publisher_styles);
+        // The book's stylesheet stands; Kalam's claims ride on top of it.
+        assert!(settings.publisher_styles);
+        assert!(!settings.justify);
         assert_eq!(settings.font_family.as_deref(), Some(BODY_FONT));
+        let skin = settings.user_css.as_deref().expect("the reading skin");
+        assert!(skin.contains("font-size: 17px !important"), "{skin}");
+        assert!(skin.contains("line-height: 1.8 !important"), "{skin}");
+        assert!(skin.contains("font-weight: bold !important"), "{skin}");
+        // Sepia ink, in every theme's skin the same way.
+        assert!(skin.contains("color: #2c2820 !important"), "{skin}");
+        assert!(skin.contains("text-decoration: none !important"), "{skin}");
         assert_eq!(settings.theme, Theme::Sepia);
         assert_eq!(
             settings.palette().background,
@@ -314,6 +374,19 @@ mod tests {
         .reading_settings();
         assert_eq!(night.theme, Theme::Dark);
         assert_eq!(night.palette().foreground, KalamTheme::Ink.foreground());
+    }
+
+    #[test]
+    fn the_skin_follows_the_preferences_and_the_cache_key_with_it() {
+        let a = KalamPrefs::default();
+        let b = KalamPrefs {
+            line_height: 1.3,
+            ..a
+        };
+        let (sa, sb) = (a.reading_settings(), b.reading_settings());
+        assert!(sa.user_css.as_deref().unwrap().contains("line-height: 1.8"));
+        assert!(sb.user_css.as_deref().unwrap().contains("line-height: 1.3"));
+        assert_ne!(sa.cache_key(), sb.cache_key());
     }
 
     #[test]

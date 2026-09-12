@@ -39,7 +39,9 @@ use chapbook_paint::{
 
 use crate::boxtree::{BlockBox, BlockKind, InlineContent};
 use crate::fragmentation::BreakRule;
-use crate::style_to_attrs::{align_for, attrs_for, font_size_px, line_height_px, text_color};
+use crate::style_to_attrs::{
+    align_for, attrs_for, family_for, font_size_px, line_height_px, text_color,
+};
 
 /// One shaped visual line, ready to be placed on a page.
 #[derive(Clone)]
@@ -105,6 +107,10 @@ pub(crate) struct Paginator<'f> {
     /// True in the detached sub-paginator that lays out a float's content:
     /// suppresses float interception (floats never nest).
     in_float: bool,
+    /// kalam: family name → whether the font database has a face by it,
+    /// for [`family_for`]. A chapter names a handful of families and
+    /// asks per run, and the database does not change under a layout.
+    known_families: std::collections::HashMap<String, bool>,
 }
 
 #[derive(Clone, Copy)]
@@ -178,9 +184,28 @@ impl<'f> Paginator<'f> {
             float_right: None,
             hyphen_cache: std::collections::HashMap::new(),
             in_float: false,
+            known_families: std::collections::HashMap::new(),
         };
         p.new_page();
         p
+    }
+
+    /// kalam: the cosmic-text family a run is shaped in — the first family
+    /// in its computed list that the font database can answer for (see
+    /// [`family_for`]).
+    fn family_of<'s>(&mut self, style: &'s ComputedValues) -> cosmic_text::Family<'s> {
+        let db = self.fonts.db();
+        let cache = &mut self.known_families;
+        family_for(style, |name| {
+            if let Some(&known) = cache.get(name) {
+                return known;
+            }
+            let known = db
+                .faces()
+                .any(|face| face.families.iter().any(|(family, _)| family == name));
+            cache.insert(name.to_string(), known);
+            known
+        })
     }
 
     pub fn finish(mut self) -> (Vec<Page>, Vec<u32>, Vec<f32>) {
@@ -1153,12 +1178,19 @@ impl<'f> Paginator<'f> {
         buffer.set_size(Some(width), None);
         buffer.set_wrap(Wrap::WordOrGlyph);
 
-        let default_attrs = attrs_for(block_style, 0);
+        let block_family = self.family_of(block_style);
+        let default_attrs = attrs_for(block_style, 0, block_family);
+        let run_families: Vec<cosmic_text::Family<'_>> = inline
+            .runs
+            .iter()
+            .map(|run| self.family_of(&run.style))
+            .collect();
         let spans = inline
             .runs
             .iter()
+            .zip(run_families.iter())
             .enumerate()
-            .map(|(i, run)| (run.text.as_str(), attrs_for(&run.style, i)));
+            .map(|(i, (run, family))| (run.text.as_str(), attrs_for(&run.style, i, *family)));
         buffer.set_rich_text(
             spans,
             &default_attrs,

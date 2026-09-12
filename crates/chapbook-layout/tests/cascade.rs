@@ -238,32 +238,44 @@ fn a_family_name_cannot_escape_its_own_rule() {
     );
 }
 
-/// The `:root`-versus-`*` trap, kept honest by a fixture that styles the
+/// The `:root`-versus-`body` trap, kept honest by a fixture that styles the
 /// element publishers actually style. A rule on `:root` passes a test
 /// whose author sheet targets `html` and loses on every real book.
+///
+/// kalam: the rule is `html, body`, no longer `*`, so the assertion is
+/// split: the body's own font is the reader's and reaches everything that
+/// inherits it, while an element the publisher gave a family of its own
+/// keeps that family (the sans chapter heading, the letter in a script
+/// face). That is the old WebKit reader's behaviour, which forced the
+/// family on `body` alone.
 #[test]
-fn a_chosen_family_reaches_elements_the_publisher_styled_directly() {
+fn a_chosen_family_replaces_the_body_font_and_nothing_the_publisher_chose_directly() {
     let settings = ReadingSettings {
         font_family: Some("Chosen Serif".into()),
         ..Default::default()
     };
     let doc = styled_with(
-        "<html><body><div><p>hi</p></div></body></html>",
+        "<html><body><div><p>hi</p></div><h1>title</h1></body></html>",
         &[
+            "html { font-family: 'Publisher Root'; }",
             "body { font-family: 'Publisher Sans'; }",
-            "div { font-family: 'Publisher Display'; }",
-            "p { font-family: 'Publisher Text'; }",
+            "h1 { font-family: 'Publisher Display'; }",
         ],
         &settings,
     );
     let dump = dump_of(&doc);
-    for tag in ["<div>", "<p>"] {
+    for tag in ["<body>", "<div>", "<p>"] {
         let line = line_for(&dump, tag);
         assert!(
-            line.contains("Chosen Serif"),
+            line.contains("Chosen Serif") && !line.contains("Publisher"),
             "{tag} kept a publisher font: {line}"
         );
     }
+    let h1 = line_for(&dump, "<h1>");
+    assert!(
+        h1.contains("Publisher Display") && !h1.contains("Chosen Serif"),
+        "the heading's own family was overridden: {h1}"
+    );
 }
 
 /// A `<span>` inside a `<pre>` is still code. Without the descendant half
@@ -300,4 +312,83 @@ fn a_blank_family_name_is_not_a_choice() {
     );
     let dump = dump_of(&doc);
     assert!(line_for(&dump, "<p>").contains("Publisher Sans"));
+}
+
+// ---- kalam: the shell's own sheet ----
+
+/// A plain declaration in the shell's sheet is a *default*: it beats the
+/// UA sheet and loses to the publisher, exactly like a Sepia theme rule.
+#[test]
+fn a_plain_user_css_declaration_is_a_default_the_publisher_can_override() {
+    let settings = ReadingSettings {
+        user_css: Some("p { margin-top: 7px; }".into()),
+        ..Default::default()
+    };
+    let doc = styled_with(
+        "<html><body><p>hi</p><p class=\"x\">there</p></body></html>",
+        &["p.x { margin-top: 3px; }"],
+        &settings,
+    );
+    let dump = dump_of(&doc);
+    assert!(line_for(&dump, "<p>").contains("margin-top: 7px"), "{dump}");
+    assert!(line_for(&dump, "<p>.x").contains("margin-top: 3px"), "{dump}");
+}
+
+/// An `!important` declaration in the shell's sheet beats the publisher,
+/// the publisher's own `!important` included — the cascade's user-origin
+/// rule, and the whole reason the sheet exists.
+#[test]
+fn an_important_user_css_declaration_beats_the_publisher() {
+    let settings = ReadingSettings {
+        user_css: Some("p { line-height: 2 !important; }".into()),
+        ..Default::default()
+    };
+    let doc = styled_with(
+        "<html><body><p>hi</p></body></html>",
+        &["body { line-height: 1.2; } p { line-height: 1.1 !important; }"],
+        &settings,
+    );
+    let dump = dump_of(&doc);
+    // The default base size is 18px; 2 × 18 = 36px.
+    assert!(line_for(&dump, "<p>").contains("line-height: 36px"), "{dump}");
+}
+
+/// `None` and blank are the same thing: nothing added, so the cascade is
+/// byte-for-byte what it was before the field existed.
+#[test]
+fn no_user_css_changes_nothing() {
+    let html = "<html><body><p>hi</p></body></html>";
+    let css = ["p { margin-top: 3px; }"];
+    let plain = dump_of(&styled_with(html, &css, &ReadingSettings::default()));
+    let blank = dump_of(&styled_with(
+        html,
+        &css,
+        &ReadingSettings {
+            user_css: Some("   ".into()),
+            ..Default::default()
+        },
+    ));
+    assert_eq!(plain, blank);
+    assert!(plain.contains("margin-top: 3px"));
+}
+
+/// The shell's sheet comes after the typeface and theme sheets, so where
+/// both speak at the same weight on the same element, the shell's word is
+/// the last one.
+#[test]
+fn user_css_is_appended_after_the_typeface_sheet() {
+    let settings = ReadingSettings {
+        font_family: Some("Chosen Serif".into()),
+        user_css: Some("body { font-family: 'Shell Body' !important; }".into()),
+        ..Default::default()
+    };
+    let doc = styled_with(
+        "<html><body><p>hi</p></body></html>",
+        &["body { font-family: 'Publisher Sans'; }"],
+        &settings,
+    );
+    let dump = dump_of(&doc);
+    let p = line_for(&dump, "<p>");
+    assert!(p.contains("Shell Body"), "{p}");
+    assert!(!p.contains("Chosen Serif") && !p.contains("Publisher Sans"), "{p}");
 }

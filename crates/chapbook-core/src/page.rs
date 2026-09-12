@@ -290,6 +290,16 @@ pub struct ReadingSettings {
     /// `None` — the default, and what every upstream caller has — paints
     /// the preset. See [`Palette`].
     pub palette: Option<Palette>,
+    /// kalam: the host's own stylesheet — its reading skin — appended at
+    /// user origin after the theme and typeface sheets. `None` (the
+    /// default, and what every upstream caller has) adds nothing.
+    ///
+    /// Per the cascade, its plain declarations beat the UA defaults and
+    /// lose to the publisher's; its `!important` ones beat everything,
+    /// the publisher's own `!important` included. That is the instrument
+    /// a shell needs to say "the book's CSS stands, except these few
+    /// things are mine" without a setting per thing.
+    pub user_css: Option<String>,
 }
 
 impl Default for ReadingSettings {
@@ -302,6 +312,7 @@ impl Default for ReadingSettings {
             font_family: None,
             theme: Theme::default(),
             palette: None,
+            user_css: None,
         }
     }
 }
@@ -324,6 +335,7 @@ impl ReadingSettings {
         self.font_family.hash(&mut h);
         self.theme.hash(&mut h);
         self.palette.hash(&mut h);
+        self.user_css.hash(&mut h);
         h.finish()
     }
 }

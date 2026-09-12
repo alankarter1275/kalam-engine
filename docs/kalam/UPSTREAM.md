@@ -164,6 +164,11 @@ conflict. Prefix such commits with `kalam:`.
 | `crates/chapbook-layout/Cargo.toml`, `src/dom/mod.rs`, `docs/ARCHITECTURE.md` | `xml5ever` is a plain dependency; the `strict-xml` feature (which no code ever read) is gone | Same |
 | `crates/chapbook-core/src/locator.rs` | `LOCATOR_VERSION` 2 → 3 | The XML tree keeps the whitespace text node between `<html>` and `<head>` that the HTML parser drops, so offsets of well-formed chapters shift; stored version-2 offsets heal through the quote path |
 | `crates/chapbook-layout/tests/parse_extract.rs`, `tests/snapshots/locator_text__golden_offset_map_chapter1.snap`, `tools/chapbook-cli/tests/snapshots/layout_snapshot__*.snap` | Five parse tests appended (the PRH shape, fallback cases, XML prologue); goldens re-baselined at +1 | Covers the feature |
+| `crates/chapbook-core/src/page.rs` | `ReadingSettings.user_css: Option<String>` (default `None`, hashed into `cache_key`) | R16: a shell's own stylesheet — Kalam's reading skin — appended at user origin. `None` everywhere upstream constructs settings. **Candidate to send upstream.** |
+| `crates/chapbook-layout/src/cascade/engine.rs` | `StyleEngine::new` appends `user_css` after the theme and typeface sheets; `font_family_css` selects `html, body` instead of `*` | R16: `*` overrode every family the publisher chose on purpose (sans headings, script faces); the body font is the reader's, the rest is the book's |
+| `crates/chapbook-layout/src/style_to_attrs.rs` | New `family_for(style, known)` walks the computed `font-family` list (first known name, else its generic, else serif); `attrs_for` takes the resolved `Family` | R16: upstream passed only the first name to cosmic-text, whose fallback is per glyph, so `Georgia, …, serif` on a machine without Georgia landed in an arbitrary face. Unit tests in the module. **Candidate to send upstream.** |
+| `crates/chapbook-layout/src/paginate.rs` | `Paginator::family_of` + `known_families` cache; `shape_inline` resolves families per run | Same feature |
+| `crates/chapbook-layout/tests/cascade.rs` | Two font-family tests rewritten to the `html, body` contract; four `user_css` tests appended | Covers the feature |
 
 New files inside inherited crates (no conflict risk, listed for completeness):
 

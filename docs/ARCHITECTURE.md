@@ -114,7 +114,9 @@ stays that way.
     forces text/background colors with `!important` for night-mode
     readability and flips the device's `prefers-color-scheme`. The page
     ground is the display list's first op, chosen by the caller from the
-    theme.
+    theme. kalam: `ReadingSettings::user_css` is a shell's own user-origin
+    sheet, appended last — its `!important` rules beat the publisher's,
+    its plain ones are defaults the publisher may override.
 
   Layout proper: box tree per CSS 2.1 §9.2
   (anonymous blocks, `::before`/`::after`), block flow, each inline formatting

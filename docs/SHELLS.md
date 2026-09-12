@@ -314,13 +314,18 @@ families join it when their unit lays out. A name nothing matches is not
 an error; the cascade falls through to the next family, exactly as it
 would for an unknown family in a publisher's stylesheet.
 
-The choice **beats** the publisher's `font-family`, unlike `base_font_px`
-and `line_height`, which lose to a publisher that specifies. That is
-deliberate: nearly every real EPUB sets `body { font-family }`, so a
-polite rule would do nothing on nearly every book. Monospace elements and
-their contents keep their font, because a code listing reflowed into the
-reader's serif is a bug people report rather than a preference they
-expressed. `publisher_styles: false` remains the blunter instrument.
+The choice **beats** the publisher's `font-family` on `html` and `body`,
+unlike `base_font_px` and `line_height`, which lose to a publisher that
+specifies. That is deliberate: nearly every real EPUB sets `body {
+font-family }`, so a polite rule would do nothing on nearly every book.
+An element the publisher gave a family of its own — a sans heading, a
+letter in a script face — keeps it (kalam: upstream forced every element).
+Monospace elements and their contents keep their font, because a code
+listing reflowed into the reader's serif is a bug people report rather
+than a preference they expressed. `publisher_styles: false` remains the
+blunter instrument, and `user_css` (kalam) the finer one: a shell's own
+user-origin sheet, where `!important` beats the publisher and a plain
+declaration is a default.
 
 Across the C ABI the family travels on its own calls —
 `cb_session_font_family_count` / `_at` to enumerate,

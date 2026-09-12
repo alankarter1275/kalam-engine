@@ -1,9 +1,10 @@
 //! The `ComputedValues` → cosmic-text mapping, in one place.
 //!
 //! Supported subset (everything else falls back, documented here):
-//! family (first family in the list; the rest are cosmic-text's fallback
-//! job), weight, italic (oblique ≈ italic), size, color, per-block line
-//! height, text-align. Unsupported → fallback: `font-stretch` → normal;
+//! family (the first in the list the font database knows, else the
+//! list's generic — [`family_for`]; glyph-level fallback beyond that is
+//! cosmic-text's job), weight, italic (oblique ≈ italic), size, color,
+//! per-block line height, text-align. Unsupported → fallback: `font-stretch` → normal;
 //! `letter-spacing`/`word-spacing` → none (M5); `font-variant`/small-caps →
 //! plain; `text-indent` → not applied (needs first-line indent support in
 //! the line breaker; tracked M5 gap); `text-transform` → none.
@@ -54,22 +55,54 @@ pub fn text_color(style: &ComputedValues) -> Rgba {
     rgba(&style.get_inherited_text().color)
 }
 
-/// cosmic-text `Attrs` for a styled inline run. `metadata` is the span index
-/// the layout uses to map glyphs back to their source run.
-pub fn attrs_for(style: &ComputedValues, metadata: usize) -> Attrs<'_> {
-    let font = style.get_font();
+/// The family cosmic-text is asked for, from the computed `font-family`
+/// list.
+///
+/// kalam: the list is walked, as CSS says: the first named family the
+/// database knows wins, a generic always matches, and a list nothing in
+/// it matches falls to `serif`, the reading default. Upstream took the
+/// first name and left the rest to cosmic-text, whose fallback is by
+/// *glyph*, not by list: for `Helvetica, Verdana, sans-serif` on a machine
+/// without Helvetica it produced whichever face its platform list or its
+/// database order put first (`Noto Sans` heads the Linux list), and for
+/// `Georgia, serif` the same — a publisher's serif body came out sans
+/// wherever the named face was absent, which is every machine but the
+/// publisher's.
+///
+/// `known` answers whether a family name has a face in the database; the
+/// caller decides how to cache that. Matching is exact, as cosmic-text's
+/// own is and as `register_font`'s aliasing assumes.
+pub fn family_for(style: &ComputedValues, mut known: impl FnMut(&str) -> bool) -> Family<'_> {
+    for family in style.get_font().font_family.families.iter() {
+        match family {
+            SingleFontFamily::FamilyName(name) => {
+                if known(&name.name) {
+                    return Family::Name(&name.name);
+                }
+            }
+            SingleFontFamily::Generic(generic) => {
+                return match generic {
+                    GenericFontFamily::SansSerif => Family::SansSerif,
+                    GenericFontFamily::Monospace => Family::Monospace,
+                    GenericFontFamily::Cursive => Family::Cursive,
+                    GenericFontFamily::Fantasy => Family::Fantasy,
+                    _ => Family::Serif,
+                };
+            }
+        }
+    }
+    Family::Serif
+}
 
-    let family = match font.font_family.families.iter().next() {
-        Some(SingleFontFamily::FamilyName(name)) => Family::Name(&name.name),
-        Some(SingleFontFamily::Generic(generic)) => match generic {
-            GenericFontFamily::SansSerif => Family::SansSerif,
-            GenericFontFamily::Monospace => Family::Monospace,
-            GenericFontFamily::Cursive => Family::Cursive,
-            GenericFontFamily::Fantasy => Family::Fantasy,
-            _ => Family::Serif,
-        },
-        None => Family::Serif,
-    };
+/// cosmic-text `Attrs` for a styled inline run. `metadata` is the span index
+/// the layout uses to map glyphs back to their source run; `family` is the
+/// run's resolved typeface, from [`family_for`].
+pub fn attrs_for<'s>(
+    style: &'s ComputedValues,
+    metadata: usize,
+    family: Family<'s>,
+) -> Attrs<'s> {
+    let font = style.get_font();
 
     let weight = Weight(font.font_weight.value().round() as u16);
     let style_flag = if font.font_style == style::values::computed::font::FontStyle::NORMAL {
@@ -149,5 +182,56 @@ pub fn align_for(style: &ComputedValues) -> Option<Align> {
         TextAlign::End => Some(Align::Right),
         TextAlign::Center | TextAlign::MozCenter => Some(Align::Center),
         TextAlign::Justify => Some(Align::Justified),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cascade::StyleEngine;
+    use crate::dom::parse_xhtml;
+    use chapbook_core::{PageMetrics, ReadingSettings};
+
+    type ServoArcComputed = style::servo_arc::Arc<ComputedValues>;
+
+    fn styled_p(css: &str) -> ServoArcComputed {
+        let html = format!(r#"<html><body><p id="p" style="{css}">x</p></body></html>"#);
+        let mut doc = parse_xhtml(html.as_bytes(), "t.xhtml").unwrap();
+        let mut engine = StyleEngine::new(&PageMetrics::default(), &ReadingSettings::default());
+        engine.set_author_sheets(&[]);
+        engine.style_document(&mut doc);
+        let p = doc.element_by_id("p").expect("the paragraph");
+        doc.primary_styles(p).expect("styled")
+    }
+
+    #[test]
+    fn the_first_known_named_family_wins() {
+        let style = styled_p("font-family: Helvetica, 'Noto Sans', sans-serif");
+        assert_eq!(
+            family_for(&style, |name| name == "Noto Sans"),
+            Family::Name("Noto Sans")
+        );
+    }
+
+    #[test]
+    fn an_unknown_name_falls_to_the_lists_generic_not_to_cosmic_texts_guess() {
+        let style = styled_p("font-family: Helvetica, Verdana, sans-serif");
+        assert_eq!(family_for(&style, |_| false), Family::SansSerif);
+        let style = styled_p("font-family: Georgia, 'Times New Roman', serif");
+        assert_eq!(family_for(&style, |_| false), Family::Serif);
+        let style = styled_p("font-family: Consolas, monospace");
+        assert_eq!(family_for(&style, |_| false), Family::Monospace);
+    }
+
+    #[test]
+    fn a_list_nothing_matches_is_the_reading_default() {
+        let style = styled_p("font-family: Helvetica, Verdana");
+        assert_eq!(family_for(&style, |_| false), Family::Serif);
+    }
+
+    #[test]
+    fn a_generic_ahead_of_a_known_name_still_wins_because_order_is_the_list() {
+        let style = styled_p("font-family: serif, 'Noto Sans'");
+        assert_eq!(family_for(&style, |_| true), Family::Serif);
     }
 }

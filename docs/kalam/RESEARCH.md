@@ -38,7 +38,7 @@ alternative: README, crate layout, licence, dependency graph, CI.
   bookshelf (`chapbook-library`), and a GTK4 reference viewer
   (`chapbook-viewer-gtk`) — the last being exactly Kalam's platform.
 - Positions are "layered locators" (`docs/LOCATORS.md`,
-  `LOCATOR_VERSION = 2`): `{spine_href, spine_index, char_offset,
+  `LOCATOR_VERSION = 3` since R15; 2 at import): `{spine_href, spine_index, char_offset,
   locator_version, quote{prefix, exact, suffix}, spine_fraction,
   book_progression}` with a resolve chain exact-offset → quote search →
   fraction. This directly satisfies the acceptance criterion
@@ -935,6 +935,90 @@ indent, `.para-cda-alt-chap-pg { font-size: 1.57em }` + `.sans`
 (Helvetica stack) for "DAY 1, 8:47 A.M.", `.para-cda1 { font-weight:
 bold; font-size: 1.06em; color: #616265; margin-bottom: 3.91em }` for
 "Aboard *Genesis 11*", `div.page_top_padding { margin-top: 10% }`.
+
+## R16. The book's stylesheet wins; Kalam skins it (2026-09-12)
+
+Round 2 of the formatting fix (cause 2 in R15). What changed, and the
+facts that decided each piece.
+
+**The setting.** `KalamPrefs::reading_settings()` now says
+`publisher_styles: true`, `justify: false` (the book decides),
+`font_family: Some("Literata")`, and a new `user_css: Some(skin)`.
+`ReadingSettings` gained the `user_css: Option<String>` field
+(`chapbook-core/src/page.rs`, default `None`, hashed into `cache_key`
+so a skin change relayouts); `StyleEngine::new` appends it at user
+origin *after* the theme and typeface sheets. Only one constructor in
+the workspace built `ReadingSettings` without a `..` spread (prefs.rs),
+so the field cost no other call site.
+
+**Why a sheet and not more settings.** The old WebKit reader
+(`epub_book.rs` `reading_css()` on calibre-alt `main`) expressed its
+claims as CSS with `!important`, injected after the book's. The cascade
+gives a user-origin `!important` declaration precedence over every
+author declaration, `!important` or not, and a plain user-origin
+declaration precedence over the UA sheet only. That is exactly the two
+strengths a skin needs — "mine regardless" and "a default the book may
+override" — and stylo implements it; a setting per property would have
+re-implemented it badly. Tests in `tests/cascade.rs` pin both
+strengths and the ordering after the typeface sheet.
+
+**What the skin says** (`KalamPrefs::skin_css`, all `!important`):
+`* { color: <ink>; background-color: transparent }` — the engine's
+themes force colours only for `Dark` and let author colours through
+for Sepia/Light, but the old reader forced them in every theme (the
+grey `.para-cda1` subtitle was the ink in WebKit's screenshot);
+`html, body { font-size: <px>; line-height: <lh>; margin: 0; padding:
+0 }` — size on the roots only so the book's `em` sizes still scale;
+`p, div, li, … { line-height: <lh> }` because prhStyle sets
+`body { line-height: 1.2 }` and `div, span, blockquote { line-height:
+inherit }`, which beat a UA-origin default on every PRH book;
+headings `font-weight: bold; line-height: 1.25; margin-top: 1.4em`
+(the old reader's `650` is not a weight the bundled faces have —
+Literata ships Regular/Bold — so `bold` it is); `a { text-decoration:
+none }`. Not carried over: `img { max-width: 100% }` (the paginator
+fits images to the measure already), the WebKit-only
+`-webkit-text-fill-color`, the selection/band/chip rules (native now).
+
+**The typeface rule's scope.** Upstream's `font_family_css` wrote `*
+{ font-family: X !important }`. With publisher styles on, that turned
+the book's `.sans` heading into Literata — the old reader forced the
+family on `body` only. The rule is now `html, body` (both, because
+`body { font-family }` is where publishers put it and `:root` alone
+would lose there — the trap upstream's comment warned about). The
+monospace exemption stays. Two cascade tests were rewritten to the new
+contract (`a_chosen_family_replaces_the_body_font_and_nothing_the_publisher_chose_directly`).
+
+**Family lists.** `style_to_attrs::attrs_for` took the *first* family
+of the computed list and handed it to cosmic-text, whose fallback is
+per glyph, not per list: `Family::Name("Helvetica")` on a machine
+without Helvetica matched nothing in `db.query`, and the iterator then
+walked its platform list (`Noto Sans` heads the Linux one — that is
+why the heading happened to come out sans here) and finally *any*
+face in database order. `Georgia, Palatino, …, serif` would have gone
+the same way — a serif list ending up in whatever face sorted first.
+New `family_for(style, known)` walks the list as CSS says: first named
+family the database has a face for, else the first generic, else
+`serif`. The paginator answers `known` from `fonts.db().faces()` with a
+per-layout `HashMap<String, bool>` cache. `register_font` aliases
+embedded faces under their CSS family name, so publisher `@font-face`
+families still match by name. Unit tests sit in `style_to_attrs.rs`.
+
+**What to expect on Nyxia now** (verification for the next screenshot):
+"DAY 1, 8:47 A.M." in Noto Sans at 1.57× the base size, left; "Aboard
+*Genesis 11*" bold Noto Sans, the ink colour (not `#616265`), italic
+title; ~4 em of space after it (`margin-bottom: 3.91em`); first
+paragraph unindented, the rest indented 1 em and justified;
+`div.page_top_padding { margin-top: 10% }` above the heading on page 1;
+the reader's line height throughout the body. Kalam's `font_px` and
+`line_height` sliders should visibly move the page; the theme cycle
+should recolour every run including the subtitle.
+
+**Open.** (1) The skin's `* { background-color: transparent }` also
+clears a publisher's deliberate boxes (sidebars, code blocks) — the old
+reader did the same, and the user asked for the old reader. (2)
+`justify: false` means Kalam no longer offers justification of its
+own; books that justify still do (Nyxia does). (3) The `.sans` heading
+needs Noto Sans to be *known* — it is bundled, so it always is.
 
 ## R14. Open questions (not researched yet)
 
